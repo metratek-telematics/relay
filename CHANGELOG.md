@@ -121,8 +121,8 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- **Open folder failed on a server install.** In Docker, Open worktree folder and Open run folder tried to open a
-  desktop window and returned an error. With browser VS Code configured they now open there (run folders are mounted
+- **Open folder failed on a server install.** In Docker, the task menu and the Overview tab's Worktree, VS Code and
+  Run folder buttons tried to open a desktop window and returned an error. With browser VS Code configured they now open there (run folders are mounted
   read-only into it), are disabled until the task has a worktree, and Copy worktree path is added.
 - **New task wizard on phones.** The dialog ran off the right edge at 420px; it now fits, the step list collapses
   to numbers, and the clone fields wrap onto two rows. The folder browser's GIT badge no longer stretches across the

@@ -567,9 +567,12 @@ def task_open(tid, what):
     if what == "issue" and t.get("github_issue_url"):
         webbrowser.open(t["github_issue_url"])
         return jsonify({"ok": True})
-    path = {"worktree": t.get("worktree"), "run": t.get("run_dir") or str(RUNTIME_DIR / tid), "repo": t.get("repo")}.get(what)
+    path = {"worktree": t.get("worktree"), "vscode": t.get("worktree"), "code": t.get("worktree"),
+            "run": t.get("run_dir") or str(RUNTIME_DIR / tid), "repo": t.get("repo")}.get(what)
     if IN_DOCKER and what in ("worktree", "run", "repo", "vscode", "code"):
-        return jsonify({"error": f"Relay is running in Docker, so it cannot open windows on your desktop. The folder is {path or 'not created yet'}."}), 400
+        where = f"The folder is {path}." if path else "The task has not created its worktree yet."
+        return jsonify({"error": f"Relay runs on a server, so it cannot open windows on your desktop. {where} "
+                                 "Set Settings → Verification → Browser VS Code URL to open folders in the browser."}), 400
     if path and Path(path).exists():
         if IS_WINDOWS:
             os.startfile(path)  # noqa: S606
