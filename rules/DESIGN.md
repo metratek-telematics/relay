@@ -3,7 +3,7 @@
 This is the house design system. It defines how our products look and feel, and every piece of visible UI work
 is expected to reach it. The goal of UI work is the best design you are capable of, not the smallest diff.
 
-This document is guidance for building visible UI. It is not a list of requirements: supervisors do not copy its sections into acceptance criteria, and it never widens what the user asked for.
+Parts of this document are enforced, not advisory. Relay's design gate fails verification, and so blocks delivery, when added code uses a literal colour outside the token files, a font outside the design system, gradient text, or a term the user has forbidden. The rest is guidance for building visible UI. It is not a list of requirements: supervisors do not copy its sections into acceptance criteria, and it never widens what the user asked for.
 
 ## How to apply it in any repository
 

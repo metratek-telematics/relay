@@ -8,6 +8,12 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Design gate.** Design rules are enforced, not just described. On every line agents add, Relay fails verification
+  (and so blocks delivery) for a literal colour outside the token files, a font outside the design system, gradient
+  text, or a forbidden term; `!important`, deep selector overrides and `backdrop-filter` are reported as warnings.
+  Forbidden terms are set in Settings → Verification, stored only in Relay's settings, and matched case-insensitively
+  with words joined by any separator, so a test regex naming the term is caught too. Workers get the command to run
+  it themselves; repositories can add token files and fonts in `.relay/design-checks.json`.
 - **Clone from GitHub in the New task wizard.** Pick any repository the signed-in
   `gh` account can reach, or type a git URL, and Relay clones it into `RELAY_REPOS`
   (or the managed repositories folder) and selects it. An existing clone is fetched

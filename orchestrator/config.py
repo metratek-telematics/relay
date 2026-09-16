@@ -147,6 +147,9 @@ DEFAULTS = {
     "auto_detect_verification": True,
     "verification_timeout_minutes": 20,
     # git
+    # Design gate: enforced checks on what agents add (token colours, fonts, forbidden terms); see orchestrator/designcheck.py.
+    "design_gate": True,
+    "design_forbidden_terms": [],
     "branch_naming": "type",               # type: feat/…, fix/… from the task type · prefix: <branch_prefix>/…
     "branch_prefix": "agent",
     "snapshot_working_tree": True,

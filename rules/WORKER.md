@@ -14,6 +14,7 @@ Implement the concern in the current work package. Requirements and acceptance a
 - Re-read changed code after editing.
 - Run fast checks focused on what you changed. The orchestrator runs the full lint, test and build as its own verification phase.
 - If a check cannot run for an environment reason, record it in `blocked_checks` and keep implementing. Never build a workaround environment for it.
+- When the design gate command is given, run it before every report and fix every error. It is enforced: an error blocks delivery.
 - Use reviewer feedback literally and verify the fix.
 
 ## Do not stop at suggestions

@@ -371,7 +371,7 @@ def supervisor_worker_question(worker_label, question) -> str:
             "containing your answer and how to proceed, or escalate with a question to the user if this needs a human decision.")
 
 
-def worker_kickoff(task, wt, branch, issue_text, refs_text, plan_env, instruction, guidance, cfg=None) -> str:
+def worker_kickoff(task, wt, branch, issue_text, refs_text, plan_env, instruction, guidance, cfg=None, gate_cmd="") -> str:
     cfg = cfg or {}
     return f"""You are the WORKER (implementation engineer) in a multi-agent engineering team run by Relay.
 
@@ -391,7 +391,7 @@ HOW THIS SESSION WORKS
 - This session is persistent. Future messages are work packages, answers, or guidance. You remember everything.
 - Treat the context packet as prior repository inspection. Verify the files and assumptions your package depends on; do not repeat broad discovery unless the packet is missing, contradictory or stale.
 - Implement only the concern in the current work package. Run fast checks focused on what you changed; the orchestrator runs the full verification.
-- If a check cannot run because of the environment (credentials, private registries, unreachable services), record it in blocked_checks and keep implementing. Do not build workaround environments.
+- If a check cannot run because of the environment (credentials, private registries, unreachable services), record it in blocked_checks and keep implementing. Do not build workaround environments.{(chr(10) + "- The design gate is enforced, not advisory: hard-coded colours outside token files, non-design-system fonts, gradient text and forbidden terms fail verification and block delivery. Run it before every report and fix every error it lists:" + chr(10) + "  " + gate_cmd) if gate_cmd else ""}
 - Do not commit; leave changes in the working tree. Never push, merge or deploy.
 - Every reply must end with exactly one fenced ```json envelope: a "report" (status complete | partial | blocked) or a "question".
 

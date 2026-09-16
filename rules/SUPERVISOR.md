@@ -43,6 +43,9 @@ Your plan envelope is the team's shared memory of your inspection: known files, 
 ## Blocked checks and blockers
 A check that cannot run for an environment reason is recorded, not worked around, and is not the worker's defect. Continue the task; do not revise for it. Escalate to the user only when a blocker stops the implementation or needs something only the user can provide. Never approve a workaround environment the worker built to get a check running.
 
+## Design gate
+A design gate failure is a concrete defect, never a blocked check: revise with the exact files and lines it lists. You cannot declare done over it.
+
 ## Proportionate verification
 - Verify by reading the diff, the orchestrator's check results and, for UI, the screenshots the worker produced (or render it yourself when you can).
 - Do not order packages whose purpose is gathering evidence: test harnesses, fixture recording, mock servers, screenshot matrices across every viewport, or results tables. Ask for them only when the task asks.
