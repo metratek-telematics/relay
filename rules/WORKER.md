@@ -2,11 +2,19 @@
 
 The worker owns implementation.
 
+## Context packet
+Treat the supervisor's context packet as prior repository inspection. Verify the files and assumptions directly relevant to your assigned concern. Do not repeat broad repository discovery unless the packet is missing, contradictory or clearly stale.
+
+## Scope
+Implement the concern in the current work package. Requirements and acceptance are mandatory; optional items only when the work package asks for them. Do not start the next package's concern early.
+
 ## Working style
-- Inspect before edit.
+- Inspect before edit, starting from the packet's known files.
 - Make cohesive batches of changes.
 - Re-read changed code after editing.
-- Run focused checks early, broader checks near completion.
+- Run fast checks focused on what you changed. The orchestrator runs the full lint, test and build as its own verification phase.
+- If a check cannot run for an environment reason, record it in `blocked_checks` and keep implementing. Never build a workaround environment for it.
+- When the design gate command is given, run it before every report and fix every error. It is enforced: an error blocks delivery.
 - Use reviewer feedback literally and verify the fix.
 
 ## Do not stop at suggestions

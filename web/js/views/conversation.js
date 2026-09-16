@@ -4,6 +4,7 @@ import { S, agentLabel, agentInitial, ROLE_LABEL, roleAgent } from "../state.js"
 import { api } from "../api.js";
 import { toast } from "../ui.js";
 import { openFollowUp } from "./newtask.js";
+import { packetHtml, blockedHtml } from "../packet.js";
 
 // ---------------------------------------------------------------------------- edits
 // Agents change files in two ways: an edit tool, whose input carries the file and the
@@ -201,7 +202,8 @@ export function renderMessage(m, t, prevInfo) {
     const long = (m.content || "").length > 700;
     const files = (m.files || []).length ? `<div class="files">${m.files.slice(0, 40).map((f) => `<code>${esc(f)}</code>`).join("")}</div>` : "";
     const statusBadge = m.status ? `<span class="badge ${m.status === "complete" ? "green" : m.status === "blocked" ? "red" : "amber"}">${esc(m.status)}</span>` : "";
-    const findings = (m.findings || []).length ? `<ul class="findings">${m.findings.map((f) => `<li class="${esc(f.severity || "blocking")}"><code>${esc(f.file || "")}</code> ${esc(f.problem || "")}${f.fix ? `<div class="fix">Fix: ${esc(f.fix)}</div>` : ""}</li>`).join("")}</ul>` : "";
+    const findings = ((m.findings || []).length ? `<ul class="findings">${m.findings.map((f) => `<li class="${esc(f.severity || "blocking")}"><code>${esc(f.file || "")}</code> ${esc(f.problem || "")}${f.fix ? `<div class="fix">Fix: ${esc(f.fix)}</div>` : ""}</li>`).join("")}</ul>` : "")
+      + ((m.blocked_checks || []).length ? `<h4 style="margin-top:10px">Could not run</h4>${blockedHtml(m.blocked_checks)}` : "");
     return `<div class="m m-handoff" ${idAttr}>
       <div class="hcard ${cls}">
         <div class="hcard-head">
@@ -214,11 +216,11 @@ export function renderMessage(m, t, prevInfo) {
     </div>`;
   }
   if (k === "plan") {
-    const acc = (m.acceptance || []).map((a) => `<li><i>${icon("check")}</i><span>${esc(a)}</span></li>`).join("");
+    const packet = packetHtml(m);
     return `<div class="m m-handoff" ${idAttr}>
       <div class="hcard plan">
         <div class="hcard-head"><span class="flow">${whoAv(m, "sm")}</span><span class="ttl">Plan agreed${m.summary ? ` · ${esc(m.summary)}` : ""}</span><span class="badge blue">plan</span><time>${time}</time></div>
-        ${clampBody(md(m.content || "") + (acc ? `<h4 style="margin-top:12px">Acceptance criteria</h4><ul class="acceptance">${acc}</ul>` : ""), m.id)}
+        ${clampBody(md(m.content || "") + packet, m.id)}
       </div>
     </div>`;
   }

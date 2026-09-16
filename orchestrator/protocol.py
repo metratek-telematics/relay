@@ -148,6 +148,97 @@ def verdict_from_text(text: str):
     return m.group(1).upper() if m else None
 
 
+# ----------------------------------------------------------------------------- context packet
+def _str_list(value) -> list[str]:
+    if not value:
+        return []
+    if isinstance(value, str):
+        return [line.strip(" -*\t") for line in value.splitlines() if line.strip(" -*\t")]
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    return [str(value)]
+
+
+def normalize_packet(env: dict) -> dict:
+    """The supervisor's plan as structured evidence the worker and reviewer can build on.
+
+    Agents write envelopes by hand, so every field is tolerated in loose shapes:
+    strings or lists, findings as objects or plain lines.
+    """
+    files = env.get("known_files") or {}
+    if isinstance(files, list):
+        files = {"primary": files}
+    findings = []
+    for f in env.get("findings") or []:
+        if isinstance(f, dict):
+            text = str(f.get("finding") or f.get("note") or "").strip()
+            if text:
+                findings.append({"file": str(f.get("file") or "").strip(), "finding": text})
+        elif str(f).strip():
+            findings.append({"file": "", "finding": str(f).strip()})
+    return {
+        "requirements": _str_list(env.get("requirements")),
+        "acceptance": _str_list(env.get("acceptance")),
+        "optional": _str_list(env.get("optional")),
+        "known_files": {"primary": _str_list(files.get("primary")), "supporting": _str_list(files.get("supporting"))},
+        "findings": findings,
+        "constraints": _str_list(env.get("constraints")),
+        "unknowns": _str_list(env.get("unknowns")),
+    }
+
+
+def packet_block(plan: dict) -> str:
+    """Render the context packet compactly; empty sections are left out."""
+    lines = []
+    for key, title in (("requirements", "REQUIREMENTS (the user's request; the only mandatory scope)"),
+                       ("acceptance", "ACCEPTANCE (derived from the requirements; must all hold for done)"),
+                       ("optional", "OPTIONAL (only if cheap and clearly inside the request; never blocks done)")):
+        if plan.get(key):
+            lines += [title, *[f"- {x}" for x in plan[key]], ""]
+    files = plan.get("known_files") or {}
+    if files.get("primary") or files.get("supporting"):
+        lines.append("KNOWN FILES")
+        if files.get("primary"):
+            lines += ["  primary:", *[f"  - {x}" for x in files["primary"]]]
+        if files.get("supporting"):
+            lines += ["  supporting:", *[f"  - {x}" for x in files["supporting"]]]
+        lines.append("")
+    if plan.get("findings"):
+        lines += ["FINDINGS (what the supervisor observed; verify what your package depends on)",
+                  *[f"- {f['file'] + ': ' if f.get('file') else ''}{f['finding']}" for f in plan["findings"]], ""]
+    for key, title in (("constraints", "CONSTRAINTS"), ("unknowns", "UNKNOWNS")):
+        if plan.get(key):
+            lines += [title, *[f"- {x}" for x in plan[key]], ""]
+    return "\n".join(lines).strip() or "(the supervisor did not provide a context packet)"
+
+
+def blocked_checks(env: dict) -> list[dict]:
+    out = []
+    for b in env.get("blocked_checks") or []:
+        if isinstance(b, dict) and (b.get("check") or b.get("reason")):
+            out.append({"check": str(b.get("check") or "").strip(), "reason": str(b.get("reason") or "").strip(),
+                        "impact": str(b.get("impact") or "").strip(), "action_required": bool(b.get("action_required"))})
+    return out
+
+
+def blockers(env: dict) -> list[dict]:
+    out = []
+    for b in env.get("blockers") or []:
+        if isinstance(b, dict) and b.get("reason"):
+            out.append({"reason": str(b.get("reason")).strip(), "impact": str(b.get("impact") or "").strip(),
+                        "action_required": bool(b.get("action_required"))})
+        elif isinstance(b, str) and b.strip():
+            out.append({"reason": b.strip(), "impact": "", "action_required": False})
+    return out
+
+
+def blocked_block(checks: list[dict]) -> str:
+    if not checks:
+        return "(none)"
+    return "\n".join(f"- {c['check'] or '(check)'}: {c['reason']}" + (f" · impact: {c['impact']}" if c.get("impact") else "")
+                     + (" · needs the user" if c.get("action_required") else "") for c in checks)
+
+
 # ----------------------------------------------------------------------------- prompts
 def _label(agent):
     return C.AGENTS.get(agent, {}).get("label", agent or "none")
@@ -204,7 +295,14 @@ HOW THIS SESSION WORKS
 - Every reply must end with exactly one fenced ```json envelope as defined in the protocol.
 
 YOUR FIRST JOB
-Inspect the repository (structure, relevant modules, existing local changes, build/test setup). Then reply with the "plan" envelope containing: a one-line summary, the markdown plan, objective acceptance criteria, and the first concrete work package for the worker.
+Inspect the repository enough to plan: the files the request touches, existing local changes, build/test setup. Then reply with the "plan" envelope. It is the team's shared context packet, so the worker does not repeat your discovery:
+- requirements: the user's request restated as short items, nothing added;
+- acceptance: observable criteria derived from those requirements only;
+- optional: improvements you would suggest but the user did not ask for (they never block done);
+- known_files (primary, supporting), findings (file + what you saw), constraints, unknowns;
+- summary, a short markdown plan listing the work packages in order, and the first work package as instruction.
+Rule files describe how to work; never copy their checklists into requirements or acceptance.
+Keep the instruction short: name the concern, the files, the expected result. The packet already carries the context.
 """
 
 
@@ -226,6 +324,13 @@ def supervisor_after_report(worker_label, turn, report_env, report_text, verific
         lines += ["", "Files the worker says it changed:", *[f"- {f}" for f in shown]]
         if len(files) > len(shown):
             lines.append(f"- …and {len(files) - len(shown)} more")
+    checks = blocked_checks(report_env or {})
+    stops = blockers(report_env or {})
+    if checks:
+        lines += ["", "Checks the worker could not run", blocked_block(checks)]
+    if stops:
+        lines += ["", "Blockers the worker reported", *[f"- {b['reason']}" + (f" · impact: {b['impact']}" if b['impact'] else "")
+                                                         + (" · needs the user" if b['action_required'] else "") for b in stops]]
     lines += ["", "ORCHESTRATOR · verification results", verification or "(verification not run at this point)"]
     lines += ["", f"ORCHESTRATOR · git status ({diffstat.get('files',0)} files, +{diffstat.get('insertions',0)} / -{diffstat.get('deletions',0)})"]
     shown_changed = changed[:max_files]
@@ -235,7 +340,8 @@ def supervisor_after_report(worker_label, turn, report_env, report_text, verific
     if guidance:
         lines += ["", "USER GUIDANCE (new)", guidance]
     lines += ["", f"ORCHESTRATOR · {remaining} work package(s) remain before the turn budget is exhausted."]
-    lines += ["", "Inspect the actual repository state yourself (diff, files, checks). Then reply with ONE envelope:",
+    lines += ["", "Inspect the diff and the files this package changed (not the whole repository again). Judge against requirements and acceptance only; a failure matching a recorded blocked check is not the worker's defect.",
+              "Then reply with ONE envelope:",
               '- {"type":"decision","decision":"revise",...} with exact required fixes, or',
               '- {"type":"instruction",...} with the next work package, or',
               '- {"type":"decision","decision":"done",...} with a pr_summary when every acceptance criterion is met with evidence, or',
@@ -265,10 +371,8 @@ def supervisor_worker_question(worker_label, question) -> str:
             "containing your answer and how to proceed, or escalate with a question to the user if this needs a human decision.")
 
 
-def worker_kickoff(task, wt, branch, issue_text, refs_text, plan_env, instruction, guidance, cfg=None) -> str:
+def worker_kickoff(task, wt, branch, issue_text, refs_text, plan_env, instruction, guidance, cfg=None, gate_cmd="") -> str:
     cfg = cfg or {}
-    acceptance = plan_env.get("acceptance") or []
-    acc = "\n".join(f"- {a}" for a in acceptance) if isinstance(acceptance, list) else str(acceptance)
     return f"""You are the WORKER (implementation engineer) in a multi-agent engineering team run by Relay.
 
 {team_intro(task, wt, branch)}
@@ -278,14 +382,16 @@ def worker_kickoff(task, wt, branch, issue_text, refs_text, plan_env, instructio
 PLAN AGREED BY THE SUPERVISOR
 {plan_env.get('plan','')}
 
-ACCEPTANCE CRITERIA
-{acc}
+CONTEXT PACKET FROM THE SUPERVISOR
+{packet_block(plan_env)}
 
 {rules_block(rule_names_for("worker", cfg, task.get("requirements", "") + " " + str(plan_env.get("plan", ""))))}
 
 HOW THIS SESSION WORKS
 - This session is persistent. Future messages are work packages, answers, or guidance. You remember everything.
-- Implement each work package fully, run the relevant local checks, re-read your changes, then report.
+- Treat the context packet as prior repository inspection. Verify the files and assumptions your package depends on; do not repeat broad discovery unless the packet is missing, contradictory or stale.
+- Implement only the concern in the current work package. Run fast checks focused on what you changed; the orchestrator runs the full verification.
+- If a check cannot run because of the environment (credentials, private registries, unreachable services), record it in blocked_checks and keep implementing. Do not build workaround environments.{(chr(10) + "- The design gate is enforced, not advisory: hard-coded colours outside token files, non-design-system fonts, gradient text and forbidden terms fail verification and block delivery. Run it before every report and fix every error it lists:" + chr(10) + "  " + gate_cmd) if gate_cmd else ""}
 - Do not commit; leave changes in the working tree. Never push, merge or deploy.
 - Every reply must end with exactly one fenced ```json envelope: a "report" (status complete | partial | blocked) or a "question".
 
@@ -306,10 +412,8 @@ def worker_followup(sup_label, turn, instruction, guidance, kind="instruction") 
     return "\n".join(parts)
 
 
-def reviewer_kickoff(task, wt, branch, plan_env, pr_summary, verification, diff_text, round_no, cfg=None) -> str:
+def reviewer_kickoff(task, wt, branch, plan_env, pr_summary, verification, diff_text, round_no, cfg=None, blocked=None) -> str:
     cfg = cfg or {}
-    acceptance = plan_env.get("acceptance") or []
-    acc = "\n".join(f"- {a}" for a in acceptance) if isinstance(acceptance, list) else str(acceptance)
     return f"""You are the INDEPENDENT REVIEWER in a multi-agent engineering team run by Relay.
 
 {team_intro(task, wt, branch)}
@@ -319,8 +423,10 @@ def reviewer_kickoff(task, wt, branch, plan_env, pr_summary, verification, diff_
 PLAN
 {plan_env.get('plan','')}
 
-ACCEPTANCE CRITERIA
-{acc}
+{packet_block(plan_env)}
+
+CHECKS THAT COULD NOT RUN
+{blocked_block(blocked or [])}
 
 SUPERVISOR'S COMPLETION SUMMARY
 {pr_summary or '(none provided)'}
@@ -335,7 +441,8 @@ DIFF (may be truncated — inspect the repository yourself)
 
 HOW THIS SESSION WORKS
 - This session is persistent; on later rounds you receive the new state and can check whether earlier findings were fixed.
-- Inspect the actual repository: git status, git diff, changed files, relevant surrounding code, tests. Run checks yourself when useful. Do not modify files.
+- Compare the implementation against the requirements and acceptance criteria. Inspect the diff and the code around it, the verification results and the checks that could not run. Do not modify files.
+- You are a gate, not a second designer: request corrections only for concrete defects (a missed requirement or acceptance criterion, a regression, a bug, a security problem). Optional items, style preferences and alternative designs are never blocking.
 - Review round {round_no}. Reply with exactly one fenced ```json envelope of type "review" with verdict PASS or FAIL and concrete findings.
 """
 

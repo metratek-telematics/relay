@@ -40,6 +40,9 @@ If a verification command fails:
 4. distinguish unrelated/pre-existing failures;
 5. do not suppress or weaken tests merely to obtain green output.
 
+## Who runs what
+The worker runs fast checks focused on its change. The orchestrator runs the full verification commands as a separate phase, and the reviewer reads the results. A check that cannot run for an environment reason is reported in `blocked_checks`, never worked around.
+
 ## Proportion
 Verification exists to catch real problems, not to produce paperwork. Use the repository's existing test, lint and build commands. Add tests for changed logic where the repository already tests that layer.
 

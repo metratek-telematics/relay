@@ -84,11 +84,12 @@ TASK_TEMPLATES = [
 DEFAULTS = {
     "build": BUILD,
     # workflow
-    "workflow_preset": "codex-supervises-claude",
+    # An independent reviewer by default: a gate that checks the result against the request, not a second designer.
+    "workflow_preset": "codex-claude-independent-review",
     "roles": {
         "supervisor": {"agent": "codex", "model": "", "effort": ""},
         "worker": {"agent": "claude", "model": "", "effort": ""},
-        "reviewer": {"agent": "", "model": "", "effort": ""},
+        "reviewer": {"agent": "codex", "model": "", "effort": ""},
     },
     "models": copy.deepcopy(DEFAULT_MODELS),
     "max_turns": 12,
@@ -146,6 +147,9 @@ DEFAULTS = {
     "auto_detect_verification": True,
     "verification_timeout_minutes": 20,
     # git
+    # Design gate: enforced checks on what agents add (token colours, fonts, forbidden terms); see orchestrator/designcheck.py.
+    "design_gate": True,
+    "design_forbidden_terms": [],
     "branch_naming": "type",               # type: feat/…, fix/… from the task type · prefix: <branch_prefix>/…
     "branch_prefix": "agent",
     "snapshot_working_tree": True,

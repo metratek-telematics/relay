@@ -213,6 +213,10 @@ export function mountSettings(main, section) {
         <div class="field inline"><label>Auto-detect commands from the repository (npm scripts, pytest, gradle, cargo, go, dotnet)</label><span class="switch ${c.auto_detect_verification ? "on" : ""}" data-sw-cfg="auto_detect_verification"></span></div>
         <div class="grid2"><div class="field"><label>Default mode</label><select data-cfg="verify_mode"><option value="each_report" ${c.verify_mode === "each_report" ? "selected" : ""}>After every worker report</option><option value="before_review" ${c.verify_mode === "before_review" ? "selected" : ""}>Only before review / delivery</option><option value="off" ${c.verify_mode === "off" ? "selected" : ""}>Off</option></select></div>
         <div class="field"><label>Command timeout (minutes)</label><input type="number" min="1" data-cfg="verification_timeout_minutes" value="${esc(c.verification_timeout_minutes)}"></div></div>
+      </div></div>
+      <div class="card" style="margin-top:14px"><div class="card-head"><h3>Design gate</h3><span class="badge ${c.design_gate !== false ? "green" : ""}">${c.design_gate !== false ? "enforced" : "off"}</span></div><div class="card-body">
+        <div class="field inline"><label>Block delivery when agents add hard-coded colours outside token files, fonts outside the design system, gradient text or a forbidden term</label><span class="switch ${c.design_gate !== false ? "on" : ""}" data-sw-cfg="design_gate"></span></div>
+        <div class="field"><label>Forbidden terms (one per line)</label><textarea data-cfg="design_forbidden_terms" data-list="1" rows="3" placeholder="a brand or client name that must never appear">${esc((c.design_forbidden_terms || []).join("\n"))}</textarea><div class="help">Checked in every added line of code, tests and docs, case-insensitive, with words joined by any separator. Stored in Relay's settings only, never written to a repository. A repository can add its own rules in <code>.relay/design-checks.json</code> (token files, fonts).</div></div>
       </div></div>`;
       bindAuto();
     } else if (cur === "git") {

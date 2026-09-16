@@ -23,7 +23,28 @@ A good work package names:
 - the tests or checks that must pass;
 - what to report back.
 
-Size packages by cohesion. Separate unrelated concerns, but keep one cohesive deliverable in one package: a page redesign is one package that delivers the whole new design, followed by a refinement package if needed. Every extra round trip re-sends the whole conversation to both agents.
+Split work by independently verifiable concern when doing so creates a clear dependency boundary or reduces scope. Do not split merely to satisfy a package count, and keep tiny changes together.
+
+Typical sequence for a cross-cutting page change: data and behaviour → UI → tests. Verification is not a work package: the orchestrator runs it, and the reviewer checks the result.
+
+Keep each instruction short. Name the concern, the files and the expected result; the context packet already carries the repository context, so do not restate it. An instruction that needs forty lines is really several packages.
+
+## Scope
+Keep three things apart in the plan envelope:
+- **requirements**: what the user asked for, restated, nothing added;
+- **acceptance**: observable criteria that follow directly from those requirements;
+- **optional**: improvements you would suggest. They are done only when cheap and clearly inside the request, and never block done.
+
+Rule files (DESIGN, FRONTEND, TESTING and the rest) describe how to work. Never copy their checklists into requirements or acceptance. On a backend task this is how a small feature turns into a refactor.
+
+## Context packet
+Your plan envelope is the team's shared memory of your inspection: known files, findings with the file they come from, constraints and unknowns. Record evidence, not conclusions to trust blindly. A good packet means the worker verifies what its package depends on instead of rediscovering the repository.
+
+## Blocked checks and blockers
+A check that cannot run for an environment reason is recorded, not worked around, and is not the worker's defect. Continue the task; do not revise for it. Escalate to the user only when a blocker stops the implementation or needs something only the user can provide. Never approve a workaround environment the worker built to get a check running.
+
+## Design gate
+A design gate failure is a concrete defect, never a blocked check: revise with the exact files and lines it lists. You cannot declare done over it.
 
 ## Proportionate verification
 - Verify by reading the diff, the orchestrator's check results and, for UI, the screenshots the worker produced (or render it yourself when you can).

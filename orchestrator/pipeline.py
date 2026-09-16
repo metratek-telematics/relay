@@ -17,9 +17,9 @@ import traceback
 from pathlib import Path
 
 from . import config as C
-from . import gitops, github, protocol
+from . import designcheck, gitops, github, protocol
 from .runner import Interrupted, Stopped, TurnTimeout
-from .util import new_id, now, quiet, read_text, truncate, write_text
+from .util import APP_DIR, new_id, now, quiet, read_text, truncate, write_text
 
 SUP_TYPES = {"plan", "instruction", "decision", "question"}
 WRK_TYPES = {"report", "question"}
@@ -78,6 +78,7 @@ class Pipeline:
         self.max_review_rounds = int(wf.get("max_review_rounds") or self.cfg.get("max_review_rounds") or 3)
         self.verify_mode = wf.get("verify_mode") or self.cfg.get("verify_mode") or "each_report"
         self.approval = bool(wf.get("approval_before_delivery", self.cfg.get("approval_before_delivery", False)))
+        self.design_gate = bool(self.cfg.get("design_gate", True))
         self.allow_questions = bool(wf.get("allow_agent_questions", self.cfg.get("allow_agent_questions", True)))
         self.run_dir = manager.store.task_dir(self.tid)
         self.sessions = dict(task.get("sessions") or {})
@@ -255,11 +256,34 @@ class Pipeline:
         return res, env
 
     # ------------------------------------------------------------ verification
-    def run_verification(self):
-        if not self.verify_cmds:
+    def forbidden_terms_file(self):
+        """Terms live in Relay's settings and its run folder, never in the repository the agents work on."""
+        terms = [t.strip() for t in self.cfg.get("design_forbidden_terms") or [] if str(t).strip()]
+        path = self.run_dir / "forbidden-terms.txt"
+        write_text(path, "\n".join(terms) + ("\n" if terms else ""))
+        return path, terms
+
+    def gate_command(self):
+        if not self.design_gate or not self.base:
             return ""
-        self.r.status("verifying", f"Running {len(self.verify_cmds)} verification command(s)")
-        self.r.timeline("verify", "Verification", ", ".join(self.verify_cmds))
+        path, _ = self.forbidden_terms_file()
+        return f"python3 {APP_DIR / 'orchestrator' / 'designcheck.py'} --base {self.base} --forbid-file {path}"
+
+    def run_design_gate(self):
+        _, terms = self.forbidden_terms_file()
+        started = time.time()
+        result = designcheck.check(self.wt, self.base, terms)
+        text = designcheck.report_text(result)
+        self.m.set_meta(self.tid, design_gate={"ok": result["ok"], "errors": len(result["errors"]), "warnings": len(result["warnings"]),
+                                               "findings": (result["errors"] + result["warnings"])[:80], "time": now()})
+        return {"command": "Design gate", "ok": result["ok"], "rc": 0 if result["ok"] else 1, "skipped": False,
+                "duration": round(time.time() - started, 1)}, text
+
+    def run_verification(self):
+        if not self.verify_cmds and not self.design_gate:
+            return ""
+        self.r.status("verifying", f"Running {len(self.verify_cmds) + (1 if self.design_gate else 0)} verification check(s)")
+        self.r.timeline("verify", "Verification", ", ".join(self.verify_cmds + (["design gate"] if self.design_gate else [])))
         items = []
         parts = []
         timeout = float(self.cfg.get("verification_timeout_minutes") or 20) * 60
@@ -277,6 +301,11 @@ class Pipeline:
             # A passing command only needs its verdict; a failure needs output the agents can act on.
             body = "" if (res["ok"] and quiet_pass) else "\n" + truncate(res["output"], fail_chars, tail=True)
             parts.append(head + body)
+        if self.design_gate and self.base:
+            item, text = self.run_design_gate()
+            items.append(item)
+            # Every violation is listed: the gate is only useful if the team can fix each line it names.
+            parts.append(text)
         vt = "\n\n".join(parts)
         all_ok = all(i["ok"] for i in items)
         self.artifact("verification", "VERIFICATION.md", vt)
@@ -349,15 +378,15 @@ class Pipeline:
                        "acceptance": [], "instruction": env["instruction"]}
             else:
                 raise RuntimeError("The supervisor did not produce a plan envelope.")
-        plan = {"summary": env.get("summary", ""), "plan": env.get("plan", ""), "acceptance": env.get("acceptance") or []}
-        if not isinstance(plan["acceptance"], list):
-            plan["acceptance"] = [str(plan["acceptance"])]
+        plan = {"summary": env.get("summary", ""), "plan": env.get("plan", ""), **protocol.normalize_packet(env)}
         self.state["plan"] = plan
-        self.artifact("plan", "PLAN.md", plan["plan"])
+        self.artifact("plan", "PLAN.md", plan["plan"] + "\n\n## Context packet\n\n```\n" + protocol.packet_block(plan) + "\n```\n")
         self.artifact("acceptance", "ACCEPTANCE.md", "\n".join(f"- [ ] {a}" for a in plan["acceptance"]))
         self.m.set_meta(self.tid, plan=plan)
         self.r.msg(role="supervisor", agent=sup_agent, kind="plan", summary=plan["summary"], content=plan["plan"],
-                   acceptance=plan["acceptance"], turn=0)
+                   acceptance=plan["acceptance"], requirements=plan["requirements"], optional=plan["optional"],
+                   known_files=plan["known_files"], findings=plan["findings"], constraints=plan["constraints"],
+                   unknowns=plan["unknowns"], turn=0)
         self.r.timeline("supervisor", "Plan agreed", plan["summary"] or f"{len(plan['acceptance'])} acceptance criteria")
         self.state.update({"phase": "dialogue", "turn": 1, "awaiting": "worker",
                            "instruction": env.get("instruction") or "Implement the plan.", "instruction_kind": "instruction",
@@ -381,7 +410,8 @@ class Pipeline:
                 sess = self.sessions.get("worker") or {}
                 if int(sess.get("turns", 0)) == 0 or sess.get("agent") != wrk_agent:
                     prompt = protocol.worker_kickoff(self.task, self.wt, self.branch, self.issue_text, self.refs_text,
-                                                     self.state.get("plan") or {}, self.state.get("instruction", ""), guidance, self.cfg)
+                                                     self.state.get("plan") or {}, self.state.get("instruction", ""), guidance, self.cfg,
+                                                     self.gate_command())
                 else:
                     prompt = protocol.worker_followup(_label(sup_agent), turn, self.state.get("instruction", ""), guidance, kind)
                 if self.state.get("resumed"):
@@ -389,11 +419,21 @@ class Pipeline:
                     self.state["resumed"] = False
                 res, env = self.worker_turn(prompt, f"Work package #{turn}", turn)
                 report = {"status": env.get("status", "complete"), "summary": env.get("summary", ""),
-                          "report": env.get("report") or env.get("_text", ""), "files": env.get("files") or []}
+                          "report": env.get("report") or env.get("_text", ""), "files": env.get("files") or [],
+                          "blocked_checks": protocol.blocked_checks(env), "blockers": protocol.blockers(env)}
+                self.record_blocked(report["blocked_checks"])
+                # Only blockers the user alone can clear interrupt them; everything else is recorded and work goes on.
+                for b in [b for b in report["blockers"] + report["blocked_checks"] if b.get("action_required")]:
+                    what = b.get("check") or "Work"
+                    follow = self.ask_human("worker", {"question": f"{what} is blocked: {b['reason']}" + (f"\nImpact: {b['impact']}" if b.get("impact") else "")
+                                                        + "\nHow should the team proceed?",
+                                                        "options": ["Continue without it", "I have fixed it, retry", "Stop the task"]})
+                    report["report"] += "\n\n" + follow
                 self.state["report"] = report
                 self.artifact("implementation", "IMPLEMENTATION.md", f"# Work package #{turn} · {report['status']}\n\n{report['report']}")
                 self.handoff("worker", "supervisor", f"Report · work package #{turn} · {report['status']}", report["report"],
-                             subtype="report", status=report["status"], summary=report["summary"], files=report["files"][:60])
+                             subtype="report", status=report["status"], summary=report["summary"], files=report["files"][:60],
+                             blocked_checks=report["blocked_checks"] + [{"check": "Implementation", **b} for b in report["blockers"]])
                 self.r.timeline("worker", f"Work package #{turn} reported {report['status']}", report["summary"])
                 self.state["last_verification"] = self.run_verification() if self.verify_mode == "each_report" else ""
                 self.state["awaiting"] = "supervisor"
@@ -423,7 +463,8 @@ class Pipeline:
             self.r.msg(role="supervisor", agent=sup_agent, kind="decision", decision="done", summary=env.get("summary", ""),
                        content=self.state["pr_summary"], turn=turn)
             self.r.timeline("supervisor", "Supervisor declared the task complete", env.get("summary", ""))
-            if self.verify_mode == "before_review" and self.verify_cmds:
+            # The design gate is enforced at done even when command verification is off.
+            if (self.verify_mode == "before_review" and self.verify_cmds) or (self.design_gate and self.verify_mode != "each_report"):
                 vt = self.run_verification()
                 self.state["last_verification"] = vt
                 if not (self.task_meta().get("verification") or {}).get("ok", True):
@@ -455,6 +496,17 @@ class Pipeline:
             return
         raise RuntimeError(f"Unexpected supervisor envelope: {typ}")
 
+    def record_blocked(self, checks):
+        """Keep one entry per check across work packages, so the reviewer and the task page see them all."""
+        if not checks:
+            return
+        merged = {(c.get("check") or c.get("reason")): c for c in self.state.get("blocked_checks") or []}
+        for c in checks:
+            merged[c.get("check") or c.get("reason")] = c
+        self.state["blocked_checks"] = list(merged.values())
+        self.m.set_meta(self.tid, blocked_checks=self.state["blocked_checks"])
+        self.r.timeline("worker", "Checks could not run", ", ".join(c.get("check") or c.get("reason") for c in checks))
+
     def task_meta(self):
         return self.m.store.get(self.tid) or {}
 
@@ -466,14 +518,15 @@ class Pipeline:
             rnd = int(self.state.get("review_round") or 1)
             self.r.status("reviewing", f"{_label(rev_agent)} is reviewing independently · round {rnd}/{self.max_review_rounds}")
             vt = self.state.get("last_verification") or ""
-            if self.verify_cmds and self.verify_mode != "off" and not vt:
+            if ((self.verify_cmds and self.verify_mode != "off") or self.design_gate) and not vt:
                 vt = self.run_verification()
                 self.state["last_verification"] = vt
             diff = gitops.full_diff(self.wt, int(self.cfg.get("budget_diff_chars") or 50000), self.base)
             sess = self.sessions.get("reviewer") or {}
             if int(sess.get("turns", 0)) == 0 or sess.get("agent") != rev_agent:
                 prompt = protocol.reviewer_kickoff(self.task, self.wt, self.branch, self.state.get("plan") or {},
-                                                   self.state.get("pr_summary", ""), vt, diff, rnd, self.cfg)
+                                                   self.state.get("pr_summary", ""), vt, diff, rnd, self.cfg,
+                                                   self.state.get("blocked_checks") or [])
             else:
                 prompt = protocol.reviewer_followup(rnd, vt, diff, self.state.get("pr_summary", ""))
             self.handoff("orchestrator", "reviewer", f"Independent review requested · round {rnd}", self.state.get("pr_summary", ""), subtype="review_request")

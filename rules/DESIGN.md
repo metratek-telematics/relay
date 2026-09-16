@@ -3,6 +3,8 @@
 This is the house design system. It defines how our products look and feel, and every piece of visible UI work
 is expected to reach it. The goal of UI work is the best design you are capable of, not the smallest diff.
 
+Parts of this document are enforced, not advisory. Relay's design gate fails verification, and so blocks delivery, when added code uses a literal colour outside the token files, a font outside the design system, gradient text, or a term the user has forbidden. The rest is guidance for building visible UI. It is not a list of requirements: supervisors do not copy its sections into acceptance criteria, and it never widens what the user asked for.
+
 ## How to apply it in any repository
 
 - **The visual language here is authoritative**: palette, themes, state colours, elevation, typography, shape,
@@ -192,5 +194,5 @@ When the task says redesign, overhaul, rebuild, new layout or "from scratch":
   fit the new design. Do not pile `:deep()`, `!important` or wrapper overrides onto the old look.
 - **Preserve behaviour and data contracts, not markup.** Routes, API calls, emitted events and props used elsewhere,
   stored preferences and existing features must keep working. Old CSS, class names and DOM structure do not need to survive.
-- **Deliver the whole new design in the first pass**, then refine. A timid first version costs more turns than a complete one.
+- **The UI work package delivers the whole new design**, not a timid restyle to be completed later. Data and behaviour changes it depends on come in their own package first.
 - Adding the design system's fonts and tokens is part of the job, not scope creep.
