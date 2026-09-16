@@ -2,9 +2,13 @@
 from __future__ import annotations
 
 import json
+import os
+import re
+import shutil
+import time
 from pathlib import Path
 
-from .util import GITHUB_SOURCES_FILE, MANAGED_REPOS_DIR, quiet, read_json, safe_slug, which, write_json
+from .util import GITHUB_SOURCES_FILE, MANAGED_REPOS_DIR, quiet, read_json, safe_slug, truncate, which, write_json
 
 
 def gh_json(args, cwd=None, timeout=60):
@@ -133,3 +137,82 @@ def create_pr(runner, wt, repo_full, branch, title, body_file, base="", draft=Tr
     except Exception:
         pass
     return data
+
+
+def clone_root() -> Path:
+    """Where the New task wizard clones to.
+
+    RELAY_REPOS is the folder the operator already chose for repositories (and in
+    Docker it is the one mounted at the same path as the host), so clones land
+    beside the repositories Relay already browses.
+    """
+    raw = os.environ.get("RELAY_REPOS") or os.environ.get("RELAY_BROWSE_ROOT")
+    root = Path(raw).expanduser() if raw else MANAGED_REPOS_DIR
+    root.mkdir(parents=True, exist_ok=True)
+    return root.resolve()
+
+
+_repo_cache = {"at": 0.0, "rows": []}
+
+
+def accessible_repos(force=False) -> list:
+    """Repositories the signed-in gh account owns or reaches through its organisations."""
+    if not force and _repo_cache["rows"] and time.time() - _repo_cache["at"] < 300:
+        return _repo_cache["rows"]
+    owners = [gh_text(["api", "user", "--jq", ".login"], timeout=30)]
+    try:
+        owners += [o for o in gh_text(["api", "user/orgs", "--paginate", "--jq", ".[].login"], timeout=60).splitlines() if o]
+    except RuntimeError:
+        pass  # a token without read:org still lists the user's own repositories
+    rows, seen = [], set()
+    for owner in owners:
+        try:
+            found = gh_json(["repo", "list", owner, "--limit", "400", "--json", "nameWithOwner,description,isPrivate,updatedAt"], timeout=90) or []
+        except RuntimeError:
+            continue
+        for r in found:
+            if r["nameWithOwner"] not in seen:
+                seen.add(r["nameWithOwner"])
+                rows.append({"repo": r["nameWithOwner"], "description": r.get("description") or "",
+                             "private": bool(r.get("isPrivate")), "updated": r.get("updatedAt") or ""})
+    rows.sort(key=lambda r: r["updated"], reverse=True)
+    _repo_cache.update(at=time.time(), rows=rows)
+    return rows
+
+
+def clone_repo(spec, name=None) -> dict:
+    """Clone owner/repo or a git URL into clone_root(), reusing an existing checkout."""
+    spec = (spec or "").strip()
+    if not spec:
+        raise ValueError("Give a repository as owner/name or a git URL")
+    is_github = "github.com" in spec or re.fullmatch(r"[\w.-]+/[\w.-]+", spec) is not None
+    full = normalize_repo_full_name(spec) if is_github else spec
+    base = (name or "").strip() or full.rstrip("/").split("/")[-1].split(":")[-1]
+    if base.endswith(".git"):
+        base = base[:-4]
+    base = safe_slug(base, 100)
+    if base in (".", "..") or base.startswith("."):
+        raise ValueError("Invalid folder name")
+    target = clone_root() / base
+    if target.exists():
+        if (target / ".git").exists():
+            existing = remote_repo_name(target) if is_github else None
+            if is_github and existing and existing.lower() != full.lower():
+                raise ValueError(f"{target} already holds {existing}. Choose another folder name.")
+            quiet(["git", "fetch", "--prune", "origin"], cwd=target, timeout=300)
+            return {"path": str(target), "cloned": False}
+        raise ValueError(f"{target} already exists and is not a git repository")
+    if is_github:
+        if "/" not in full:
+            raise ValueError("Use owner/repository")
+        args = ["gh", "repo", "clone", full, str(target)]
+    else:
+        # A leading dash would be read as a git option rather than a URL.
+        if spec.startswith("-"):
+            raise ValueError("Invalid repository URL")
+        args = ["git", "clone", "--", spec, str(target)]
+    p = quiet(args, cwd=clone_root(), timeout=900)
+    if p.returncode != 0:
+        shutil.rmtree(target, ignore_errors=True)
+        raise RuntimeError(truncate(((p.stdout or "") + (p.stderr or "")).strip(), 800))
+    return {"path": str(target), "cloned": True}

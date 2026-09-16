@@ -8,6 +8,10 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Clone from GitHub in the New task wizard.** Pick any repository the signed-in
+  `gh` account can reach, or type a git URL, and Relay clones it into `RELAY_REPOS`
+  (or the managed repositories folder) and selects it. An existing clone is fetched
+  and reused instead of cloned again.
 - **Ubuntu support.** `run.sh` sets up a virtual environment and starts Relay, and
   `deploy/relay.service` runs it as a systemd user service with your own logins.
 - **Docker mode.** A `Dockerfile` and `docker-compose.yml` that install the agent
