@@ -429,6 +429,10 @@ class Manager:
         if fresh or not (t.get("checkpoint") and t.get("worktree") and Path(t.get("worktree") or "").exists()):
             patch.update({"checkpoint": None, "sessions": {}, "plan": None, "verification": None, "review": None})
             patch["detail"] = "Queued · fresh start"
+            if t.get("started_at"):
+                # A new run: elapsed time, the work chart and the signals describe it alone.
+                patch.update({"started_at": None, "runs": int(t.get("runs") or 1) + 1, "blocked_checks": None, "design_gate": None,
+                              "environment": None, "diffstat": None, "changed_count": 0, "base_commit": None, "summary": ""})
         else:
             patch["detail"] = "Queued · resuming from checkpoint"
         self.store.update(tid, immediate=True, **patch)

@@ -168,9 +168,11 @@ def work_segments(task, messages) -> dict:
     review_round = 0
     in_review_turn = None
     gate_passed = False
+    # A task retried from scratch keeps its old messages for reference; chart only the current run.
+    run_start = _epoch(task.get("started_at")) if task.get("started_at") else None
     for m in messages:
         ts = m.get("ts")
-        if not isinstance(ts, (int, float)):
+        if not isinstance(ts, (int, float)) or (run_start and ts < run_start - 1):
             continue
         kind, role, turn = m.get("kind"), m.get("role"), m.get("turn")
         key = cur["key"] if cur else "plan"
@@ -207,7 +209,7 @@ def work_segments(task, messages) -> dict:
             cur["agents"][m["agent"]] = cur["agents"].get(m["agent"], 0) + 1
 
     finished = _epoch(task.get("finished_at")) if task.get("finished_at") else None
-    log = list((task.get("metrics") or {}).get("log") or [])
+    log = [e for e in (task.get("metrics") or {}).get("log") or [] if not run_start or (e.get("start") or 0) >= run_start - 1]
     out = []
     for i, s in enumerate(segs):
         # A phase lasts until the next one begins; waits for a person inside it are part of its wall time.

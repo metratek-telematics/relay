@@ -121,6 +121,15 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Endless done → verification loop.** When a verification command failed for a reason unrelated to the task, the
+  supervisor declared done again and Relay re-ran the full verification, forever. A failing command is now run once on
+  the task's starting commit in a temporary worktree; if it fails there too it is reported as a pre-existing failure
+  and does not block. Real failures get one supervisor triage round; after that the task stops for the user.
+- **Retry from scratch mixed runs together.** Elapsed time counted from the first run, the work chart and signals
+  combined runs, and the conversation gave no hint where the new run began. A fresh retry now starts a new run: timing,
+  work chart, blocked checks, design gate and environment reset, and a divider marks the run in the conversation.
+- **"Backend offline · keep run.bat open" on a server install.** An expired login-proxy session looked like a dead
+  backend. The page now says Signed out with a reload link, and a server install no longer mentions run.bat.
 - **Preview failed for HTTPS dev servers.** code-server's port proxy speaks plain HTTP, so projects whose dev server
   uses HTTPS (Vite with basic-ssl) returned an error. The IDE image now has `relay-preview`, which starts the dev
   server with the right base path and bridges the proxy to it over HTTPS or HTTP, including the live-reload

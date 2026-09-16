@@ -245,7 +245,8 @@ $("#stopQueueBtn").onclick = async () => { try { S.queue = await api.queueStop()
 $("#parallelInput").addEventListener("change", async (e) => { const n = Math.max(1, Number(e.target.value) || 1); await api.saveSettings({ max_parallel: n }); if (S.queue.running) S.queue = await api.queueStart(n); renderQueue(); });
 function renderConn() {
   const dot = $("#connDot"), txt = $("#connText");
-  if (!conn.online) { dot.className = "dot off"; txt.textContent = "Backend offline · keep run.bat open"; return; }
+  if (conn.signedOut) { dot.className = "dot warn"; txt.innerHTML = 'Signed out · <a href="" onclick="location.reload();return false">reload to sign in</a>'; return; }
+  if (!conn.online) { dot.className = "dot off"; txt.textContent = S.config?.ide_url || location.hostname !== "127.0.0.1" ? "Relay server unreachable · retrying" : "Backend offline · keep run.bat open"; return; }
   if (conn.stream) { dot.className = "dot on"; txt.textContent = `Live · v${S.build || ""}`; }
   else { dot.className = "dot warn"; txt.textContent = "Reconnecting live stream…"; }
 }
