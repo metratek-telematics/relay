@@ -121,6 +121,10 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Preview failed for HTTPS dev servers.** code-server's port proxy speaks plain HTTP, so projects whose dev server
+  uses HTTPS (Vite with basic-ssl) returned an error. The IDE image now has `relay-preview`, which starts the dev
+  server with the right base path and bridges the proxy to it over HTTPS or HTTP, including the live-reload
+  websocket; Try it's preview step runs it.
 - **Duplicate axis labels.** The Finished per day chart labelled two gridlines "1" when at most one task finished a day.
 - **Stale pages after a deploy.** An open browser kept running the previous JavaScript after Relay restarted, so fixed
   buttons still showed old errors. The page now notices the server restart and offers a Reload.

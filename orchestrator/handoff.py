@@ -85,16 +85,13 @@ def build(task: dict, cfg: dict | None = None) -> dict:
                              "commands": [f"cd {q_wt}", *run]})
         dev = environment.dev_command(wt)
         if ide_url and dev:
-            # code-server's absproxy forwards /absproxy/<port>/… with the path intact, so the preview is served
-            # from the site root (the proxy routes /absproxy to code-server) and Vite is told that base.
-            port = 5173
-            base = f"/absproxy/{port}/"
+            # relay-preview (in the IDE image) starts the dev server and bridges code-server's HTTP-only port
+            # proxy to it, so HTTPS dev servers preview too; the bridge listens on the dev port + 1000.
             origin = "{0.scheme}://{0.netloc}".format(urlparse(ide_url))
-            flags = f" -- --host 127.0.0.1 --port {port} --strictPort" + (f" --base {base}" if environment.uses_vite(wt) else "")
-            sections.insert(1, {"id": "preview", "title": "Preview in VS Code", "link": origin + base,
+            sections.insert(1, {"id": "preview", "title": "Preview in VS Code", "link": f"{origin}/absproxy/6173/",
                                 "link_label": "Open preview",
-                                "text": "Open the worktree in VS Code, run this in its terminal, then open the preview link. Dependencies are already installed by Relay when setup succeeded.",
-                                "commands": [f"cd {q_wt}", dev + flags]})
+                                "text": "Open the worktree in VS Code, run this in its terminal (Ctrl+`), wait for the preview line, then open the preview. Dependencies are already installed when Relay's setup succeeded. Ctrl+C stops it.",
+                                "commands": [f"cd {q_wt}", "relay-preview"]})
 
     if pushed:
         local = [f"git fetch origin {q_branch}", f"git switch {q_branch}"]
