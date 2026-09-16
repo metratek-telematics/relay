@@ -83,6 +83,8 @@ services:
     volumes:
       - ${RELAY_REPOS}:${RELAY_REPOS}
       - ${RELAY_DATA}/worktrees:${RELAY_DATA}/worktrees
+      # Run folders (logs, artifacts, screenshots) for "Open run folder", read-only.
+      - ${RELAY_DATA}/runtime:${RELAY_DATA}/runtime:ro
       - ${RELAY_CACHE:-./.cache}/ide:/home/coder/.local/share/code-server
       - ${RELAY_CACHE:-./.cache}/npm:/home/coder/.npm
       - ${HOST_HOME:-~}/.gitconfig:/home/coder/.gitconfig:ro

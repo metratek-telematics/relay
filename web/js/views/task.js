@@ -80,9 +80,7 @@ export function mountTask(main, id) {
       { label: "Duplicate task", icon: "duplicate", onClick: () => act("duplicate") },
       { label: "Edit task settings", icon: "edit", onClick: () => openNewTask({ edit: t }) },
       "-",
-      { label: "Open worktree folder", icon: "folder", onClick: () => api.open(t.id, "worktree").catch((e) => toast("error", "Cannot open", e.message)) },
-      { label: "Open in VS Code", icon: "code", disabled: !t.worktree, onClick: () => (S.config.ide_url ? window.open(`${S.config.ide_url.replace(/\/$/, "")}/?folder=${encodeURIComponent(t.worktree)}`, "_blank", "noopener") : api.open(t.id, "vscode").catch((e) => toast("error", "Cannot open", e.message))) },
-      { label: "Open run folder (logs, artifacts)", icon: "file", onClick: () => api.open(t.id, "run").catch((e) => toast("error", "Cannot open", e.message)) },
+      ...openItems(t),
       { label: "Export report (markdown)", icon: "download", onClick: () => { location.href = `/api/tasks/${encodeURIComponent(t.id)}/export`; } },
       { label: "Copy task id", icon: "copy", onClick: () => copyText(t.id) },
       "-",
@@ -105,6 +103,22 @@ export function mountTask(main, id) {
     const kids = [...S.tasks.values()].filter((x) => x.follow_up_of === t.id).sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
     if (kids.length) out.push(`<span class="lineage">${icon("arrowRight")}Followed up by <a href="#/task/${encodeURIComponent(kids[0].id)}">${esc(kids[0].name)}</a>${kids.length > 1 ? ` <span title="${esc(kids.slice(1).map((k) => k.name).join("\n"))}">+${kids.length - 1} more</span>` : ""}</span>`);
     return out.join("");
+  }
+
+  // With browser VS Code configured, folders open there: a server-side Relay (Docker, remote host) cannot
+  // open windows on the viewer's desktop. Without it, fall back to the local open, which works on a desktop install.
+  function openItems(t) {
+    const ide = (S.config.ide_url || "").replace(/\/$/, "");
+    const inIde = (path) => window.open(`${ide}/?folder=${encodeURIComponent(path)}`, "_blank", "noopener");
+    const local = (what) => api.open(t.id, what).catch((e) => toast("error", "Cannot open", e.message));
+    const waiting = !t.worktree;
+    const hint = waiting ? " (once the task starts)" : "";
+    return [
+      { label: `Open worktree in VS Code${hint}`, icon: "code", disabled: waiting, onClick: () => (ide ? inIde(t.worktree) : local("vscode")) },
+      { label: `Open worktree folder${ide ? "" : hint}`, icon: "folder", disabled: waiting, onClick: () => (ide ? inIde(t.worktree) : local("worktree")) },
+      { label: "Open run folder (logs, artifacts)", icon: "file", disabled: !t.run_dir, onClick: () => (ide ? inIde(t.run_dir) : local("run")) },
+      { label: "Copy worktree path", icon: "copy", disabled: waiting, onClick: () => copyText(t.worktree) },
+    ];
   }
 
   async function act(a) {
