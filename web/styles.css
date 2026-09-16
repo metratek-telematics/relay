@@ -381,6 +381,15 @@ kbd { font-size: 10px; padding: 1px 5px; border-radius: 4px; background: var(--p
 .convo-wrap { position: relative; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr); }
 .jump-latest { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); z-index: 6; box-shadow: var(--shadow-2); border-radius: 99px; }
 .convo.hide-tools .m-tool, .convo.hide-tools .m-thinking { display: none; }
+.convo.hide-git .m-git { display: none; }
+.ho-step h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: var(--fs-lg); }
+.ho-step p { margin: 6px 0 8px; font-size: var(--fs-sm); }
+.ho-n { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 700; flex: none; }
+.ho-cmds { margin: 0; background: var(--code-bg); color: var(--code-fg); border-radius: var(--r); padding: 6px 4px 6px 12px; font-size: 12px; line-height: 1.5; overflow-x: auto; }
+.ho-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ho-line > span { flex: 1; min-width: 0; white-space: pre; }
+.ho-line .btn { color: inherit; opacity: .55; flex: none; }
+.ho-line .btn:hover { opacity: 1; }
 .convo.hide-thinking .m-thinking { display: none; }
 
 /* messages */

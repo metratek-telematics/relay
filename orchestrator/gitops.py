@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
+import unicodedata
 from pathlib import Path
 
 from .util import IS_WINDOWS, WORKTREES_DIR, quiet, safe_slug, truncate
@@ -155,7 +157,8 @@ def create_worktree(runner, task, cfg, run_dir):
     repo = Path(task["repo"]).resolve()
     if not is_git_repo(repo):
         raise RuntimeError(f"{repo} is not a Git repository. Initialize it with `git init` and make one commit first.")
-    branch = f"{cfg.get('branch_prefix','agent')}/{safe_slug(task['name'], 40)}-{task['id'][-6:]}"
+    # Tasks created before readable names existed keep their original scheme so a retry reattaches.
+    branch = task.get("branch_name") or f"{cfg.get('branch_prefix','agent')}/{safe_slug(task['name'], 40)}-{task['id'][-6:]}"
     wt = WORKTREES_DIR / f"{safe_slug(repo.name)}-{task['id'][-6:]}"
     if wt.exists():
         quiet(["git", "worktree", "remove", "--force", str(wt)], cwd=repo, timeout=60)
@@ -251,3 +254,53 @@ def push_branch(runner, wt, branch):
 def log_since_base(wt, n=20) -> str:
     p = quiet(["git", "log", f"-{n}", "--oneline"], cwd=wt)
     return p.stdout
+
+
+# ----------------------------------------------------------------------------- branch names
+BRANCH_TYPES = {"feature": "feat", "bugfix": "fix", "refactor": "refactor", "tests": "test", "docs": "docs", "review": "chore"}
+
+# Words that carry no meaning in a branch name. Prompts start with "please can you
+# make…" far more often than with the thing being changed.
+_FILLER = set("""a an the and or but of to in on at for from with by as into onto about via per
+i we you it its it's this that these those my our your me us
+need needs want wants would could should can will must shall may might please pls kindly
+make makes making do does doing done implement implementing add adds adding create creating build
+complete completely fully full proper properly better good great nice new really very just also
+so then than is are be been being was were have has had get gets got use using follow following
+some any all every each thing things stuff etc like md rules""".split())
+
+
+def _slug_words(text: str, limit: int = 5) -> list[str]:
+    ascii_text = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode()
+    words = re.findall(r"[a-z0-9]+", ascii_text.lower())
+    keep = [w for w in words if w not in _FILLER and not (len(w) == 1 and not w.isdigit())]
+    return (keep or words)[:limit]
+
+
+def branch_exists(repo, name: str) -> bool:
+    if not repo or not Path(repo).exists():
+        return False
+    return quiet(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{name}"], cwd=repo).returncode == 0
+
+
+def valid_branch_name(name: str) -> bool:
+    return bool(name) and quiet(["git", "check-ref-format", "--branch", name]).returncode == 0
+
+
+def suggest_branch(cfg: dict, name: str = "", requirements: str = "", template: str = "feature",
+                   issue: str = "", repo=None, taken=()) -> str:
+    """A short, readable branch name such as feat/berth-status-page or fix/123-login-timeout."""
+    if (cfg.get("branch_naming") or "type") == "prefix":
+        head = (cfg.get("branch_prefix") or "agent").strip("/")
+    else:
+        head = BRANCH_TYPES.get(template or "feature", "feat")
+    words = _slug_words(name) or _slug_words(requirements) or ["task"]
+    slug = "-".join(words)[:48].strip("-")
+    if issue:
+        slug = f"{issue}-{slug}"
+    base = f"{head}/{slug}"
+    candidate, n = base, 2
+    taken = set(taken)
+    while candidate in taken or branch_exists(repo, candidate):
+        candidate, n = f"{base}-{n}", n + 1
+    return candidate

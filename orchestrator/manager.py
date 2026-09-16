@@ -137,6 +137,7 @@ class Manager:
         wf = self.build_workflow(payload)
         tid = new_task_id()
         name = (payload.get("name") or "").strip() or (requirements.splitlines()[0][:60] if requirements else f"Issue #{issue}")
+        branch = self.branch_for(payload, repo, name, requirements, issue)
         t = {
             "id": tid, "name": name, "repo": repo, "requirements": requirements, "issue": issue,
             "template": payload.get("template") or "feature",
@@ -150,6 +151,7 @@ class Manager:
             "events": [], "artifacts": {}, "sessions": {}, "metrics": {}, "guidance": [],
             "checkpoint": None, "pending": None, "archived": False,
             "github_repo": github.remote_repo_name(repo),
+            "branch_name": branch,
         }
         self.store.add(t)
         C.remember_repo(repo)
@@ -180,6 +182,21 @@ class Manager:
         self.store.update(tid, immediate=True, **allowed)
         self.emit_task(tid)
         return self.get(tid)
+
+    def taken_branches(self, repo) -> set:
+        return {t.get("branch_name") or t.get("branch") for t in self.store.list() if t.get("repo") == repo} - {None}
+
+    def branch_for(self, payload, repo, name, requirements, issue) -> str:
+        wanted = (payload.get("branch") or "").strip()
+        if wanted:
+            if not gitops.valid_branch_name(wanted):
+                raise ValueError(f"'{wanted}' is not a valid Git branch name.")
+            if wanted in self.taken_branches(repo):
+                raise ValueError(f"Another task already uses the branch {wanted}.")
+            # An existing branch is fine: the task builds on it, as a retry would.
+            return wanted
+        return gitops.suggest_branch(self.cfg(), name, requirements, payload.get("template") or "feature",
+                                     issue, repo, self.taken_branches(repo))
 
     def duplicate(self, tid):
         t = self.store.get(tid)

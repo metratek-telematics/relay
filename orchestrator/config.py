@@ -146,6 +146,7 @@ DEFAULTS = {
     "auto_detect_verification": True,
     "verification_timeout_minutes": 20,
     # git
+    "branch_naming": "type",               # type: feat/…, fix/… from the task type · prefix: <branch_prefix>/…
     "branch_prefix": "agent",
     "snapshot_working_tree": True,
     "copy_untracked_files": True,

@@ -6,7 +6,37 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Clone from GitHub in the New task wizard.** Pick any repository the signed-in
+  `gh` account can reach, or type a git URL, and Relay clones it into `RELAY_REPOS`
+  (or the managed repositories folder) and selects it. An existing clone is fetched
+  and reused instead of cloned again.
+- **Try it tab.** Every task with a branch gets copy-paste commands in five steps: see what changed, run it from
+  the worktree (detected from package.json scripts, Django or a static index.html), get it onto your computer
+  (`gh pr checkout` or `git switch`) or push it if it only exists locally, accept it (merge the PR, or merge the
+  branch locally), and clean up the worktree and branch. Each line and each step copies with one click, and the
+  delivered card and the task header both open it.
+- **Readable branch names.** Branches are named from the task type and the meaningful words of its name, such as
+  `feat/berth-status-page` or `fix/123-login-timeout`, with filler like "please make" dropped, accents folded and a
+  `-2` suffix only on a collision. The New task wizard shows the suggestion and lets you edit it. Settings → Git can
+  switch back to `<branch prefix>/…`.
+
+- **Ubuntu support.** `run.sh` sets up a virtual environment and starts Relay, and
+  `deploy/relay.service` runs it as a systemd user service with your own logins.
+- **Docker mode.** A `Dockerfile` and `docker-compose.yml` that install the agent
+  CLIs in the image and mount the host's logins, settings, Git identity and
+  repositories. Repositories and data mount at identical paths so task worktrees
+  stay valid from host and container alike. The container publishes its port on
+  the host's loopback only and reports on startup which host logins it can see.
+- `RELAY_DATA_DIR` keeps all state outside the app folder, `RELAY_HOST` sets the
+  listen address, `RELAY_BROWSE_ROOT` sets where the folder browser starts, and
+  `RELAY_CFG_<setting>` forces any setting without writing it to `config.json`.
+
 ### Changed
+
+- **Git noise hidden by default.** The orchestrator's git and GitHub commands no longer appear in the team
+  conversation unless you turn on the new Git toggle; the timeline still records them.
 
 - **Design-first rules.** `DESIGN.md` is now the house design system for every stack, with guidance on translating
   its tokens and components into Vue, plain CSS or any other frontend. It adds a design process (compose, build,
@@ -24,25 +54,6 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   has Python tests, and exit 5 is reported as skipped.
 - **Rule files pulled into unrelated tasks.** Contextual rule keywords matched inside other words, so `ui` in "build"
   sent the frontend and design rules with nearly every task. Keywords now match at word starts.
-
-### Added
-
-- **Clone from GitHub in the New task wizard.** Pick any repository the signed-in
-  `gh` account can reach, or type a git URL, and Relay clones it into `RELAY_REPOS`
-  (or the managed repositories folder) and selects it. An existing clone is fetched
-  and reused instead of cloned again.
-- **Ubuntu support.** `run.sh` sets up a virtual environment and starts Relay, and
-  `deploy/relay.service` runs it as a systemd user service with your own logins.
-- **Docker mode.** A `Dockerfile` and `docker-compose.yml` that install the agent
-  CLIs in the image and mount the host's logins, settings, Git identity and
-  repositories. Repositories and data mount at identical paths so task worktrees
-  stay valid from host and container alike. The container publishes its port on
-  the host's loopback only and reports on startup which host logins it can see.
-- `RELAY_DATA_DIR` keeps all state outside the app folder, `RELAY_HOST` sets the
-  listen address, `RELAY_BROWSE_ROOT` sets where the folder browser starts, and
-  `RELAY_CFG_<setting>` forces any setting without writing it to `config.json`.
-
-### Fixed
 
 - **Stop and Delete left agent processes running on Linux.** Only the direct
   child was signalled, so the shells, test runners and MCP servers an agent
