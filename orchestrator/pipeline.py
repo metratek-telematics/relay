@@ -321,6 +321,36 @@ class Pipeline:
         return {"command": "Design gate", "ok": result["ok"], "rc": 0 if result["ok"] else 1, "skipped": False,
                 "duration": round(time.time() - started, 1)}, text
 
+    def baseline_result(self, cmd, timeout):
+        """Run a failing command once on the commit the task started from.
+
+        A check that already failed before the team touched anything (a flaky suite, a host-specific test)
+        must not block delivery or send the supervisor round in circles. Results are cached per command.
+        """
+        cache = self.state.setdefault("baseline", {})
+        if cmd in cache:
+            return cache[cmd]
+        if not self.base or not self.wt:
+            return None
+        repo = self.task.get("repo")
+        path = Path(str(self.wt) + "-baseline")
+        gitops.remove_worktree(repo, path)
+        add = quiet(["git", "worktree", "add", "--detach", str(path), self.base], cwd=repo, timeout=300)
+        if add.returncode != 0:
+            return None
+        try:
+            # Share the prepared dependencies; the baseline only needs to run the same check.
+            if (Path(self.wt) / "node_modules").is_dir() and not (path / "node_modules").exists():
+                (path / "node_modules").symlink_to(Path(self.wt) / "node_modules", target_is_directory=True)
+            gitops.copy_ignored_root_files(repo, path)
+            self.r.timeline("verify", "Checking the failure on the starting commit", cmd)
+            res = self.r.run_shell(cmd, path, "verify", timeout=timeout, title=f"Baseline · {cmd}")
+            cache[cmd] = {"ok": res["ok"], "rc": res.get("rc")}
+        finally:
+            gitops.remove_worktree(repo, path)
+        self.save()
+        return cache[cmd]
+
     def run_verification(self):
         if not self.verify_cmds and not self.design_gate:
             return ""
@@ -337,8 +367,14 @@ class Pipeline:
             skipped = res.get("rc") == 5 and "pytest" in c
             if skipped:
                 res["ok"] = True
-            items.append({"command": c, "ok": res["ok"], "rc": res.get("rc"), "skipped": skipped, "duration": round(res.get("duration") or 0, 1)})
-            verdict = "SKIPPED (no tests collected)" if skipped else ("PASS" if res["ok"] else "FAIL")
+            pre_existing = False
+            if not res["ok"]:
+                base = self.baseline_result(c, timeout)
+                pre_existing = bool(base and not base["ok"])
+            items.append({"command": c, "ok": res["ok"] or pre_existing, "rc": res.get("rc"), "skipped": skipped,
+                          "pre_existing": pre_existing, "duration": round(res.get("duration") or 0, 1)})
+            verdict = ("SKIPPED (no tests collected)" if skipped else "PASS" if res["ok"]
+                       else "PRE-EXISTING FAILURE (also fails on the starting commit; does not block)" if pre_existing else "FAIL")
             head = f"$ {c}\n{verdict} (exit {res.get('rc')}, {round(res.get('duration') or 0)}s)"
             # A passing command only needs its verdict; a failure needs output the agents can act on.
             body = "" if (res["ok"] and quiet_pass) else "\n" + truncate(res["output"], fail_chars, tail=True)
@@ -515,6 +551,13 @@ class Pipeline:
                 vt = self.run_verification()
                 self.state["last_verification"] = vt
                 if not (self.task_meta().get("verification") or {}).get("ok", True):
+                    # One triage round only: a supervisor that declares done again over the same failure
+                    # would otherwise loop forever, paying for a turn and a full build each time.
+                    self.state["verify_triage"] = int(self.state.get("verify_triage") or 0) + 1
+                    if self.state["verify_triage"] > 1:
+                        self.save()
+                        raise RuntimeError("Verification still fails after the supervisor triaged it, and the failing checks did not also fail on the "
+                                           "starting commit. Inspect the Checks tab, then resume with guidance or fix it in VS Code.")
                     fake = {"type": "review", "verdict": "FAIL", "summary": "Verification commands failed after the done decision.",
                             "findings": [{"severity": "blocking", "file": "(verification)", "problem": "One or more verification commands failed.", "fix": "Make the checks pass."}]}
                     self.r.timeline("verify", "Verification failed after done decision", "Sending results back to the supervisor")
@@ -537,6 +580,7 @@ class Pipeline:
                 self.r.timeline("supervisor", "Revision requested", env.get("summary", ""))
             else:
                 self.r.timeline("supervisor", "Next work package", env.get("summary", ""))
+            self.state["verify_triage"] = 0
             self.state.update({"turn": turn + 1, "awaiting": "worker", "instruction": text, "instruction_kind": kind,
                                "instruction_summary": env.get("summary", ""), "phase": "dialogue"})
             self.save()
