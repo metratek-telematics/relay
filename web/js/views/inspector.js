@@ -36,22 +36,33 @@ export function mountInspector(container, getTask) {
     clearInterval(logTimer); logTimer = null;
     if (!t) { body.innerHTML = '<div class="empty small">Select a task.</div>'; return; }
     counts();
+    const tab = state.tab;
     try {
-      switch (state.tab) {
+      // Awaited so a failed request lands in the catch below instead of leaving
+      // the tab on its loading message forever.
+      switch (tab) {
         case "overview": return renderOverview(t);
-        case "result": return renderResult(t);
-        case "history": return renderHistory(t);
+        case "result": return await renderResult(t);
+        case "history": return await renderHistory(t);
         case "timeline": return renderTimeline(t);
-        case "changes": return renderChanges(t);
-        case "checks": return renderArtifact(t, "verification", "No verification has run yet.", true);
-        case "review": return renderReview(t);
-        case "repository": return renderRepository(t);
-        case "logs": return renderLogs(t);
+        case "changes": return await renderChanges(t);
+        case "checks": return await renderArtifact(t, "verification", "No verification has run yet.", true);
+        case "review": return await renderReview(t);
+        case "repository": return await renderRepository(t);
+        case "logs": return await renderLogs(t);
         case "sessions": return renderSessions(t);
       }
     } catch (e) {
-      body.innerHTML = `<div class="empty small">${esc(e.message)}</div>`;
+      if (state.tab === tab) showError(e, TABS.find(([k]) => k === tab)?.[1] || tab);
     }
+  }
+  function errorText(e, what) {
+    if (e.status === 404 || /task not found/i.test(e.message || "")) return "This task no longer exists. It may have been deleted in another window.";
+    return `Could not load ${what.toLowerCase()}: ${e.message || e}`;
+  }
+  function showError(e, what, host = body) {
+    host.innerHTML = `<div class="empty small insp-error" role="alert">${icon("alert", "lg")}<p>${esc(errorText(e, what))}</p><p><button class="btn xs" data-retry>${icon("refresh")}Try again</button></p></div>`;
+    $("[data-retry]", host).onclick = () => render();
   }
 
   // ---------------------------------------------------------------- overview
@@ -167,14 +178,16 @@ export function mountInspector(container, getTask) {
     const s = r.stat || {};
     body.innerHTML = `<div class="row between" style="margin-bottom:8px"><span class="diffstat">${s.files || 0} files <span class="a">+${s.insertions || 0}</span> <span class="d">−${s.deletions || 0}</span></span><div class="row"><button class="btn xs" id="fullDiff">${icon("eye")}Full diff</button><button class="btn xs" id="refreshFiles">${icon("refresh")}</button></div></div>` +
       ((r.files || []).length ? r.files.map((f) => `<button class="file-row" data-path="${esc(f.path)}"><span class="fst ${esc(f.status)}">${esc(f.status)}</span><span class="fp" title="${esc(f.path)}">${esc(f.path)}</span></button>`).join("") : '<div class="empty small">Working tree is clean.</div>');
-    $$("[data-path]", body).forEach((b) => (b.onclick = () => { state.diffPath = b.dataset.path; renderDiff(t, b.dataset.path); }));
-    $("#fullDiff", body).onclick = () => { state.diffPath = "*"; renderDiff(t, "*"); };
-    $("#refreshFiles", body).onclick = () => renderChanges(t);
+    $$("[data-path]", body).forEach((b) => (b.onclick = () => { state.diffPath = b.dataset.path; render(); }));
+    $("#fullDiff", body).onclick = () => { state.diffPath = "*"; render(); };
+    $("#refreshFiles", body).onclick = () => render();
   }
   async function renderDiff(t, path) {
     body.innerHTML = `<div class="row between" style="margin-bottom:8px"><button class="btn xs" id="backFiles">${icon("chevron")}Back</button><span class="mono truncate">${esc(path === "*" ? "Full diff" : path)}</span><button class="btn xs" id="copyDiff">${icon("copy")}</button></div><div class="empty small">Loading…</div>`;
-    $("#backFiles", body).onclick = () => { state.diffPath = null; renderChanges(t); };
-    const r = await api.diff(t.id, path === "*" ? "" : path);
+    $("#backFiles", body).onclick = () => { state.diffPath = null; render(); };
+    let r;
+    try { r = await api.diff(t.id, path === "*" ? "" : path); }
+    catch (e) { if (state.tab === "changes" && state.diffPath === path) { const slot = body.lastElementChild; slot.className = ""; showError(e, "the diff", slot); } return; }
     if (state.tab !== "changes" || state.diffPath !== path) return;
     body.lastElementChild.outerHTML = diffHtml(r.text);
     $("#copyDiff", body).onclick = () => copyText(r.text || "");
@@ -376,7 +389,9 @@ export function mountInspector(container, getTask) {
       </div><div class="log-view" id="logView">Loading…</div>`;
     const view = $("#logView", body);
     const load = async () => {
-      const r = await api.artifact(t.id, "raw", 250000);
+      let r;
+      try { r = await api.artifact(t.id, "raw", 250000); }
+      catch (e) { if (state.tab === "logs") view.textContent = errorText(e, "the log"); return; }
       if (state.tab !== "logs") return;
       const lines = (r.text || "").split("\n");
       const f = state.logFilter.toLowerCase();

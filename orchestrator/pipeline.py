@@ -208,7 +208,7 @@ class Pipeline:
         self.m.ask_user(self.tid, {"id": qid, "kind": "question", "from": asker_role, "agent": agent,
                                    "question": question, "options": options, "message_id": qmsg["id"], "time": now()})
         self.r.status("needs_input", f"{_label(agent)} ({asker_role}) has a question for you")
-        self.m.notify("warning", f"{_label(agent)} needs your input", truncate(question, 140), self.tid)
+        self.m.notify("warning", f"{_label(agent)} needs your input", truncate(question, 140), self.tid, kind="needs_input")
         ans = self.r.wait_for_answer(qid)
         self.m.clear_pending(self.tid)
         self.r.msg_update(qmsg["id"], answered=True, answer=ans.get("text") or "")
@@ -520,7 +520,7 @@ class Pipeline:
             self.m.ask_user(self.tid, {"id": qid, "kind": "approval", "from": "orchestrator", "question": "Approve delivery?",
                                        "summary": summary, "diffstat": ds, "message_id": qmsg["id"], "time": now()})
             self.r.status("needs_input", "Waiting for your approval to commit, push and open the pull request")
-            self.m.notify("warning", "Approval needed", f"{t.get('name')} is ready for delivery", self.tid)
+            self.m.notify("warning", "Approval needed", f"{t.get('name')} is ready for delivery", self.tid, kind="approval")
             ans = self.r.wait_for_answer(qid)
             self.m.clear_pending(self.tid)
             approved = bool((ans.get("extra") or {}).get("approved", True))
@@ -570,7 +570,7 @@ class Pipeline:
                     base = (t.get("github_base") or cfg.get("github_pr_base") or "").strip()
                     pr = github.create_pr(self.r, self.wt, self.repo_full, self.branch, title, body_file, base, cfg.get("github_pr_draft", True))
                     self.r.timeline("github", "Draft pull request opened", pr.get("url") or "")
-                    self.m.notify("success", "Pull request opened", pr.get("url") or title, self.tid)
+                    self.m.notify("success", "Pull request opened", pr.get("url") or title, self.tid, kind="pr_opened")
 
         report = self.final_report_md(pr, committed)
         self.artifact("report", "REPORT.md", report)

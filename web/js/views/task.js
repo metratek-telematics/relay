@@ -41,7 +41,14 @@ export function mountTask(main, id) {
 
   $("#toggleTools", main).onclick = () => { S.ui.showTools = !S.ui.showTools; $("#convo", main).classList.toggle("hide-tools", !S.ui.showTools); $("#toggleTools", main).classList.toggle("ghost", !S.ui.showTools); };
   $("#toggleGit", main).onclick = () => { S.ui.showGit = !S.ui.showGit; $("#convo", main).classList.toggle("hide-git", !S.ui.showGit); $("#toggleGit", main).classList.toggle("ghost", !S.ui.showGit); };
-  main.addEventListener("click", (e) => { const b = e.target.closest("[data-open-tab]"); if (b) { if (!S.ui.inspector) $("#inspToggle", main).click(); insp.setTab(b.dataset.openTab); } });
+  // Below 980px the inspector replaces the conversation instead of sitting beside it.
+  const narrow = () => matchMedia("(max-width: 980px)").matches;
+  const showInspector = () => {
+    if (narrow()) $("#wsBody", main).classList.add("show-inspector");
+    else if (!S.ui.inspector) { S.ui.inspector = true; $("#wsBody", main).classList.remove("inspector-hidden"); }
+  };
+  main.addEventListener("click", (e) => { const b = e.target.closest("[data-open-tab]"); if (b) { showInspector(); insp.setTab(b.dataset.openTab); } });
+  const offShowInspector = bus.on("show-inspector", showInspector);
   $("#toggleThinking", main).onclick = () => { S.ui.showThinking = !S.ui.showThinking; $("#convo", main).classList.toggle("hide-thinking", !S.ui.showThinking); $("#toggleThinking", main).classList.toggle("ghost", !S.ui.showThinking); };
 
   // ---------------------------------------------------------------- header
@@ -82,7 +89,10 @@ export function mountTask(main, id) {
       { label: t.archived ? "Unarchive" : "Archive", icon: "archive", onClick: () => act(t.archived ? "unarchive" : "archive") },
       { label: "Delete task…", icon: "trash", danger: true, onClick: () => act("delete") },
     ]);
-    $("#inspToggle", main).onclick = () => { S.ui.inspector = !S.ui.inspector; $("#wsBody", main).classList.toggle("inspector-hidden", !S.ui.inspector); };
+    $("#inspToggle", main).onclick = () => {
+      if (narrow()) { $("#wsBody", main).classList.toggle("show-inspector"); return; }
+      S.ui.inspector = !S.ui.inspector; $("#wsBody", main).classList.toggle("inspector-hidden", !S.ui.inspector);
+    };
   }
 
   // A follow-up points back at its parent, and a parent lists what followed it.
@@ -257,6 +267,6 @@ export function mountTask(main, id) {
       else if (reason === "event") { insp.refresh("event"); }
       else if (reason === "artifact") { insp.refresh("artifact"); }
     },
-    destroy() { clearInterval(timer); clearInterval(prTimer); insp.destroy(); offRoute(); offPr(); },
+    destroy() { clearInterval(timer); clearInterval(prTimer); insp.destroy(); offRoute(); offPr(); offShowInspector(); },
   };
 }

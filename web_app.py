@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -652,15 +653,30 @@ def gh_sources_get():
 @app.post("/api/github/sources")
 def gh_sources_post():
     b = body()
-    repo = github.normalize_repo_full_name(b.get("repo", ""))
-    if "/" not in repo:
-        return jsonify({"error": "Use owner/repository"}), 400
+    raw = str(b.get("repo") or "").strip()
+    repo = github.normalize_repo_full_name(raw)
+    # Say exactly what is wrong and which field it belongs to; the form shows it inline.
+    if not raw:
+        return jsonify({"error": "Enter a repository as owner/repository.", "field": "repo"}), 400
+    if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}", repo):
+        return jsonify({"error": f"“{raw}” is not a GitHub repository. Use owner/repository (for example acme/web) or paste its GitHub URL.",
+                        "field": "repo"}), 400
+    local_path = (b.get("local_path") or "").strip().strip('"')
+    if local_path and not b.get("id") and not Path(local_path).expanduser().is_dir():
+        return jsonify({"error": f"{local_path} is not a folder on this machine. Leave it blank to use a managed clone.",
+                        "field": "local_path"}), 400
+    try:
+        max_rounds = int(b.get("max_turns") or manager.cfg().get("max_turns") or 12)
+    except (TypeError, ValueError):
+        return jsonify({"error": "Max turns must be a whole number.", "field": "max_turns"}), 400
     rows = github.load_sources()
-    row = {"id": b.get("id") or f"src_{int(time.time())}", "repo": repo, "local_path": (b.get("local_path") or "").strip(),
+    if any(r.get("repo", "").lower() == repo.lower() and r.get("id") != b.get("id") for r in rows):
+        return jsonify({"error": f"{repo} is already watched.", "field": "repo"}), 400
+    row = {"id": b.get("id") or f"src_{int(time.time())}", "repo": repo, "local_path": local_path,
            "label": (b.get("label") or manager.cfg().get("github_default_label") or "agent").strip(),
            "assigned_to_me": bool(b.get("assigned_to_me", True)), "watch_label": bool(b.get("watch_label", True)),
            "enabled": bool(b.get("enabled", True)), "auto_queue": bool(b.get("auto_queue", True)),
-           "preset": b.get("preset") or "", "max_rounds": int(b.get("max_turns") or manager.cfg().get("max_turns") or 12)}
+           "preset": b.get("preset") or "", "max_rounds": max_rounds}
     rows = [r for r in rows if r.get("id") != row["id"]]
     rows.append(row)
     github.save_sources(rows)

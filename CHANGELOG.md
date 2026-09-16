@@ -54,8 +54,28 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   listen address, `RELAY_BROWSE_ROOT` sets where the folder browser starts, and
   `RELAY_CFG_<setting>` forces any setting without writing it to `config.json`.
 
+- **Notification settings.** Settings → Notifications shows whether the browser allows desktop notifications with
+  an Allow button (Relay no longer asks by itself a few seconds after loading), per-event switches for delivered,
+  failed or stopped, needs input or approval, and pull request opened, an optional chime generated in the browser,
+  and a Send test notification button. Every server notification now carries a `kind`, and stopping a task notifies
+  too. Clicking a desktop notification focuses Relay and opens the task.
+- **Attention in the browser tab.** The tab title shows how many tasks need you, such as `(2) Relay`, and the icon gets
+  a red dot. It counts questions, approvals, paused or interrupted tasks and failures you have not opened yet.
+- **Keyboard shortcuts.** `?` lists every shortcut. New: `J`/`K` open the next or previous task in the list,
+  `G` then `D`/`T`/`A`/`H`/`S`/`R` go to the dashboard, tasks, agents, GitHub, settings or repositories, `T` opens
+  Try it and `.` focuses the guidance box. Shortcuts never fire while typing or while a dialog is open; tooltips and
+  palette items show their keys, and the palette has a Keyboard shortcuts entry.
+- **Dashboard insights.** Tasks finished per day over 14 days stacked by outcome, spend per day by agent, success
+  rate and median time-to-deliver trends against the previous week, and the busiest repositories. Charts have hover
+  and keyboard tooltips and a table view. A dashboard with no tasks shows a setup checklist instead of empty cards.
+- **Saved prompts.** Keep reusable requests in Settings → Saved prompts (name, text, optional task type) and pick one
+  in step 2 of the New task wizard; the first `<placeholder>` is selected so you can type over it. Two examples ship:
+  redesigning a page to `rules/DESIGN.md` and fixing a bug with a regression test.
+
 ### Changed
 
+- The dashboard's duration card shows the median time to deliver, with the mean underneath, so one very long task no
+  longer skews it.
 - **Git noise hidden by default.** The orchestrator's git and GitHub commands no longer appear in the team
   conversation unless you turn on the new Git toggle; the timeline still records them.
 
@@ -70,6 +90,20 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **New task wizard on phones.** The dialog ran off the right edge at 420px; it now fits, the step list collapses
+  to numbers, and the clone fields wrap onto two rows. The folder browser's GIT badge no longer stretches across the
+  path row, and "Use this folder" uses the normal font. The wizard's Cancel button and in-dialog links now close it.
+- **Gemini showed READY without a login.** `gemini --version` works signed out, and Docker mounts an empty
+  `~/.gemini`. Gemini now reports "not signed in" unless it has a Google login, an API key or a Vertex AI setup.
+- **Adding a watched GitHub repository failed with a bare HTTP 400.** The form now checks owner/repository before
+  sending, accepts pasted GitHub URLs (including links to issues or branches), and shows the server's reason next
+  to the field at fault, for example a local clone path that does not exist or a repository already watched.
+- **Inspector tabs stuck on "Loading…".** When a request failed, for example because the task was deleted, the
+  Changes, Try it, Checks, Review, Repository and Logs tabs never left their loading message. They now explain what
+  failed and offer Try again.
+- On screens narrower than 980px the task list no longer opens over the page on every load, the inspector toggle now
+  reveals the inspector (it could not be reached before), and the notifications panel fits the screen.
+- Pressing `N` while a dialog was open opened a second New task wizard.
 - **Delivered tasks showed 0 files changed.** Change counts, the Changes tab and the reviewer's diff compared
   against the last commit, so once Relay committed the result they came back empty. They now compare against the
   commit the task started from; older delivered tasks correct themselves when opened.

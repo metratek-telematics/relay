@@ -93,7 +93,7 @@ export function openNewTask(prefill = {}) {
   const m = modal(`<div class="wizard"><div class="wiz-steps" id="wizSteps"></div><div class="wiz-body" id="wizBody"></div></div>`, { wide: true });
   const stepsEl = $("#wizSteps", m.body), body = $("#wizBody", m.body);
 
-  const drawSteps = () => { stepsEl.innerHTML = steps.map((s, i) => `<button type="button" class="${i === step ? "active" : ""} ${i < step ? "done" : ""}" data-step="${i}"><i>${i < step ? "✓" : i + 1}</i>${esc(s)}</button>`).join(""); $$("[data-step]", stepsEl).forEach((b) => (b.onclick = () => { if (Number(b.dataset.step) <= step || data.repo) go(Number(b.dataset.step)); })); };
+  const drawSteps = () => { stepsEl.innerHTML = steps.map((s, i) => `<button type="button" class="${i === step ? "active" : ""} ${i < step ? "done" : ""}" data-step="${i}" title="${esc(s)}" ${i === step ? 'aria-current="step"' : ""}><i>${i < step ? "✓" : i + 1}</i><span>${esc(s)}</span></button>`).join(""); $$("[data-step]", stepsEl).forEach((b) => (b.onclick = () => { if (Number(b.dataset.step) <= step || data.repo) go(Number(b.dataset.step)); })); };
   const nav = (backLabel, nextLabel, nextPrimary = true) => `<div class="modal-actions">${backLabel ? `<button type="button" class="btn" id="wBack">${esc(backLabel)}</button>` : '<button type="button" class="btn" data-close>Cancel</button>'}<span style="flex:1"></span>${nextLabel ? `<button type="button" class="btn ${nextPrimary ? "primary" : ""}" id="wNext">${esc(nextLabel)}</button>` : ""}</div>`;
   const go = (i) => { step = i; drawSteps(); render(); };
 
@@ -111,7 +111,7 @@ export function openNewTask(prefill = {}) {
     host.innerHTML = '<div class="bpath"><span>Loading…</span></div>';
     try {
       const r = await api.browse(path);
-      host.innerHTML = `<div class="bpath">${r.parent !== null && r.parent !== undefined ? `<button type="button" class="btn xs" id="bUp">${icon("chevron")}</button>` : ""}<span title="${esc(r.path)}">${esc(r.path || "This PC")}</span>${r.is_git ? '<span class="badge green">git</span>' : ""}<button type="button" class="btn xs primary" id="bUse" ${r.path ? "" : "disabled"}>Use this folder</button></div>
+      host.innerHTML = `<div class="bpath">${r.parent !== null && r.parent !== undefined ? `<button type="button" class="btn xs" id="bUp" title="Up one folder" aria-label="Up one folder">${icon("chevron")}</button>` : ""}<span class="bpath-path" title="${esc(r.path)}">${esc(r.path || "This PC")}</span>${r.is_git ? '<span class="badge green">git</span>' : ""}<button type="button" class="btn xs primary" id="bUse" ${r.path ? "" : "disabled"}>Use this folder</button></div>
         <div class="blist">${r.dirs.map((d) => `<button type="button" class="bitem" data-p="${esc(d.path)}">${icon("folder")}<span class="truncate">${esc(d.name)}</span>${d.git ? '<span class="badge green git">git</span>' : ""}</button>`).join("") || '<div class="empty small">No subfolders</div>'}</div>`;
       $("#bUp", host) && ($("#bUp", host).onclick = () => drawBrowser(r.parent));
       $("#bUse", host).onclick = () => { data.repo = r.path; $("#repoInput", body).value = r.path; loadRepoInfo(); };
@@ -141,6 +141,11 @@ export function openNewTask(prefill = {}) {
   }
 
   function render() {
+    draw();
+    // Step bodies are drawn after the modal wired its close buttons, so wire theirs here.
+    $$("[data-close]", body).forEach((b) => b.addEventListener("click", m.close));
+  }
+  function draw() {
     if (step === 0) {
       body.innerHTML = `<h2>Choose the repository</h2><p class="hint">The team works in an isolated git worktree and branch; your checkout is never touched.</p>
         <div class="field"><label>Repository folder</label><input id="repoInput" value="${esc(data.repo)}" placeholder="C:\\Users\\you\\projects\\app"><div class="repo-facts" id="repoFacts"></div></div>
@@ -160,8 +165,12 @@ export function openNewTask(prefill = {}) {
       $("#wNext", body).onclick = () => { data.repo = input.value.trim().replace(/^"|"$/g, ""); if (!data.repo) { toast("warning", "Choose a repository folder"); return; } if (repoInfo && !repoInfo.is_git) { toast("error", "Not a git repository", "Run git init and make an initial commit first."); return; } go(1); };
     } else if (step === 1) {
       const tpl = (S.templates || []).find((x) => x.id === data.template) || {};
+      const prompts = S.config.saved_prompts || [];
       body.innerHTML = `<h2>${parent ? "What should happen next?" : "Describe the request"}</h2><p class="hint">${parent ? "Describe only what should change on top of the delivered work. The team sees the branch as it is now." : "Write it once. The supervisor turns it into a plan, acceptance criteria and work packages."}</p>
         ${parentNote}
+        <div class="field"><div class="row between wrap field-label"><span>Start from a saved prompt</span><a href="#/settings/prompts" data-close>${prompts.length ? "Manage" : "Create one"}</a></div>
+          ${prompts.length ? `<div class="templ saved-prompts">${prompts.map((p) => `<button type="button" class="chip prompt-chip ${p.text === data.requirements ? "active" : ""}" data-prompt="${esc(p.id)}" title="${esc(p.text.slice(0, 400))}">${icon("message", "sm")}<span class="truncate">${esc(p.name)}</span></button>`).join("")}</div>`
+            : '<div class="help">Save requests you make often in Settings → Saved prompts and pick them here.</div>'}</div>
         <div class="field"><label>Type</label><div class="templ">${(S.templates || []).map((x) => `<button type="button" class="chip ${data.template === x.id ? "active" : ""}" data-tpl="${esc(x.id)}">${esc(x.name)}</button>`).join("")}</div></div>
         <div class="field"><label>Requirements</label><textarea id="req" rows="9" placeholder="${esc(parent ? `What should change next? Last time: ${(parent.summary || parent.name).slice(0, 160)}` : (tpl.hint || "Describe what you want…"))}">${esc(data.requirements)}</textarea><div class="help">${esc(tpl.hint || "")}</div></div>
         <div class="grid3">
@@ -173,6 +182,22 @@ export function openNewTask(prefill = {}) {
         ${nav("Back", "Next: choose the team")}`;
       $$("[data-tpl]", body).forEach((b) => (b.onclick = () => { data.template = b.dataset.tpl; collect1(); render(); }));
       $(".followup-note a", body)?.addEventListener("click", () => m.close());
+      $$("[data-prompt]", body).forEach((b) => (b.onclick = () => {
+        const p = prompts.find((x) => x.id === b.dataset.prompt);
+        if (!p) return;
+        collect1();
+        const before = { requirements: data.requirements, template: data.template };
+        data.requirements = p.text;
+        if (p.template && (S.templates || []).some((x) => x.id === p.template)) data.template = p.template;
+        render();
+        // Land on the first <placeholder> so typing replaces it straight away.
+        const ta = $("#req", body), hole = /<[^<>\n]{1,80}>/.exec(ta.value);
+        ta.focus();
+        if (hole) ta.setSelectionRange(hole.index, hole.index + hole[0].length);
+        if (before.requirements.trim() && before.requirements !== p.text) {
+          toast("info", "Requirements replaced", `Filled from “${p.name}”.`, { action: { label: "Undo", onClick: () => { Object.assign(data, before); if (step === 1) render(); } } });
+        }
+      }));
       const collect1 = () => { data.requirements = $("#req", body).value; data.name = $("#tname", body).value; data.issue = $("#tissue", body).value; data.priority = $("#tprio", body).value; data.tags = $("#ttags", body).value; };
       $("#wBack", body).onclick = () => { collect1(); go(0); };
       $("#wNext", body).onclick = () => { collect1(); if (!data.requirements.trim() && !data.issue.trim()) { toast("warning", "Describe the task or give an issue number"); return; } go(2); };

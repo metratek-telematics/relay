@@ -50,9 +50,14 @@ def save_sources(rows) -> None:
 
 def normalize_repo_full_name(value) -> str:
     value = (value or "").strip()
-    for prefix in ("https://github.com/", "http://github.com/", "git@github.com:"):
-        if value.startswith(prefix):
+    lowered = value.lower()
+    for prefix in ("https://github.com/", "http://github.com/", "https://www.github.com/", "http://www.github.com/",
+                   "ssh://git@github.com/", "git@github.com:", "github.com/", "www.github.com/"):
+        if lowered.startswith(prefix):
             value = value[len(prefix):]
+            # A pasted browser URL often points inside the repository (/issues/12, /tree/main).
+            value = "/".join(value.split("?")[0].split("#")[0].split("/")[:2])
+            break
     if value.endswith(".git"):
         value = value[:-4]
     return value.strip("/")
