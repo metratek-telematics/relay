@@ -355,6 +355,9 @@ class Pipeline:
         if not self.verify_cmds and not self.design_gate:
             return ""
         self.r.status("verifying", f"Running {len(self.verify_cmds) + (1 if self.design_gate else 0)} verification check(s)")
+        # Checks such as a production build may rewrite tracked files (version stamps, generated maps).
+        # Remember what was already changed so anything the checks alone touched is put back afterwards.
+        before = {line[3:] for line in quiet(["git", "status", "--porcelain"], cwd=self.wt).stdout.splitlines() if line.strip()}
         self.r.timeline("verify", "Verification", ", ".join(self.verify_cmds + (["design gate"] if self.design_gate else [])))
         items = []
         parts = []
@@ -384,6 +387,11 @@ class Pipeline:
             items.append(item)
             # Every violation is listed: the gate is only useful if the team can fix each line it names.
             parts.append(text)
+        touched = [line[3:].strip('"') for line in quiet(["git", "status", "--porcelain"], cwd=self.wt).stdout.splitlines()
+                   if line[:2].strip() in ("M", "D") and line[3:] not in before]
+        if touched:
+            quiet(["git", "checkout", "--", *touched], cwd=self.wt)
+            self.r.timeline("verify", "Restored files the checks rewrote", ", ".join(touched[:10]))
         vt = "\n\n".join(parts)
         all_ok = all(i["ok"] for i in items)
         self.artifact("verification", "VERIFICATION.md", vt)
@@ -688,6 +696,12 @@ class Pipeline:
             self.save()
 
         self.r.status("delivering", "Committing the task branch")
+        # Someone can switch the worktree to another branch (VS Code's branch picker, a stray checkout).
+        # Committing there would put the team's work on the wrong branch and push an empty task branch.
+        current = quiet(["git", "branch", "--show-current"], cwd=self.wt).stdout.strip()
+        if current != self.branch:
+            raise RuntimeError(f"The worktree is on '{current or 'a detached HEAD'}', not the task branch '{self.branch}', so Relay did not "
+                               f"commit. Switch it back (git switch {self.branch}, keeping the changes) and resume the task.")
         cleanup_refs(self.wt)
         cfg = self.cfg
         prefix = (cfg.get("commit_message_prefix") or "agent:").strip()

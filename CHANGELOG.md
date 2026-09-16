@@ -121,6 +121,13 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A command stuck "running" forever after a restart.** A command or tool call interrupted by a Relay restart kept its
+  spinner and a growing timer. At startup they are now marked "interrupted by a restart".
+- **Work committed to the wrong branch.** If the worktree was switched to another branch (for example in VS Code),
+  delivery committed there and pushed an empty task branch, so the pull request failed with "No commits". Relay now
+  refuses to commit off the task branch and says how to switch back.
+- **Generated files in the commit.** A verification build could rewrite tracked files (version stamps) after the team
+  had cleaned them, and they were committed. Files changed only by the checks are now restored.
 - **Endless done → verification loop.** When a verification command failed for a reason unrelated to the task, the
   supervisor declared done again and Relay re-ran the full verification, forever. A failing command is now run once on
   the task's starting commit in a temporary worktree; if it fails there too it is reported as a pre-existing failure

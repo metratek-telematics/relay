@@ -146,7 +146,7 @@ export function renderMessage(m, t, prevInfo) {
     const cat = m.category || "tool";
     const st = m.status || "running";
     const runFor = m.ts ? ` ${fmtSec(Date.now() / 1000 - m.ts)}` : "";
-    const stHtml = st === "running" ? `${icon("spinner", "spin")} running${runFor}` : st === "error" ? `${icon("x")} failed${m.duration ? ` · ${fmtDur(m.duration)}` : ""}` : `${icon("check")}${m.duration ? ` ${fmtDur(m.duration)}` : ""}`;
+    const stHtml = st === "running" ? `${icon("spinner", "spin")} running${runFor}` : st === "interrupted" ? `${icon("x")} interrupted by a restart` : st === "error" ? `${icon("x")} failed${m.duration ? ` · ${fmtDur(m.duration)}` : ""}` : `${icon("check")}${m.duration ? ` ${fmtDur(m.duration)}` : ""}`;
     const head = `<div class="m-head">${whoAv(m)}<strong>${whoName(m)}</strong><time>${time}</time></div>`;
     const rawDetail = `${m.input ? `<div class="td-lbl">Input</div><pre>${esc(m.input)}</pre>` : ""}${m.output !== undefined && m.output !== null ? `<div class="td-lbl">Output</div><pre>${esc(m.output || "(empty)")}</pre>` : ""}`;
 
@@ -185,7 +185,7 @@ export function renderMessage(m, t, prevInfo) {
   }
   if (k === "command") {
     const st = m.status || "running";
-    const stHtml = st === "running" ? `${icon("spinner", "spin")} running` : st === "error" ? `${icon("x")} exit ${m.rc ?? "?"}${m.duration ? ` · ${fmtDur(m.duration)}` : ""}` : `${icon("check")}${m.duration ? ` ${fmtDur(m.duration)}` : ""}`;
+    const stHtml = st === "running" ? `${icon("spinner", "spin")} running` : st === "interrupted" ? `${icon("x")} interrupted by a restart` : st === "error" ? `${icon("x")} exit ${m.rc ?? "?"}${m.duration ? ` · ${fmtDur(m.duration)}` : ""}` : `${icon("check")}${m.duration ? ` ${fmtDur(m.duration)}` : ""}`;
     return `<div class="m m-cmd m-tool ${m.role === "git" || m.role === "github" ? "m-git" : ""}" ${idAttr}>
       <div class="tool-row shell ${esc(st)}" data-toggle="tool">
         <span class="tic">${icon("terminal")}</span>
