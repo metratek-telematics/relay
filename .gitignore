@@ -1,0 +1,46 @@
+# Relay runtime data (generated per task).
+# These hold task requirements, plans, agent transcripts and copies of the
+# repositories you point Relay at. Never commit them.
+runtime/
+worktrees/
+managed-repos/
+state/
+*.tmp
+
+# Local configuration: recent repository paths and per-agent environment
+# variables, which can include secrets. Relay recreates it with defaults.
+config.json
+
+# Local secrets / machine specific
+.env
+.env.*
+config.local.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editors / OS
+.vscode/
+.idea/
+.kilo/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Node (if a repo under test leaves anything behind)
+node_modules/
+
+# Logs
+*.log
+logs/
+
+# Legacy snapshot kept only for reference
+_legacy_v13/

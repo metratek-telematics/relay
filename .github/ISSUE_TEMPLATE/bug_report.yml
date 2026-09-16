@@ -1,0 +1,31 @@
+name: Bug report
+description: Something in Relay does not work as expected.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Relay version
+      description: Shown at the bottom of the sidebar, for example v14.1.0.
+    validations:
+      required: true
+  - type: textarea
+    id: agents
+    attributes:
+      label: Agent CLI versions
+      description: From the Agents page, for example codex-cli 0.154.0, Claude Code 2.1.272.
+  - type: textarea
+    id: log
+    attributes:
+      label: Relevant log
+      description: >
+        The matching part of runtime/<task-id>/raw.log. Remove any code, paths
+        or content you cannot share publicly. This repository is public.
+      render: text

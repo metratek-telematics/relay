@@ -1,0 +1,673 @@
+"""Manager: task lifecycle, scheduling, control actions, event fan-out."""
+from __future__ import annotations
+
+import copy
+import shutil
+import json
+import threading
+import time
+import traceback
+from pathlib import Path
+
+from . import agents, config as C, github, gitops
+from .pipeline import TurnBudget, orchestrate
+from .runner import Runner, Stopped
+from .store import ACTIVE, TERMINAL, WAITING, TaskStore
+from .util import RUNTIME_DIR, new_id, new_task_id, now, truncate
+
+
+class Manager:
+    def __init__(self, emit):
+        self._emit = emit
+        self.store = TaskStore()
+        self.lock = threading.RLock()
+        self.runners: dict[str, Runner] = {}
+        self.process_state: dict[str, dict] = {}
+        self.max_parallel = 1
+        self.scheduler = False
+        self.github_watcher = False
+        self.github_status = {"last_poll": None, "error": None, "login": None}
+        self._cfg = None
+        self._cfg_at = 0
+        self.notifications: list[dict] = []
+
+    # ------------------------------------------------------------ config
+    def cfg(self) -> dict:
+        if not self._cfg or time.time() - self._cfg_at > 2:
+            self._cfg = C.load()
+            self._cfg_at = time.time()
+        return self._cfg
+
+    def config_changed(self):
+        self._cfg_at = 0
+
+    # ------------------------------------------------------------ emission
+    def emit(self, typ, payload):
+        try:
+            self._emit(typ, payload)
+        except Exception:
+            pass
+
+    def task_view(self, t: dict) -> dict:
+        if not t:
+            return t
+        t = dict(t)
+        t["process"] = self.process_state.get(t["id"], {"state": "idle"})
+        t["message_count"] = self.store.message_count(t["id"])
+        return t
+
+    def emit_task(self, tid):
+        t = self.store.get(tid)
+        if t:
+            self.emit("task", self.task_view(t))
+
+    def notify(self, level, title, body="", tid=None):
+        n = {"id": new_id("n"), "level": level, "title": title, "body": body, "task_id": tid, "time": now(), "read": False}
+        self.notifications.insert(0, n)
+        self.notifications = self.notifications[:100]
+        self.emit("notify", n)
+
+    # ------------------------------------------------------------ tasks
+    @property
+    def tasks(self):
+        return [self.task_view(t) for t in self.store.list()]
+
+    def get(self, tid):
+        t = self.store.get(tid)
+        return self.task_view(t) if t else None
+
+    def build_workflow(self, payload: dict) -> dict:
+        cfg = self.cfg()
+        wf_in = payload.get("workflow") or {}
+        preset_id = wf_in.get("preset") or payload.get("preset") or cfg.get("workflow_preset")
+        preset = C.preset(preset_id)
+        roles = copy.deepcopy(cfg.get("roles") or {})
+        if preset:
+            for r, v in preset["roles"].items():
+                roles.setdefault(r, {})
+                roles[r]["agent"] = v.get("agent", "")
+        for r, v in (wf_in.get("roles") or {}).items():
+            if r in C.ROLES and isinstance(v, dict):
+                roles.setdefault(r, {})
+                if "agent" in v:
+                    roles[r]["agent"] = (v.get("agent") or "").strip()
+                if "model" in v:
+                    roles[r]["model"] = (v.get("model") or "").strip()
+                if "effort" in v:
+                    roles[r]["effort"] = (v.get("effort") or "").strip().lower()
+        for r in C.ROLES:
+            roles.setdefault(r, {"agent": "", "model": "", "effort": ""})
+            roles[r].setdefault("model", "")
+            roles[r].setdefault("effort", "")
+        if not roles["supervisor"]["agent"] or not roles["worker"]["agent"]:
+            raise ValueError("Both a supervisor and a worker agent are required.")
+        for r in C.ROLES:
+            if roles[r]["agent"] and roles[r]["agent"] not in C.AGENTS:
+                raise ValueError(f"Unknown agent '{roles[r]['agent']}' for {r}.")
+            allowed = C.AGENTS.get(roles[r]["agent"], {}).get("efforts") or []
+            if roles[r].get("effort") and roles[r]["effort"] not in allowed:
+                if allowed:
+                    raise ValueError(f"Effort '{roles[r]['effort']}' is not valid for {roles[r]['agent']} (choose {', '.join(allowed)}).")
+                roles[r]["effort"] = ""
+            if roles[r].get("model"):
+                C.remember_model(roles[r]["agent"], roles[r]["model"])
+        wf = {
+            "preset": preset_id if preset else "custom",
+            "roles": roles,
+            "max_turns": max(1, int(wf_in.get("max_turns") or cfg.get("max_turns") or 12)),
+            "max_review_rounds": max(1, int(wf_in.get("max_review_rounds") or cfg.get("max_review_rounds") or 3)),
+            "verify_mode": wf_in.get("verify_mode") or cfg.get("verify_mode") or "each_report",
+            "approval_before_delivery": bool(wf_in.get("approval_before_delivery", cfg.get("approval_before_delivery", False))),
+            "allow_agent_questions": bool(wf_in.get("allow_agent_questions", cfg.get("allow_agent_questions", True))),
+            "verification_commands": [c for c in (wf_in.get("verification_commands") or []) if str(c).strip()],
+            "auto_detect_verification": bool(wf_in.get("auto_detect_verification", cfg.get("auto_detect_verification", True))),
+        }
+        return wf
+
+    def create_task(self, payload: dict) -> dict:
+        repo = (payload.get("repo") or "").strip().strip('"')
+        requirements = (payload.get("requirements") or "").strip()
+        issue = str(payload.get("issue") or "").strip().lstrip("#")
+        if not repo or not Path(repo).exists():
+            raise ValueError("Repository folder does not exist.")
+        if not gitops.is_git_repo(repo):
+            raise ValueError("The folder is not a Git repository. Run `git init` and create an initial commit first.")
+        if not requirements and not issue:
+            raise ValueError("Describe the task or provide a GitHub issue number.")
+        wf = self.build_workflow(payload)
+        tid = new_task_id()
+        name = (payload.get("name") or "").strip() or (requirements.splitlines()[0][:60] if requirements else f"Issue #{issue}")
+        t = {
+            "id": tid, "name": name, "repo": repo, "requirements": requirements, "issue": issue,
+            "template": payload.get("template") or "feature",
+            "priority": payload.get("priority") or "normal",
+            "tags": [x.strip() for x in (payload.get("tags") or []) if str(x).strip()][:10],
+            "attachments": [a for a in (payload.get("attachments") or []) if a],
+            "workflow": wf,
+            "status": "queued" if payload.get("queue", True) else "draft",
+            "detail": "Waiting in queue" if payload.get("queue", True) else "Draft · not queued",
+            "created_at": now(), "updated_at": now(), "started_at": None, "finished_at": None,
+            "events": [], "artifacts": {}, "sessions": {}, "metrics": {}, "guidance": [],
+            "checkpoint": None, "pending": None, "archived": False,
+            "github_repo": github.remote_repo_name(repo),
+        }
+        self.store.add(t)
+        C.remember_repo(repo)
+        self.config_changed()
+        self.timeline(tid, "user", "Task created", f"{C.AGENTS[wf['roles']['supervisor']['agent']]['label']} supervises {C.AGENTS[wf['roles']['worker']['agent']]['label']}")
+        self.emit_task(tid)
+        return self.get(tid)
+
+    def update_task(self, tid, patch: dict):
+        t = self.store.get(tid)
+        if not t:
+            raise KeyError("Task not found")
+        allowed = {}
+        for k in ("name", "requirements", "priority", "tags", "archived"):
+            if k in patch:
+                allowed[k] = patch[k]
+        if "workflow" in patch and isinstance(patch["workflow"], dict):
+            wf = dict(t.get("workflow") or {})
+            for k in ("max_turns", "max_review_rounds", "verify_mode", "approval_before_delivery", "allow_agent_questions"):
+                if k in patch["workflow"]:
+                    wf[k] = patch["workflow"][k]
+            if t["status"] in ("queued", "draft") and "roles" in patch["workflow"]:
+                wf = self.build_workflow({"workflow": {**wf, **patch["workflow"]}})
+            allowed["workflow"] = wf
+        if "status" in patch and patch["status"] == "queued" and t["status"] == "draft":
+            allowed["status"] = "queued"
+            allowed["detail"] = "Waiting in queue"
+        self.store.update(tid, immediate=True, **allowed)
+        self.emit_task(tid)
+        return self.get(tid)
+
+    def duplicate(self, tid):
+        t = self.store.get(tid)
+        if not t:
+            raise KeyError("Task not found")
+        payload = {"repo": t["repo"], "requirements": t["requirements"], "issue": t.get("issue"), "name": t["name"] + " (copy)",
+                   "template": t.get("template"), "priority": t.get("priority"), "tags": t.get("tags"),
+                   "workflow": t.get("workflow"), "queue": False}
+        return self.create_task(payload)
+
+    def archive(self, tid, archived=True):
+        self.store.update(tid, immediate=True, archived=bool(archived))
+        self.emit_task(tid)
+
+    def delete(self, tid, delete_worktree=False):
+        """Delete a task for good: stop it, remove its record, history and worktree."""
+        t = self.store.get(tid)
+        if not t:
+            # Already gone from memory; still tombstone it so a stale copy on disk
+            # can never come back, and tell every open browser.
+            self.store.remove(tid)
+            self.emit("task_deleted", {"id": tid})
+            return
+        # Tombstone first: from here on nothing may write this task back.
+        self.store.remove(tid)
+        self.notifications = [n for n in self.notifications if n.get("task_id") != tid]
+        self.process_state.pop(tid, None)
+        self.emit("task_deleted", {"id": tid})
+
+        runner = self.runners.get(tid)
+        if runner:
+            runner.stop()
+            # Wait for the agent process to exit so Windows releases file handles
+            # before we delete the worktree and logs underneath it.
+            for _ in range(60):
+                if tid not in self.runners:
+                    break
+                time.sleep(0.25)
+
+        if delete_worktree and t.get("worktree"):
+            gitops.remove_worktree(t.get("repo"), t["worktree"])
+        # Remove conversation, artifacts and logs, as the delete dialog promises.
+        shutil.rmtree(RUNTIME_DIR / tid, ignore_errors=True)
+
+    # ------------------------------------------------------------ startup recovery
+    def recover_on_start(self):
+        """Re-queue runs a restart interrupted, and restart the queue if it was running."""
+        cfg = self.cfg()
+        resumed = []
+        if cfg.get("auto_resume_interrupted", True):
+            for t in self.store.list():
+                if t.get("status") != "interrupted" or t.get("archived"):
+                    continue
+                # Only resume runs that actually have a checkpoint and a live worktree.
+                if not (t.get("checkpoint") and t.get("worktree") and Path(t["worktree"]).exists()):
+                    continue
+                self.store.update(t["id"], immediate=True, status="queued",
+                                  detail="Queued · resuming from checkpoint after restart", pending=None)
+                self.timeline(t["id"], "system", "Resuming after restart",
+                              f"phase {(t.get('checkpoint') or {}).get('phase')} · work package {(t.get('checkpoint') or {}).get('turn')}")
+                resumed.append(t["name"])
+        if resumed:
+            self.notify("info", "Resuming interrupted task" + ("s" if len(resumed) > 1 else ""),
+                        ", ".join(resumed[:3]) + (f" +{len(resumed)-3} more" if len(resumed) > 3 else ""))
+        if cfg.get("queue_running") or resumed:
+            self.start()
+        return resumed
+
+    # ------------------------------------------------------------ scheduler
+    def start(self, n=None):
+        if n:
+            self.max_parallel = max(1, int(n))
+        else:
+            self.max_parallel = max(1, int(self.cfg().get("max_parallel") or 1))
+        if not self.cfg().get("queue_running"):
+            C.update({"queue_running": True})
+            self.config_changed()
+        if self.scheduler:
+            self.emit("queue", {"running": True, "max_parallel": self.max_parallel})
+            return
+        self.scheduler = True
+        threading.Thread(target=self._loop, daemon=True).start()
+        self.emit("queue", {"running": True, "max_parallel": self.max_parallel})
+        if self.cfg().get("github_intake_enabled", True):
+            self.start_github_watcher()
+
+    def stop_queue(self):
+        self.scheduler = False
+        C.update({"queue_running": False})
+        self.config_changed()
+        self.emit("queue", {"running": False, "max_parallel": self.max_parallel})
+
+    def queue_state(self):
+        return {"running": self.scheduler, "max_parallel": self.max_parallel,
+                "active": sum(1 for t in self.store.list() if t.get("status") in ACTIVE),
+                "queued": sum(1 for t in self.store.list() if t.get("status") == "queued")}
+
+    def _loop(self):
+        prio = {"urgent": 0, "high": 1, "normal": 2, "low": 3}
+        while self.scheduler:
+            try:
+                rows = self.store.list()
+                active = sum(1 for t in rows if t.get("status") in ACTIVE or t.get("status") in WAITING and t["id"] in self.runners)
+                queued = sorted([t for t in rows if t.get("status") == "queued" and not t.get("archived")],
+                                key=lambda t: (prio.get(t.get("priority", "normal"), 2), t.get("created_at", "")))
+                for t in queued[:max(0, self.max_parallel - active)]:
+                    self.launch(t["id"])
+            except Exception:
+                pass
+            time.sleep(0.5)
+
+    def launch(self, tid):
+        t = self.store.get(tid)
+        if not t or tid in self.runners:
+            return
+        self.store.update(tid, immediate=True, status="running", detail="Starting", started_at=t.get("started_at") or now(),
+                          finished_at=None, error=None, pending=None)
+        r = Runner(tid, self)
+        self.runners[tid] = r
+        self.emit_task(tid)
+
+        def work():
+            try:
+                orchestrate(self.store.get(tid), r, self)
+            except Stopped:
+                self.store.update(tid, immediate=True, status="stopped", detail="Stopped by user", finished_at=now(), pending=None)
+                self.timeline(tid, "user", "Stopped", "")
+            except TurnBudget as e:
+                self.store.update(tid, immediate=True, status="failed", detail=str(e), finished_at=now(), pending=None, error=str(e))
+                self.timeline(tid, "system", "Turn budget exhausted", str(e))
+                self.notify("error", "Turn budget exhausted", self.store.get(tid).get("name", ""), tid)
+            except Exception as e:
+                tb = traceback.format_exc()
+                self.store.update(tid, immediate=True, status="failed", detail=truncate(str(e), 300), finished_at=now(), pending=None,
+                                  error=str(e), traceback=tb)
+                self.message(tid, {"id": new_id("m"), "role": "orchestrator", "kind": "error", "content": truncate(str(e), 3000)})
+                self.timeline(tid, "system", "Task failed", truncate(str(e), 300))
+                self.notify("error", "Task failed", truncate(str(e), 140), tid)
+            finally:
+                self.runners.pop(tid, None)
+                self.process_state[tid] = {"state": "idle"}
+                self.emit_task(tid)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    # ------------------------------------------------------------ control actions
+    def start_task(self, tid):
+        """Launch one task right now, independently of the queue and its parallel limit.
+
+        Each task owns its own worktree, CLI processes and agent sessions, so several
+        can run side by side without interfering.
+        """
+        t = self.store.get(tid)
+        if not t:
+            raise KeyError("Task not found")
+        if tid in self.runners or t.get("status") in ACTIVE:
+            raise ValueError("Task is already running")
+        if t.get("pending"):
+            raise ValueError("Task is waiting for your answer")
+        fresh = not (t.get("checkpoint") and t.get("worktree") and Path(t.get("worktree") or "").exists())
+        self.store.update(tid, immediate=True, status="queued", finished_at=None, error=None, traceback=None,
+                          detail="Starting now" if fresh else "Starting now · resuming from checkpoint")
+        self.timeline(tid, "user", "Started manually", "Runs alongside any other active tasks")
+        self.launch(tid)
+        return self.get(tid)
+
+    def stop(self, tid):
+        r = self.runners.get(tid)
+        if r:
+            r.stop()
+        else:
+            t = self.store.get(tid)
+            if t and t.get("status") in ACTIVE | WAITING | {"queued"}:
+                self.store.update(tid, immediate=True, status="stopped", detail="Stopped", finished_at=now(), pending=None)
+                self.emit_task(tid)
+
+    def pause(self, tid):
+        r = self.runners.get(tid)
+        if not r:
+            raise ValueError("Task is not running")
+        r.pause()
+        self.store.update(tid, immediate=True, pause_requested=True)
+        self.timeline(tid, "user", "Pause requested", "Takes effect after the current agent turn")
+        self.emit_task(tid)
+
+    def resume(self, tid):
+        r = self.runners.get(tid)
+        t = self.store.get(tid)
+        if r:
+            r.resume()
+            self.store.update(tid, immediate=True, pause_requested=False)
+            if t and t.get("status") == "paused":
+                self.store.update(tid, immediate=True, status="running", detail="Resuming")
+            self.emit_task(tid)
+            return
+        if t and t.get("status") in TERMINAL | {"paused"}:
+            self.retry(tid, fresh=False)
+
+    def retry(self, tid, fresh=False):
+        t = self.store.get(tid)
+        if not t:
+            raise KeyError("Task not found")
+        if tid in self.runners:
+            raise ValueError("Task is still running")
+        patch = {"status": "queued", "detail": "Queued for retry", "finished_at": None, "pending": None, "error": None, "traceback": None}
+        if fresh or not (t.get("checkpoint") and t.get("worktree") and Path(t.get("worktree") or "").exists()):
+            patch.update({"checkpoint": None, "sessions": {}, "plan": None, "verification": None, "review": None})
+            patch["detail"] = "Queued · fresh start"
+        else:
+            patch["detail"] = "Queued · resuming from checkpoint"
+        self.store.update(tid, immediate=True, **patch)
+        self.timeline(tid, "user", "Requeued", patch["detail"])
+        self.emit_task(tid)
+        if not self.scheduler:
+            self.start()
+
+    def answer(self, tid, qid, text, extra=None):
+        r = self.runners.get(tid)
+        t = self.store.get(tid)
+        if not r or not t or not t.get("pending"):
+            raise ValueError("Nothing is waiting for an answer on this task")
+        if qid and t["pending"].get("id") != qid:
+            raise ValueError("That question is no longer pending")
+        r.answer(t["pending"].get("id"), text, extra)
+
+    def approve(self, tid, approved=True, note=""):
+        self.answer(tid, None, note, {"approved": bool(approved)})
+
+    def guidance(self, tid, text, to="next", mode="queue"):
+        t = self.store.get(tid)
+        if not t:
+            raise KeyError("Task not found")
+        text = (text or "").strip()
+        if not text:
+            raise ValueError("Guidance is empty")
+        row = {"id": new_id("g"), "time": now(), "text": text, "to": to or "next", "consumed": False}
+        rows = list(t.get("guidance") or []) + [row]
+        self.store.update(tid, immediate=True, guidance=rows)
+        self.message(tid, {"id": new_id("m"), "role": "user", "kind": "user", "content": text, "to": to or "next",
+                           "mode": mode, "turn": (t.get("checkpoint") or {}).get("turn")})
+        self.timeline(tid, "user", "Guidance queued" if mode != "interrupt" else "Interrupting with guidance", truncate(text, 200))
+        r = self.runners.get(tid)
+        if mode == "interrupt" and r and r.current.get("state") == "running" and r.current.get("agent"):
+            row["consumed"] = True
+            self.store.update(tid, immediate=True, guidance=rows)
+            r.interrupt(text)
+            return {"applied": "interrupt"}
+        if r and t.get("pending") and t["pending"].get("kind") == "question":
+            # Treat guidance during a pending question as the answer.
+            r.answer(t["pending"]["id"], text, {})
+            row["consumed"] = True
+            self.store.update(tid, immediate=True, guidance=rows)
+            return {"applied": "answer"}
+        return {"applied": "next_boundary"}
+
+    def take_guidance(self, tid, role):
+        t = self.store.get(tid)
+        rows = list(t.get("guidance") or []) if t else []
+        picked = []
+        for g in rows:
+            if g.get("consumed"):
+                continue
+            if g.get("to") in (role, "next", "both", "all", None, ""):
+                g["consumed"] = True
+                g["consumed_by"] = role
+                picked.append(g)
+        if picked:
+            self.store.update(tid, guidance=rows)
+            self.timeline(tid, "user", "Guidance delivered", f"{len(picked)} message(s) → {role}")
+        return "\n\n".join(f"[{g['time']}] {g['text']}" for g in picked)
+
+    # ------------------------------------------------------------ callbacks from runner / pipeline
+    def set_status(self, tid, status, detail=""):
+        self.store.update(tid, immediate=True, status=status, detail=detail)
+        self.emit_task(tid)
+
+    def set_meta(self, tid, **kw):
+        self.store.update(tid, **kw)
+        self.emit_task(tid)
+
+    def artifact(self, tid, kind, path):
+        t = self.store.get(tid) or {}
+        arts = dict(t.get("artifacts") or {})
+        arts[kind] = path
+        self.store.update(tid, artifacts=arts)
+        self.emit("artifact", {"task_id": tid, "kind": kind})
+
+    def timeline(self, tid, role, title, detail=""):
+        ev = {"id": new_id("e"), "role": role, "title": title, "detail": detail or "", "time": now()}
+        self.store.add_event(tid, ev)
+        self.emit("event", {"task_id": tid, **ev})
+
+    def message(self, tid, fields: dict) -> dict:
+        fields = dict(fields)
+        fields.setdefault("id", new_id("m"))
+        msg = self.store.append_message(tid, fields)
+        self.emit("message", {"task_id": tid, **msg})
+        return msg
+
+    def message_update(self, tid, mid, patch: dict):
+        self.store.update_message(tid, mid, patch)
+        self.emit("message_update", {"task_id": tid, "id": mid, **patch})
+
+    def process(self, tid, payload: dict):
+        self.process_state[tid] = payload
+        self.emit("process", {"task_id": tid, **payload})
+
+    def turn_started(self, tid, role, agent, label, turn):
+        self.store.update(tid, current_role=role, current_agent=agent, current_turn=turn)
+
+    def session_seen(self, tid, role, agent, session_id, model):
+        t = self.store.get(tid) or {}
+        sessions = dict(t.get("sessions") or {})
+        s = dict(sessions.get(role) or {})
+        s.update({"agent": agent, "id": session_id or s.get("id"), "model": model or s.get("model")})
+        sessions[role] = s
+        self.store.update(tid, sessions=sessions)
+
+    def estimate_cost(self, agent, usage) -> tuple[float, bool]:
+        """Return (cost_usd, estimated). Uses reported cost when present, else the pricing table."""
+        reported = float(usage.get("cost_usd") or 0)
+        if reported > 0:
+            return reported, False
+        price = (self.cfg().get("pricing") or {}).get(agent) or {}
+        if not price or not self.cfg().get("show_estimated_cost", True):
+            return 0.0, False
+        inp = int(usage.get("input") or 0)
+        cached = min(int(usage.get("cached") or 0), inp)
+        out = int(usage.get("output") or 0)
+        cost = ((inp - cached) * float(price.get("input") or 0) + cached * float(price.get("cached") or 0)
+                + out * float(price.get("output") or 0)) / 1_000_000
+        return round(cost, 5), cost > 0
+
+    def metrics_add(self, tid, agent, role, usage, elapsed, tool_calls):
+        t = self.store.get(tid) or {}
+        m = copy.deepcopy(t.get("metrics") or {})
+        m.setdefault("agents", {})
+        m.setdefault("roles", {})
+        cost, estimated = self.estimate_cost(agent, usage or {})
+        for key, bucket in ((agent, m["agents"]), (role, m["roles"])):
+            d = bucket.setdefault(key, {"turns": 0, "input": 0, "output": 0, "cached": 0, "cost_usd": 0.0, "seconds": 0.0, "tool_calls": 0, "estimated": False})
+            d["turns"] += 1
+            d["input"] += int(usage.get("input") or 0)
+            d["output"] += int(usage.get("output") or 0)
+            d["cached"] += int(usage.get("cached") or 0)
+            d["cost_usd"] = round(d["cost_usd"] + cost, 4)
+            d["estimated"] = bool(d.get("estimated")) or estimated
+            d["seconds"] = round(d["seconds"] + float(elapsed or 0), 1)
+            d["tool_calls"] += int(tool_calls or 0)
+        tot = m.setdefault("total", {"turns": 0, "input": 0, "output": 0, "cost_usd": 0.0, "seconds": 0.0, "tool_calls": 0, "estimated": False})
+        tot["turns"] += 1
+        tot["input"] += int(usage.get("input") or 0)
+        tot["output"] += int(usage.get("output") or 0)
+        tot["cost_usd"] = round(tot["cost_usd"] + cost, 4)
+        tot["estimated"] = bool(tot.get("estimated")) or estimated
+        tot["seconds"] = round(tot["seconds"] + float(elapsed or 0), 1)
+        tot["tool_calls"] += int(tool_calls or 0)
+        self.store.update(tid, metrics=m)
+        self.emit_task(tid)
+
+    def ask_user(self, tid, pending: dict):
+        self.store.update(tid, immediate=True, pending=pending)
+        self.emit_task(tid)
+
+    def clear_pending(self, tid):
+        self.store.update(tid, immediate=True, pending=None)
+        self.emit_task(tid)
+
+    def complete(self, tid, payload: dict):
+        self.store.update(tid, immediate=True, status="done", detail="Delivered", finished_at=now(), pending=None, **payload)
+        self.emit_task(tid)
+        t = self.store.get(tid) or {}
+        self.notify("success", "Task delivered", t.get("name", ""), tid)
+
+    # ------------------------------------------------------------ github intake
+    def start_github_watcher(self):
+        if self.github_watcher:
+            return
+        self.github_watcher = True
+        threading.Thread(target=self._github_loop, daemon=True).start()
+
+    def stop_github_watcher(self):
+        self.github_watcher = False
+
+    def _github_loop(self):
+        while self.github_watcher:
+            cfg = self.cfg()
+            try:
+                auth = github.auth_info()
+                if not auth.get("ready"):
+                    self.github_status = {"last_poll": now(), "error": auth.get("error"), "login": None}
+                else:
+                    err = None
+                    sources = github.load_sources()
+                    existing = {t.get("github_issue_key") for t in self.store.list() if t.get("github_issue_key")}
+                    for source in sources:
+                        if not source.get("enabled", True):
+                            continue
+                        repo = github.normalize_repo_full_name(source.get("repo", ""))
+                        if not repo:
+                            continue
+                        for issue in github.issue_candidates(source):
+                            key = f"{repo}#{issue['number']}"
+                            if key in existing:
+                                continue
+                            local = source.get("local_path", "")
+                            if not local or not Path(local).exists():
+                                try:
+                                    local = str(github.ensure_local_repo(repo, local))
+                                    source["local_path"] = local
+                                    github.save_sources(sources)
+                                except Exception as e:
+                                    err = f"{repo}: clone failed: {e}"
+                                    continue
+                            body = (issue.get("body") or "").strip()
+                            try:
+                                t = self.create_task({
+                                    "repo": local, "name": f"#{issue['number']} {issue['title']}", "issue": str(issue["number"]),
+                                    "requirements": f"GitHub issue #{issue['number']}: {issue['title']}\n\n{body}\n\nImplement this issue completely, preserving repository conventions. The deliverable is a reviewable branch and draft PR.",
+                                    "workflow": {"preset": source.get("preset") or cfg.get("workflow_preset"),
+                                                 "max_turns": source.get("max_turns") or cfg.get("max_turns")},
+                                    "tags": ["github"], "queue": bool(source.get("auto_queue", True)),
+                                })
+                                self.store.update(t["id"], immediate=True, github_repo=repo, github_issue_number=issue["number"],
+                                                  github_issue_title=issue["title"], github_issue_url=issue.get("url"),
+                                                  github_issue_key=key, github_source="watcher")
+                                existing.add(key)
+                                self.notify("info", "Issue queued from GitHub", f"#{issue['number']} {issue['title']}", t["id"])
+                                self.emit_task(t["id"])
+                            except Exception as e:
+                                err = f"{repo}#{issue['number']}: {e}"
+                    self.github_status = {"last_poll": now(), "error": err, "login": auth.get("login")}
+            except Exception as e:
+                self.github_status = {"last_poll": now(), "error": str(e), "login": None}
+            self.emit("github", self.github_status)
+            seconds = max(15, int(cfg.get("github_poll_seconds", 60)))
+            for _ in range(seconds):
+                if not self.github_watcher:
+                    return
+                time.sleep(1)
+
+    # ------------------------------------------------------------ dashboard
+    def dashboard(self) -> dict:
+        rows = [t for t in self.store.list() if not t.get("archived")]
+        by_status = {}
+        for t in rows:
+            by_status[t.get("status", "queued")] = by_status.get(t.get("status", "queued"), 0) + 1
+        done = [t for t in rows if t.get("status") == "done"]
+        failed = [t for t in rows if t.get("status") in ("failed",)]
+        finished = len(done) + len(failed)
+        durations = []
+        for t in done:
+            try:
+                from datetime import datetime
+                a = datetime.fromisoformat(t["started_at"])
+                b = datetime.fromisoformat(t["finished_at"])
+                durations.append((b - a).total_seconds())
+            except Exception:
+                pass
+        agents_tot = {}
+        cost = 0.0
+        turns = 0
+        any_estimated = False
+        for t in rows:
+            m = t.get("metrics") or {}
+            cost += float((m.get("total") or {}).get("cost_usd") or 0)
+            turns += int((m.get("total") or {}).get("turns") or 0)
+            any_estimated = any_estimated or bool((m.get("total") or {}).get("estimated"))
+            for a, d in (m.get("agents") or {}).items():
+                x = agents_tot.setdefault(a, {"turns": 0, "input": 0, "output": 0, "cost_usd": 0.0, "seconds": 0.0, "tool_calls": 0, "estimated": False})
+                for k in x:
+                    if k == "estimated":
+                        x[k] = x[k] or bool(d.get(k))
+                    elif k == "cost_usd":
+                        x[k] = round(x[k] + float(d.get(k) or 0), 4)
+                    else:
+                        x[k] = x[k] + (d.get(k) or 0)
+        recent = []
+        for t in sorted(rows, key=lambda t: t.get("updated_at", ""), reverse=True)[:12]:
+            for e in (t.get("events") or [])[-3:]:
+                recent.append({"task_id": t["id"], "task": t["name"], **e})
+        recent = sorted(recent, key=lambda e: e.get("time", ""), reverse=True)[:20]
+        return {
+            "total": len(rows), "by_status": by_status,
+            "success_rate": (len(done) / finished) if finished else None,
+            "avg_duration": (sum(durations) / len(durations)) if durations else None,
+            "total_cost_usd": round(cost, 2), "total_turns": turns, "cost_estimated": any_estimated,
+            "agents": agents_tot, "recent": recent,
+            "prs": [{"task_id": t["id"], "name": t["name"], "url": t.get("pr_url"), "number": t.get("pr_number"), "repo": t.get("github_repo")} for t in done if t.get("pr_url")][:10],
+            "queue": self.queue_state(),
+        }

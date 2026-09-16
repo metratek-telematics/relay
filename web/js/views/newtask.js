@@ -1,0 +1,180 @@
+// New task wizard: repository → request → team → review.
+import { $, $$, esc, icon, modal, toast, basename } from "../ui.js";
+import { S, agentLabel, agentInitial, navigate, defaultModelLabel } from "../state.js";
+import { api } from "../api.js";
+
+export function workflowEditor(host, wf, { agents, presets, showAdvanced = true, onChange }) {
+  const health = S.agents || {};
+  const roles = ["supervisor", "worker", "reviewer"];
+  const draw = () => {
+    host.innerHTML = `
+      <div class="presets">${presets.map((p) => `<button type="button" class="preset ${wf.preset === p.id ? "active" : ""}" data-preset="${esc(p.id)}">
+        <div class="flow">${["supervisor", "worker", "reviewer"].filter((r) => p.roles[r]?.agent).map((r) => `<span class="av sm ${esc(p.roles[r].agent)}" title="${r}">${esc(agentInitial(p.roles[r].agent))}</span>`).join(icon("arrowRight"))}</div>
+        <strong>${esc(p.name)}</strong><p>${esc(p.description)}</p></button>`).join("")}
+        <button type="button" class="preset ${wf.preset === "custom" ? "active" : ""}" data-preset="custom"><div class="flow">${icon("wand")}</div><strong>Custom</strong><p>Pick any agent for any role below.</p></button>
+      </div>
+      <div class="role-grid" style="margin-top:12px">${roles.map((r) => { const cur = wf.roles[r] || { agent: "", model: "" }; return `<div class="role-box">
+        <div class="rt">${r}${r === "reviewer" ? ' <span style="text-transform:none;letter-spacing:0;font-weight:500">(optional)</span>' : ""}</div>
+        <div class="agent-pick">${Object.keys(agents).map((a) => `<button type="button" data-role="${r}" data-agent="${a}" class="${cur.agent === a ? "active" : ""}" style="--agent:${esc(agents[a].color)}" title="${esc(health[a]?.ok ? "ready" : (health[a]?.error || "not ready"))}"><span class="av sm ${a}">${esc(agentInitial(a))}</span>${esc(agents[a].label)}${health[a] && !health[a].ok ? ' <span class="muted">!</span>' : ""}</button>`).join("")}${r === "reviewer" ? `<button type="button" data-role="reviewer" data-agent="" class="${!cur.agent ? "active" : ""}">none</button>` : ""}</div>
+        ${(() => {
+          if (!cur.agent) return '<div class="muted" style="font-size:11px">No agent in this role.</div>';
+          const catalog = [...new Set([...((S.config.models || {})[cur.agent] || []), ...((S.config.model_recent || {})[cur.agent] || [])])];
+          const custom = cur.model && !catalog.includes(cur.model);
+          const efforts = (S.agentMeta[cur.agent] || {}).efforts || [];
+          return `<label class="rl">Model</label>
+          <select data-model-sel="${r}"><option value="">${esc(defaultModelLabel(cur.agent))}</option>${catalog.map((m) => `<option value="${esc(m)}" ${cur.model === m ? "selected" : ""}>${esc(m)}</option>`).join("")}<option value="__custom__" ${custom ? "selected" : ""}>Custom…</option></select>
+          <input data-model="${r}" placeholder="exact model id passed to the CLI" value="${esc(custom ? cur.model : "")}" ${custom ? "" : "hidden"}>
+          <label class="rl">Reasoning effort</label>
+          ${efforts.length ? `<select data-effort="${r}"><option value="">${esc(S.agents?.[cur.agent]?.default_effort ? `CLI default (${S.agents[cur.agent].default_effort})` : "CLI default")}</option>${efforts.map((e) => `<option value="${e}" ${cur.effort === e ? "selected" : ""}>${e}</option>`).join("")}</select>` : '<select disabled><option>not supported by this CLI</option></select>'}`;
+        })()}
+      </div>`; }).join("")}</div>
+      ${showAdvanced ? `<div class="grid3" style="margin-top:6px">
+        <div class="field"><label>Max work packages</label><input type="number" min="1" max="60" data-wf="max_turns" value="${esc(wf.max_turns)}"><div class="help">Turn budget for the supervisor ↔ worker loop.</div></div>
+        <div class="field"><label>Max review rounds</label><input type="number" min="1" max="10" data-wf="max_review_rounds" value="${esc(wf.max_review_rounds)}"></div>
+        <div class="field"><label>Verification</label><select data-wf="verify_mode"><option value="each_report" ${wf.verify_mode === "each_report" ? "selected" : ""}>After every worker report</option><option value="before_review" ${wf.verify_mode === "before_review" ? "selected" : ""}>Only before review / delivery</option><option value="off" ${wf.verify_mode === "off" ? "selected" : ""}>Off</option></select></div>
+      </div>
+      <div class="grid2">
+        <div class="field inline"><label>Require my approval before commit & PR</label><span class="switch ${wf.approval_before_delivery ? "on" : ""}" data-sw="approval_before_delivery"></span></div>
+        <div class="field inline"><label>Agents may ask me questions</label><span class="switch ${wf.allow_agent_questions !== false ? "on" : ""}" data-sw="allow_agent_questions"></span></div>
+      </div>
+      <div class="field"><label>Verification commands (one per line, optional)</label><textarea data-wf="verification_commands" rows="2" placeholder="npm test&#10;python -m pytest -q">${esc((wf.verification_commands || []).join("\n"))}</textarea><div class="help">Auto-detected commands (npm scripts, pytest, gradle, …) are added too unless disabled. <label style="display:inline-flex;gap:4px;align-items:center"><input type="checkbox" data-cb="auto_detect_verification" ${wf.auto_detect_verification !== false ? "checked" : ""}> auto-detect</label></div></div>` : ""}`;
+    $$("[data-preset]", host).forEach((b) => (b.onclick = () => {
+      wf.preset = b.dataset.preset;
+      const p = presets.find((x) => x.id === wf.preset);
+      if (p) for (const r of roles) wf.roles[r] = { agent: p.roles[r]?.agent || "", model: "", effort: "" };
+      draw(); onChange && onChange(wf);
+    }));
+    $$("[data-role][data-agent]", host).forEach((b) => (b.onclick = () => { const same = wf.roles[b.dataset.role]?.agent === b.dataset.agent; wf.roles[b.dataset.role] = { agent: b.dataset.agent, model: same ? (wf.roles[b.dataset.role]?.model || "") : "", effort: same ? (wf.roles[b.dataset.role]?.effort || "") : "" }; wf.preset = "custom"; draw(); onChange && onChange(wf); }));
+    $$("[data-model-sel]", host).forEach((s) => s.addEventListener("change", () => {
+      const r = s.dataset.modelSel;
+      const input = host.querySelector(`[data-model="${r}"]`);
+      if (s.value === "__custom__") { input.hidden = false; input.focus(); wf.roles[r].model = input.value.trim(); }
+      else { input.hidden = true; wf.roles[r].model = s.value; }
+      onChange && onChange(wf);
+    }));
+    $$("[data-model]", host).forEach((i) => i.addEventListener("input", () => { wf.roles[i.dataset.model].model = i.value.trim(); onChange && onChange(wf); }));
+    $$("[data-effort]", host).forEach((s) => s.addEventListener("change", () => { wf.roles[s.dataset.effort].effort = s.value; onChange && onChange(wf); }));
+    $$("[data-wf]", host).forEach((i) => i.addEventListener("change", () => { const k = i.dataset.wf; wf[k] = k === "verification_commands" ? i.value.split("\n").map((x) => x.trim()).filter(Boolean) : (i.type === "number" ? Number(i.value) : i.value); onChange && onChange(wf); }));
+    $$("[data-sw]", host).forEach((s) => (s.onclick = () => { wf[s.dataset.sw] = !s.classList.contains("on"); s.classList.toggle("on"); onChange && onChange(wf); }));
+    $$("[data-cb]", host).forEach((c) => c.addEventListener("change", () => { wf[c.dataset.cb] = c.checked; onChange && onChange(wf); }));
+  };
+  draw();
+  return { get value() { return wf; }, redraw: draw };
+}
+
+export function defaultWorkflow() {
+  const cfg = S.config || {};
+  const p = (S.presets || []).find((x) => x.id === cfg.workflow_preset);
+  const roles = {};
+  for (const r of ["supervisor", "worker", "reviewer"]) roles[r] = { agent: p ? (p.roles[r]?.agent || "") : (cfg.roles?.[r]?.agent || ""), model: cfg.roles?.[r]?.model || "", effort: cfg.roles?.[r]?.effort || "" };
+  return { preset: cfg.workflow_preset || "custom", roles, max_turns: cfg.max_turns || 12, max_review_rounds: cfg.max_review_rounds || 3, verify_mode: cfg.verify_mode || "each_report",
+    approval_before_delivery: !!cfg.approval_before_delivery, allow_agent_questions: cfg.allow_agent_questions !== false, verification_commands: [], auto_detect_verification: cfg.auto_detect_verification !== false };
+}
+
+export function openNewTask(prefill = {}) {
+  const edit = prefill.edit;
+  const data = {
+    repo: edit?.repo || prefill.repo || S.config.recent_repos?.[0] || "",
+    name: edit?.name || "", requirements: edit?.requirements || prefill.requirements || "", issue: edit?.issue || prefill.issue || "",
+    template: edit?.template || "feature", priority: edit?.priority || "normal", tags: (edit?.tags || []).join(", "),
+    workflow: edit ? JSON.parse(JSON.stringify(edit.workflow)) : defaultWorkflow(), queue: true,
+  };
+  let step = edit ? 1 : 0;
+  let repoInfo = null;
+  const steps = ["Repository", "Request", "Team & workflow", "Review"];
+  const m = modal(`<div class="wizard"><div class="wiz-steps" id="wizSteps"></div><div class="wiz-body" id="wizBody"></div></div>`, { wide: true });
+  const stepsEl = $("#wizSteps", m.body), body = $("#wizBody", m.body);
+
+  const drawSteps = () => { stepsEl.innerHTML = steps.map((s, i) => `<button type="button" class="${i === step ? "active" : ""} ${i < step ? "done" : ""}" data-step="${i}"><i>${i < step ? "✓" : i + 1}</i>${esc(s)}</button>`).join(""); $$("[data-step]", stepsEl).forEach((b) => (b.onclick = () => { if (Number(b.dataset.step) <= step || data.repo) go(Number(b.dataset.step)); })); };
+  const nav = (backLabel, nextLabel, nextPrimary = true) => `<div class="modal-actions">${backLabel ? `<button type="button" class="btn" id="wBack">${esc(backLabel)}</button>` : '<button type="button" class="btn" data-close>Cancel</button>'}<span style="flex:1"></span>${nextLabel ? `<button type="button" class="btn ${nextPrimary ? "primary" : ""}" id="wNext">${esc(nextLabel)}</button>` : ""}</div>`;
+  const go = (i) => { step = i; drawSteps(); render(); };
+
+  async function loadRepoInfo() {
+    const box = $("#repoFacts", body); if (!box) return;
+    if (!data.repo) { box.innerHTML = ""; return; }
+    box.innerHTML = '<span class="muted">Inspecting…</span>';
+    try {
+      repoInfo = await api.repoInfo(data.repo);
+      box.innerHTML = `<span class="badge ${repoInfo.is_git ? "green" : "red"}">${repoInfo.is_git ? "git repository" : "not a git repo"}</span>${repoInfo.branch ? `<span class="badge outline">${icon("branch", "sm")}${esc(repoInfo.branch)}</span>` : ""}${repoInfo.remote ? `<span class="badge outline">${icon("github", "sm")}${esc(repoInfo.remote.replace(/^.*github\.com[/:]/, "").replace(/\.git$/, ""))}</span>` : ""}${repoInfo.dirty ? `<span class="badge amber">${repoInfo.dirty} uncommitted change(s) will be carried into the worktree</span>` : ""}${(repoInfo.detected_checks || []).length ? `<span class="badge blue">checks: ${esc(repoInfo.detected_checks.join(", "))}</span>` : '<span class="badge">no checks detected</span>'}`;
+    } catch (e) { repoInfo = null; box.innerHTML = `<span class="badge red">${esc(e.message)}</span>`; }
+  }
+  async function drawBrowser(path) {
+    const host = $("#browser", body); if (!host) return;
+    host.innerHTML = '<div class="bpath"><span>Loading…</span></div>';
+    try {
+      const r = await api.browse(path);
+      host.innerHTML = `<div class="bpath">${r.parent !== null && r.parent !== undefined ? `<button type="button" class="btn xs" id="bUp">${icon("chevron")}</button>` : ""}<span title="${esc(r.path)}">${esc(r.path || "This PC")}</span>${r.is_git ? '<span class="badge green">git</span>' : ""}<button type="button" class="btn xs primary" id="bUse" ${r.path ? "" : "disabled"}>Use this folder</button></div>
+        <div class="blist">${r.dirs.map((d) => `<button type="button" class="bitem" data-p="${esc(d.path)}">${icon("folder")}<span class="truncate">${esc(d.name)}</span>${d.git ? '<span class="badge green git">git</span>' : ""}</button>`).join("") || '<div class="empty small">No subfolders</div>'}</div>`;
+      $("#bUp", host) && ($("#bUp", host).onclick = () => drawBrowser(r.parent));
+      $("#bUse", host).onclick = () => { data.repo = r.path; $("#repoInput", body).value = r.path; loadRepoInfo(); };
+      $$("[data-p]", host).forEach((b) => (b.onclick = () => drawBrowser(b.dataset.p)));
+    } catch (e) { host.innerHTML = `<div class="bpath"><span>${esc(e.message)}</span></div>`; }
+  }
+
+  function render() {
+    if (step === 0) {
+      body.innerHTML = `<h2>Choose the repository</h2><p class="hint">The team works in an isolated git worktree and branch; your checkout is never touched.</p>
+        <div class="field"><label>Repository folder</label><input id="repoInput" value="${esc(data.repo)}" placeholder="C:\\Users\\you\\projects\\app"><div class="repo-facts" id="repoFacts"></div></div>
+        ${(S.config.recent_repos || []).length ? `<div class="field"><label>Recent</label><div class="templ">${S.config.recent_repos.slice(0, 8).map((r) => `<button type="button" class="chip" data-recent="${esc(r)}" title="${esc(r)}">${icon("folder", "sm")} ${esc(basename(r))}</button>`).join("")}</div></div>` : ""}
+        <div class="field"><label>Browse</label><div class="browser" id="browser"></div></div>${nav(null, "Next: describe the request")}`;
+      const input = $("#repoInput", body);
+      input.addEventListener("change", () => { data.repo = input.value.trim().replace(/^"|"$/g, ""); loadRepoInfo(); });
+      $$("[data-recent]", body).forEach((b) => (b.onclick = () => { data.repo = b.dataset.recent; input.value = data.repo; loadRepoInfo(); drawBrowser(data.repo); }));
+      loadRepoInfo();
+      drawBrowser(data.repo || "");
+      $("#wNext", body).onclick = () => { data.repo = input.value.trim().replace(/^"|"$/g, ""); if (!data.repo) { toast("warning", "Choose a repository folder"); return; } if (repoInfo && !repoInfo.is_git) { toast("error", "Not a git repository", "Run git init and make an initial commit first."); return; } go(1); };
+    } else if (step === 1) {
+      const tpl = (S.templates || []).find((x) => x.id === data.template) || {};
+      body.innerHTML = `<h2>Describe the request</h2><p class="hint">Write it once. The supervisor turns it into a plan, acceptance criteria and work packages.</p>
+        <div class="field"><label>Type</label><div class="templ">${(S.templates || []).map((x) => `<button type="button" class="chip ${data.template === x.id ? "active" : ""}" data-tpl="${esc(x.id)}">${esc(x.name)}</button>`).join("")}</div></div>
+        <div class="field"><label>Requirements</label><textarea id="req" rows="9" placeholder="${esc(tpl.hint || "Describe what you want…")}">${esc(data.requirements)}</textarea><div class="help">${esc(tpl.hint || "")}</div></div>
+        <div class="grid3">
+          <div class="field"><label>Task name (optional)</label><input id="tname" value="${esc(data.name)}" placeholder="auto from the first line"></div>
+          <div class="field"><label>GitHub issue # (optional)</label><input id="tissue" value="${esc(data.issue)}" placeholder="123"></div>
+          <div class="field"><label>Priority</label><select id="tprio">${["urgent", "high", "normal", "low"].map((p) => `<option ${data.priority === p ? "selected" : ""}>${p}</option>`).join("")}</select></div>
+        </div>
+        <div class="field"><label>Tags (comma separated)</label><input id="ttags" value="${esc(data.tags)}" placeholder="frontend, billing"></div>
+        ${nav("Back", "Next: choose the team")}`;
+      $$("[data-tpl]", body).forEach((b) => (b.onclick = () => { data.template = b.dataset.tpl; collect1(); render(); }));
+      const collect1 = () => { data.requirements = $("#req", body).value; data.name = $("#tname", body).value; data.issue = $("#tissue", body).value; data.priority = $("#tprio", body).value; data.tags = $("#ttags", body).value; };
+      $("#wBack", body).onclick = () => { collect1(); go(0); };
+      $("#wNext", body).onclick = () => { collect1(); if (!data.requirements.trim() && !data.issue.trim()) { toast("warning", "Describe the task or give an issue number"); return; } go(2); };
+    } else if (step === 2) {
+      body.innerHTML = `<h2>Team & workflow</h2><p class="hint">One agent supervises: it plans, delegates, verifies and decides. The other implements. Optionally a third reviews independently before delivery.</p><div id="wfEditor"></div>${nav("Back", "Next: review")}`;
+      workflowEditor($("#wfEditor", body), data.workflow, { agents: S.agentMeta, presets: S.presets });
+      $("#wBack", body).onclick = () => go(1);
+      $("#wNext", body).onclick = () => { const r = data.workflow.roles; if (!r.supervisor.agent || !r.worker.agent) { toast("warning", "Pick a supervisor and a worker"); return; } go(3); };
+    } else {
+      const r = data.workflow.roles;
+      const h = S.agents || {};
+      const warn = ["supervisor", "worker", "reviewer"].filter((x) => r[x].agent && h[r[x].agent] && !h[r[x].agent].ok).map((x) => `${agentLabel(r[x].agent)} (${x}) is not ready: ${h[r[x].agent].error || "check Agents page"}`);
+      body.innerHTML = `<h2>${edit ? "Save changes" : "Ready to launch"}</h2>
+        <div class="summary-box">
+          <div><b>Repository</b>${esc(data.repo)}</div>
+          <div><b>Request</b>${esc((data.requirements || `Issue #${data.issue}`).slice(0, 400))}${data.requirements.length > 400 ? "…" : ""}</div>
+          <div><b>Team</b>${["supervisor", "worker", "reviewer"].filter((x) => r[x].agent).map((x) => `${esc(agentLabel(r[x].agent))} (${x}${r[x].model ? `, ${esc(r[x].model)}` : ", CLI default model"}${r[x].effort ? `, ${esc(r[x].effort)} effort` : ""})`).join(" · ")}</div>
+          <div><b>Budget</b>${data.workflow.max_turns} work packages · ${data.workflow.max_review_rounds} review rounds · verification ${esc(data.workflow.verify_mode)}${data.workflow.approval_before_delivery ? " · approval gate on" : ""}</div>
+          <div><b>Delivery</b>isolated branch → ${S.config.github_auto_create_pr ? "draft PR" : "branch only"} (never merges)</div>
+        </div>
+        ${warn.length ? `<div class="modal-error" style="margin-top:12px">${warn.map(esc).join("<br>")}<br><a href="#/agents" data-close>Open Agents page</a></div>` : ""}
+        ${!edit ? `<div class="field inline" style="margin-top:14px"><label>Queue immediately (and start the queue if idle)</label><span class="switch ${data.queue ? "on" : ""}" id="qSwitch"></span></div>` : ""}
+        <div class="modal-actions"><button type="button" class="btn" id="wBack">Back</button><span style="flex:1"></span><button type="button" class="btn primary" id="wCreate">${icon(edit ? "save" : "sparkles")}${edit ? "Save" : data.queue ? "Create & queue" : "Create draft"}</button></div>`;
+      $("#wBack", body).onclick = () => go(2);
+      $("#qSwitch", body) && ($("#qSwitch", body).onclick = () => { data.queue = !data.queue; render(); });
+      $("#wCreate", body).onclick = async () => {
+        const btn = $("#wCreate", body); btn.disabled = true; btn.innerHTML = `${icon("spinner", "spin")}${edit ? "Saving…" : "Creating…"}`;
+        try {
+          const payload = { repo: data.repo, name: data.name, requirements: data.requirements, issue: data.issue, template: data.template, priority: data.priority,
+            tags: data.tags.split(",").map((x) => x.trim()).filter(Boolean), workflow: data.workflow, queue: data.queue };
+          if (edit) { await api.updateTask(edit.id, payload); toast("success", "Task updated"); m.close(); return; }
+          const t = await api.createTask(payload);
+          m.close();
+          toast("success", data.queue ? "Task queued" : "Draft created", t.name);
+          if (data.queue) { try { await api.queueStart(); } catch {} }
+          navigate(`#/task/${t.id}`);
+        } catch (e) { toast("error", edit ? "Could not save" : "Could not create task", e.message); btn.disabled = false; btn.innerHTML = edit ? "Save" : "Create & queue"; }
+      };
+    }
+  }
+  drawSteps(); render();
+}
