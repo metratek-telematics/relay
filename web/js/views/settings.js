@@ -68,8 +68,8 @@ export function mountSettings(main, section) {
               ? `<select data-adef="${a}.effort"><option value="">${esc(cliEffort ? `CLI default (${cliEffort})` : "CLI default")}</option>${efforts.map((e) => `<option value="${e}" ${d.effort === e ? "selected" : ""}>${e}</option>`).join("")}</select><div class="help">Lower effort spends fewer output tokens.</div>`
               : `<select disabled><option>not supported by this CLI</option></select>`}</div>
           <div class="field"><label>Subagent model <span class="badge green">saves tokens</span></label>
-            ${a === "gemini"
-              ? `<input disabled placeholder="not supported"><div class="help">Gemini has no subagent model setting.</div>`
+            ${a !== "claude"
+              ? `<input disabled placeholder="not supported"><div class="help">${a === "codex" ? "Codex has no setting for its helpers' model." : "Gemini has no subagent model setting."}</div>`
               : `<input list="subcat-${a}" data-sub="${a}" value="${esc(subs)}" placeholder="${a === "codex" ? "gpt-5.1-codex-mini" : "haiku"}"><datalist id="subcat-${a}">${cat.map((m) => `<option value="${esc(m)}">`).join("")}</datalist><div class="help">Helper agents spawned mid-turn use this cheaper model.</div>`}</div>
         </div>
         <div class="field"><label>Model catalog (one per line)</label><textarea data-models="${a}" rows="3" style="font-family:var(--mono);font-size:12px">${esc(cat.join("\n"))}</textarea><div class="help">Options offered in every model picker.</div></div>`;
@@ -160,8 +160,8 @@ export function mountSettings(main, section) {
         <div class="card"><div class="card-head"><h3>Cheaper models for subagents</h3></div><div class="card-body">
           <div class="hint" style="margin-bottom:10px">When the supervisor or worker spawns helper agents (Claude's Task tool, Codex multi-agent), those helpers do bulk searching and reading. Running them on a small model cuts usage sharply without touching the quality of the main reasoning.</div>
           <div class="field inline"><label>Use a cheaper model for subagents</label><span class="switch ${c.subagent_cheap_enabled !== false ? "on" : ""}" data-sw-cfg="subagent_cheap_enabled"></span></div>
-          <div class="grid3">${["codex", "claude", "gemini"].map((a) => { const cat = (c.models || {})[a] || []; const v = (c.subagent_models || {})[a] || ""; return `<div class="field"><label><span class="av sm ${a}">${esc(agentInitial(a))}</span> ${esc(agentLabel(a))}</label><input list="sub-${a}" data-sub="${a}" value="${esc(v)}" placeholder="${a === "gemini" ? "not supported" : "e.g. " + (a === "codex" ? "gpt-5.1-codex-mini" : "haiku")}" ${a === "gemini" ? "disabled" : ""}><datalist id="sub-${a}">${cat.map((m) => `<option value="${esc(m)}">`).join("")}</datalist></div>`; }).join("")}</div>
-          <div class="help">Claude: exported as <code>CLAUDE_CODE_SUBAGENT_MODEL</code>. Codex: passed as <code>agents.&lt;role&gt;.model</code> overrides. Gemini's CLI has no subagent model setting.</div>
+          <div class="grid3">${["codex", "claude", "gemini"].map((a) => { const cat = (c.models || {})[a] || []; const v = (c.subagent_models || {})[a] || ""; return `<div class="field"><label><span class="av sm ${a}">${esc(agentInitial(a))}</span> ${esc(agentLabel(a))}</label><input list="sub-${a}" data-sub="${a}" value="${esc(v)}" placeholder="${a === "claude" ? "e.g. haiku" : "not supported"}" ${a === "claude" ? "" : "disabled"}><datalist id="sub-${a}">${cat.map((m) => `<option value="${esc(m)}">`).join("")}</datalist></div>`; }).join("")}</div>
+          <div class="help">Only Claude Code supports this, through <code>CLAUDE_CODE_SUBAGENT_MODEL</code>. Codex and Gemini CLI have no setting for the model their helpers use.</div>
         </div></div>
         <div class="card"><div class="card-head"><h3>Prompt budget</h3><span class="badge ${est ? "green" : ""}">${est ? "lean" : "full"}</span></div><div class="card-body">
           <div class="hint" style="margin-bottom:10px">Each agent turn re-sends the conversation so far, so anything the orchestrator echoes back is paid for on every later turn. These caps trim the repeated parts. Lower is cheaper; too low and agents lose context they need.</div>

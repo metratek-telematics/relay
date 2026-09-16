@@ -4,6 +4,42 @@ All notable changes to Relay are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Ubuntu support.** `run.sh` sets up a virtual environment and starts Relay, and
+  `deploy/relay.service` runs it as a systemd user service with your own logins.
+- **Docker mode.** A `Dockerfile` and `docker-compose.yml` that install the agent
+  CLIs in the image and mount the host's logins, settings, Git identity and
+  repositories. Repositories and data mount at identical paths so task worktrees
+  stay valid from host and container alike. The container publishes its port on
+  the host's loopback only and reports on startup which host logins it can see.
+- `RELAY_DATA_DIR` keeps all state outside the app folder, `RELAY_HOST` sets the
+  listen address, `RELAY_BROWSE_ROOT` sets where the folder browser starts, and
+  `RELAY_CFG_<setting>` forces any setting without writing it to `config.json`.
+
+### Fixed
+
+- **Stop and Delete left agent processes running on Linux.** Only the direct
+  child was signalled, so the shells, test runners and MCP servers an agent
+  started kept running and editing files. Each agent now runs in its own process
+  group and the whole group is stopped. Verified on Ubuntu: five nested
+  processes before Stop, none after.
+- **Codex "cheaper subagent" never worked** and printed eight "malformed agent
+  role" errors per turn. Codex's `agents.<role>` table defines whole custom roles,
+  not the model its built-in helpers use, and there is no such setting. The
+  override is removed and the option is shown as unsupported for Codex.
+- Non-fatal Codex configuration warnings no longer render as crash-style error
+  cards; they appear once in the turn's notice.
+- The Gradle check uses `./gradlew` on Linux instead of `gradlew.bat`.
+- **You can see what agents are editing.** Edit and write calls show the file
+  relative to the project with a `+added −removed` count, and small diffs open
+  inline. Edits made through the shell (`sed -i`, `perl -pi`, `Set-Content`,
+  redirects) are recognised and labelled with their file. The status line names
+  the tool that is running instead of reporting "quiet" while a command works,
+  and the conversation header counts the files edited so far.
+
 ## [14.1.0] — 2026-09-16
 
 ### Changed
@@ -23,9 +59,9 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Per-agent defaults.** Model, effort and subagent model now sit together on
   each agent card. A role that leaves a field blank falls back to the agent
   default, then to the CLI's own configured default.
-- **Cheaper subagents.** Helper agents spawned mid-turn run on a small model:
-  Claude through `CLAUDE_CODE_SUBAGENT_MODEL`, Codex through
-  `agents.<role>.model` overrides.
+- **Cheaper subagents.** Claude Code's helper agents run on a small model through
+  `CLAUDE_CODE_SUBAGENT_MODEL`. (The Codex override shipped here did not work;
+  see Unreleased.)
 - **Usage & budget settings.** Lean prompts send each role only the rules it
   needs. Caps on the reviewer diff, worker reports, failed-check output,
   changed-file lists and stored tool output. Passing checks send only their

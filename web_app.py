@@ -18,9 +18,11 @@ sys.path.insert(0, str(ROOT))
 
 from orchestrator import agents, config as C, github, gitops  # noqa: E402
 from orchestrator.manager import Manager  # noqa: E402
-from orchestrator.util import IS_WINDOWS, quiet, read_text  # noqa: E402
+from orchestrator.util import IN_DOCKER, IS_WINDOWS, RUNTIME_DIR, quiet, read_text  # noqa: E402
 
-HOST = "127.0.0.1"
+# 127.0.0.1 keeps Relay private to this machine. Inside Docker it must listen on
+# 0.0.0.0, and the compose file publishes the port on the host's loopback only.
+HOST = os.environ.get("RELAY_HOST", "0.0.0.0" if IN_DOCKER else "127.0.0.1")
 PORT = int(os.environ.get("RELAY_PORT", "8767"))
 
 
@@ -33,7 +35,7 @@ def ensure_single_instance():
     import socket
     probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     probe.settimeout(0.6)
-    already = probe.connect_ex((HOST, PORT)) == 0
+    already = probe.connect_ex(("127.0.0.1" if HOST in ("0.0.0.0", "") else HOST, PORT)) == 0
     probe.close()
     if already:
         print(f"Relay is already running at http://{HOST}:{PORT}.")
@@ -218,7 +220,7 @@ def agent_test(name):
     cfg = manager.cfg()
     ad = agents.adapter(name)
     from orchestrator.agents import TurnContext
-    scratch = ROOT / "runtime" / "_agent_tests"
+    scratch = RUNTIME_DIR / "_agent_tests"
     scratch.mkdir(parents=True, exist_ok=True)
     if not (scratch / ".git").exists():
         quiet(["git", "init", "-q"], cwd=scratch, timeout=30)
@@ -305,7 +307,9 @@ def fs_browse():
             home = str(Path.home())
             return jsonify({"path": "", "parent": None, "dirs": [{"name": d, "path": d, "git": False} for d in drives]
                             + [{"name": "Home · " + home, "path": home, "git": False}], "is_git": False})
-        raw = "/"
+        # On Linux start somewhere useful: RELAY_BROWSE_ROOT (the mounted repos in
+        # Docker) or the user's home, instead of the filesystem root.
+        raw = os.environ.get("RELAY_BROWSE_ROOT") or str(Path.home())
     p = Path(raw).expanduser()
     if not p.exists() or not p.is_dir():
         return jsonify({"error": "Folder not found"}), 404
@@ -428,7 +432,7 @@ def task_artifact(tid, kind):
         cands.append(Path(art))
     if t.get("run_dir") and kind in names:
         cands.append(Path(t["run_dir"]) / names[kind])
-    cands.append(ROOT / "runtime" / tid / names.get(kind, kind))
+    cands.append(RUNTIME_DIR / tid / names.get(kind, kind))
     for p in cands:
         if p.exists():
             txt = read_text(p)
@@ -443,7 +447,7 @@ def task_artifact(tid, kind):
 @app.get("/api/tasks/<tid>/export")
 def task_export(tid):
     t = task_or_404(tid)
-    run = ROOT / "runtime" / tid
+    run = RUNTIME_DIR / tid
     parts = [f"# {t['name']}\n", f"- Status: {t['status']} · {t.get('detail','')}", f"- Repository: {t['repo']}",
              f"- Branch: {t.get('branch') or '-'}", f"- PR: {t.get('pr_url') or '-'}", f"- Created: {t['created_at']}", ""]
     for kind, name in (("Plan", "PLAN.md"), ("Acceptance", "ACCEPTANCE.md"), ("Latest report", "IMPLEMENTATION.md"),
@@ -515,7 +519,9 @@ def task_open(tid, what):
     if what == "issue" and t.get("github_issue_url"):
         webbrowser.open(t["github_issue_url"])
         return jsonify({"ok": True})
-    path = {"worktree": t.get("worktree"), "run": t.get("run_dir") or str(ROOT / "runtime" / tid), "repo": t.get("repo")}.get(what)
+    path = {"worktree": t.get("worktree"), "run": t.get("run_dir") or str(RUNTIME_DIR / tid), "repo": t.get("repo")}.get(what)
+    if IN_DOCKER and what in ("worktree", "run", "repo", "vscode", "code"):
+        return jsonify({"error": f"Relay is running in Docker, so it cannot open windows on your desktop. The folder is {path or 'not created yet'}."}), 400
     if path and Path(path).exists():
         if IS_WINDOWS:
             os.startfile(path)  # noqa: S606
@@ -652,5 +658,6 @@ if __name__ == "__main__":
             print(f"Resuming {len(resumed)} interrupted task(s): " + ", ".join(resumed))
     except Exception as exc:  # never block startup on recovery
         app.logger.warning("Startup recovery failed: %s", exc)
-    print(f"Relay {C.BUILD} · http://{HOST}:{PORT}")
+    shown = "127.0.0.1" if HOST in ("0.0.0.0", "") else HOST
+    print(f"Relay {C.BUILD} · http://{shown}:{PORT}" + (" (inside Docker)" if IN_DOCKER else ""))
     serve(app, host=HOST, port=PORT, threads=16, channel_timeout=3600)

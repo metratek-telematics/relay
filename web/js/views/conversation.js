@@ -1,8 +1,87 @@
 // Live multi-agent conversation renderer with incremental DOM updates.
-import { $, $$, el, esc, icon, md, fmtTime, fmtSec, fmtDur, copyText } from "../ui.js";
+import { $, $$, el, esc, icon, md, fmtTime, fmtSec, fmtDur, copyText, diffHtml } from "../ui.js";
 import { S, agentLabel, agentInitial, ROLE_LABEL, roleAgent } from "../state.js";
 import { api } from "../api.js";
 import { toast } from "../ui.js";
+
+// ---------------------------------------------------------------------------- edits
+// Agents change files in two ways: an edit tool, whose input carries the file and the
+// exact text, or a shell command such as `sed -i`. Both become something a person can
+// read at a glance: which file, how many lines, and the diff when it is known.
+
+function relPath(p, t) {
+  const s = String(p || "").replace(/\\/g, "/");
+  const roots = [t?.worktree, t?.repo].filter(Boolean).map((r) => String(r).replace(/\\/g, "/").replace(/\/+$/, ""));
+  for (const r of roots) if (s.toLowerCase().startsWith(r.toLowerCase() + "/")) return s.slice(r.length + 1);
+  return s;
+}
+
+function parseInput(raw) {
+  if (!raw) return null;
+  if (typeof raw === "object") return raw;
+  try { return JSON.parse(raw); } catch { return null; }
+}
+
+function linesOf(txt) { return txt ? String(txt).replace(/\r\n?/g, "\n").split("\n") : []; }
+
+const EDIT_TOOLS = new Set(["edit", "write", "multiedit", "notebookedit", "write_file", "replace", "create_file", "apply_patch"]);
+
+// Returns { files, add, del, diff, created } for an edit tool call, or null.
+export function describeEdit(m, t) {
+  const tool = String(m.tool || "").toLowerCase();
+  if (!EDIT_TOOLS.has(tool) && m.category !== "edit") return null;
+  const inp = parseInput(m.input);
+  if (!inp) {
+    // Stored input is capped in size, so very large edits may not parse; the path still can.
+    const f = (String(m.input || "").match(/"(?:file_path|path|absolute_path)"\s*:\s*"([^"]+)"/) || [])[1] || m.summary;
+    return f ? { files: [relPath(f.replace(/\\\\/g, "\\"), t)], add: 0, del: 0, diff: "" } : null;
+  }
+  const file = inp.file_path || inp.path || inp.absolute_path || inp.notebook_path;
+  const out = { files: file ? [relPath(file, t)] : [], add: 0, del: 0, diff: "", created: false };
+  const hunk = (oldT, newT) => {
+    const o = linesOf(oldT), n = linesOf(newT);
+    out.del += o.length;
+    out.add += n.length;
+    return [...o.map((l) => "-" + l), ...n.map((l) => "+" + l)].join("\n");
+  };
+  if (Array.isArray(inp.edits)) {
+    out.diff = inp.edits.map((e) => "@@ edit @@\n" + hunk(e.old_string, e.new_string)).join("\n");
+  } else if ("old_string" in inp || "new_string" in inp) {
+    out.diff = hunk(inp.old_string, inp.new_string);
+  } else if (typeof inp.content === "string") {
+    const ls = linesOf(inp.content);
+    out.add = ls.length;
+    out.diff = ls.slice(0, 400).map((l) => "+" + l).join("\n");
+    out.created = true;
+  } else if (Array.isArray(inp.changes)) { // Codex file_change
+    out.files = inp.changes.map((c) => relPath(c.path, t) + (c.kind && c.kind !== "update" ? ` (${c.kind})` : ""));
+  }
+  return out;
+}
+
+// Recognises in-place edits hidden inside shell commands and returns their target files.
+export function shellEditTargets(cmd, t) {
+  const c = String(cmd || "");
+  const found = new Set();
+  const add = (x) => {
+    x = String(x || "").replace(/^['"]|['"]$/g, "");
+    // Only plain path-shaped tokens: no brackets, quotes, '=' or other script syntax.
+    if (!/^[\w.@~\\/:-]+$/.test(x) || !/\.[A-Za-z0-9]{1,8}$/.test(x)) return;
+    if (!x || x.startsWith("-")) return;
+    if (/\.(log|tmp|out)$/i.test(x)) return; // command output, not an edit to the project
+    const rel = relPath(x, t);
+    // An absolute path that stayed absolute lies outside the project, e.g. a scratch file in /tmp.
+    if (/^([A-Za-z]:)?[\\/]/.test(rel)) return;
+    found.add(rel);
+  };
+  for (const m of c.matchAll(/\bsed\s+(?:-[A-Za-z]+\s+)*-i\S*\s+(?:-e\s+)?(?:'[^']*'|"[^"]*"|\S+)\s+([^;&|]+)/g)) m[1].trim().split(/\s+/).forEach(add);
+  for (const m of c.matchAll(/\bperl\s+-\S*i\S*\s+(?:-e\s+)?(?:'[^']*'|"[^"]*")\s+([^\s;&|]+)/g)) add(m[1]);
+  for (const m of c.matchAll(/(?:Set-Content|Add-Content|Out-File)\b[^;|]*?-(?:Path|FilePath)\s+['"]?([^'"\s;|]+)/gi)) add(m[1]);
+  for (const m of c.matchAll(/\btee\s+(?:-a\s+)?([^\s;&|]+)/g)) add(m[1]);
+  // A real redirect has whitespace or a quote before '>' (so `a>b` in code is ignored).
+  for (const m of c.matchAll(/(?:^|[\s"'])>>?\s*['"]?([\w.@~\\/:-]+\.[A-Za-z0-9]{1,8})(?=[\s'";&|]|$)/g)) if (!m[1].startsWith("/dev/")) add(m[1]);
+  return [...found];
+}
 
 const TOOL_ICON = { shell: "terminal", read: "eye", edit: "edit", search: "search", web: "globe", agent: "bot", plan: "list", mcp: "zap", tool: "cpu" };
 
@@ -64,18 +143,42 @@ export function renderMessage(m, t, prevInfo) {
   if (k === "tool") {
     const cat = m.category || "tool";
     const st = m.status || "running";
-    const stHtml = st === "running" ? `${icon("spinner", "spin")} running` : st === "error" ? `${icon("x")} failed${m.duration ? ` · ${fmtDur(m.duration)}` : ""}` : `${icon("check")}${m.duration ? ` ${fmtDur(m.duration)}` : ""}`;
-    return `<div class="m m-tool ${cont ? "cont" : ""}" ${idAttr}>
-      <div class="m-head">${whoAv(m)}<strong>${whoName(m)}</strong><time>${time}</time></div>
-      <div class="tool-row ${esc(cat)} ${esc(st)}" data-toggle="tool">
-        <span class="tic">${icon(TOOL_ICON[cat] || "cpu")}</span>
-        <span class="truncate"><span class="tname">${esc(m.tool || "tool")}</span><span class="tsum">${esc(m.summary || "")}</span></span>
+    const runFor = m.ts ? ` ${fmtSec(Date.now() / 1000 - m.ts)}` : "";
+    const stHtml = st === "running" ? `${icon("spinner", "spin")} running${runFor}` : st === "error" ? `${icon("x")} failed${m.duration ? ` · ${fmtDur(m.duration)}` : ""}` : `${icon("check")}${m.duration ? ` ${fmtDur(m.duration)}` : ""}`;
+    const head = `<div class="m-head">${whoAv(m)}<strong>${whoName(m)}</strong><time>${time}</time></div>`;
+    const rawDetail = `${m.input ? `<div class="td-lbl">Input</div><pre>${esc(m.input)}</pre>` : ""}${m.output !== undefined && m.output !== null ? `<div class="td-lbl">Output</div><pre>${esc(m.output || "(empty)")}</pre>` : ""}`;
+
+    const ed = describeEdit(m, t);
+    if (ed && ed.files.length) {
+      const counts = (ed.add || ed.del) ? `<span class="diffstat"><span class="a">+${ed.add}</span> <span class="d">&minus;${ed.del}</span></span>` : "";
+      // Small diffs open by default, so you see the change without a click.
+      const open = ed.diff && linesOf(ed.diff).length <= 40;
+      return `<div class="m m-tool m-edit ${cont ? "cont" : ""}" ${idAttr}>
+        ${head}
+        <div class="tool-row edit ${esc(st)}" data-toggle="tool" title="${esc(ed.files.join(", "))}">
+          <span class="tic">${icon("edit")}</span>
+          <span class="truncate"><span class="tname">${ed.created ? "Wrote" : "Edited"}</span><span class="tsum">${esc(ed.files.join(", "))}</span></span>
+          <span class="tst">${counts} ${stHtml}</span>
+        </div>
+        <div class="tool-detail edit-detail" ${open ? "" : "hidden"}>
+          ${ed.diff ? diffHtml(ed.diff) : ""}
+          ${st === "error" ? rawDetail : ""}
+        </div>
+      </div>`;
+    }
+
+    const shellTargets = cat === "shell" ? shellEditTargets(m.input || m.summary, t) : [];
+    const label = shellTargets.length
+      ? `<span class="tname">Edited via shell</span><span class="tsum">${esc(shellTargets.join(", "))}</span>`
+      : `<span class="tname">${esc(m.tool || "tool")}</span><span class="tsum">${esc(m.summary || "")}</span>`;
+    return `<div class="m m-tool ${shellTargets.length ? "m-edit" : ""} ${cont ? "cont" : ""}" ${idAttr}>
+      ${head}
+      <div class="tool-row ${shellTargets.length ? "edit" : esc(cat)} ${esc(st)}" data-toggle="tool" title="${esc(m.summary || "")}">
+        <span class="tic">${icon(shellTargets.length ? "edit" : (TOOL_ICON[cat] || "cpu"))}</span>
+        <span class="truncate">${label}</span>
         <span class="tst">${stHtml}</span>
       </div>
-      <div class="tool-detail" hidden>
-        ${m.input ? `<div class="td-lbl">Input</div><pre>${esc(m.input)}</pre>` : ""}
-        ${m.output !== undefined && m.output !== null ? `<div class="td-lbl">Output</div><pre>${esc(m.output || "(empty)")}</pre>` : ""}
-      </div>
+      <div class="tool-detail" hidden>${rawDetail}</div>
     </div>`;
   }
   if (k === "command") {
@@ -277,9 +380,49 @@ export class Conversation {
     const p = t?.process;
     if (!p || p.state !== "running") return "";
     const who = p.agent ? `${agentLabel(p.agent)} (${ROLE_LABEL[p.role] || p.role})` : (p.label || "Orchestrator");
-    const quiet = Number(p.silent_for || 0) > 15 ? ` · quiet for ${fmtSec(p.silent_for)}` : "";
-    return `<div class="typing" data-typing><span class="av sm ${esc(p.agent || "system")}">${esc(agentInitial(p.agent || "system"))}</span><span><strong>${esc(who)}</strong> is working · ${fmtSec(p.elapsed)}${quiet}</span><span class="dots"><span></span><span></span><span></span></span></div>`;
+    // A running tool is activity, not silence: say what it is doing instead of "quiet".
+    const running = this.runningTool();
+    let doing;
+    if (running) {
+      const ed = running.kind === "tool" ? describeEdit(running, t) : null;
+      const sh = !ed && running.category === "shell" ? shellEditTargets(running.input || running.summary, t) : [];
+      const what = ed && ed.files.length ? `editing ${ed.files.join(", ")}`
+        : sh.length ? `editing ${sh.join(", ")} via shell`
+        : `running ${running.tool || running.title || "a command"}${running.summary ? `: ${String(running.summary).slice(0, 80)}` : ""}`;
+      doing = ` is ${esc(what)} · ${fmtSec(Date.now() / 1000 - (running.ts || Date.now() / 1000))}`;
+    } else {
+      const silent = Number(p.silent_for || 0);
+      doing = silent > 15
+        ? ` is thinking · ${fmtSec(p.elapsed)} · no output for ${fmtSec(silent)}`
+        : ` is working · ${fmtSec(p.elapsed)}`;
+    }
+    return `<div class="typing" data-typing><span class="av sm ${esc(p.agent || "system")}">${esc(agentInitial(p.agent || "system"))}</span><span class="truncate"><strong>${esc(who)}</strong>${doing}</span><span class="dots"><span></span><span></span><span></span></span></div>`;
   }
+  runningTool() {
+    const store = S.msgs.get(this.getTask()?.id);
+    if (!store) return null;
+    for (let i = store.list.length - 1, n = 0; i >= 0 && n < 60; i--, n++) {
+      const m = store.list[i];
+      if ((m.kind === "tool" || m.kind === "command") && m.status === "running") return m;
+    }
+    return null;
+  }
+
+  // Distinct files the agents have edited in this conversation, most recent first.
+  filesTouched() {
+    const t = this.getTask();
+    const store = S.msgs.get(t?.id);
+    const seen = new Set();
+    const order = [];
+    for (const m of store?.list || []) {
+      if (m.kind !== "tool" || m.status === "error") continue;
+      const ed = describeEdit(m, t);
+      const files = ed ? ed.files : (m.category === "shell" ? shellEditTargets(m.input || m.summary, t) : []);
+      for (const f of files) { if (seen.has(f)) order.splice(order.indexOf(f), 1); seen.add(f); order.push(f); }
+    }
+    return order.reverse();
+  }
+
   updateTyping() {
     const cur = this.c.querySelector("[data-typing]");
     const html = this.typingHtml();

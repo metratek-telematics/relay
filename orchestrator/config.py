@@ -127,7 +127,7 @@ DEFAULTS = {
     "show_estimated_cost": True,
     # Subagents: when an agent spawns helpers (Claude Task tool, Codex multi-agent),
     # run them on a cheaper model to keep usage down.
-    "subagent_models": {"codex": "gpt-5.1-codex-mini", "claude": "haiku", "gemini": ""},
+    "subagent_models": {"codex": "", "claude": "haiku", "gemini": ""},  # only Claude supports this
     "subagent_cheap_enabled": True,
     # Per-agent defaults used whenever a role leaves model/effort blank.
     "agent_defaults": {"codex": {"model": "", "effort": ""},
@@ -149,6 +149,7 @@ DEFAULTS = {
     "branch_prefix": "agent",
     "snapshot_working_tree": True,
     "copy_untracked_files": True,
+    "copy_ignored_root_files": True,   # .env, .env.local, dev auth cookies: what the app needs to run
     "max_untracked_copy_mb": 100,
     "keep_worktrees": True,
     "commit_message_prefix": "agent:",
@@ -198,6 +199,9 @@ def _migrate(cfg: dict) -> dict:
         out["roles"][r].setdefault("model", "")
         out["roles"][r].setdefault("effort", "")
     out.setdefault("models", {})
+    if isinstance(out.get("subagent_models"), dict):
+        out["subagent_models"]["codex"] = ""
+        out["subagent_models"]["gemini"] = ""
     out.setdefault("agent_defaults", {})
     for a in AGENTS:
         out["agent_env"].setdefault(a, {})
@@ -214,12 +218,42 @@ def _migrate(cfg: dict) -> dict:
     return out
 
 
+def _env_overrides() -> dict:
+    """Settings forced by the environment, e.g. RELAY_CFG_codex_sandbox=danger-full-access.
+
+    Values are parsed as JSON when possible (numbers, booleans, lists), otherwise
+    taken as plain strings. They apply on every load but are never written back to
+    config.json, so a container can pin a setting without editing the file.
+    """
+    import json as _json
+    import os as _os
+    out = {}
+    for name, value in _os.environ.items():
+        if not name.startswith("RELAY_CFG_"):
+            continue
+        # Setting keys are lower-case; Windows upper-cases environment variable names.
+        key = name[len("RELAY_CFG_"):].lower()
+        if key not in DEFAULTS:
+            continue
+        try:
+            out[key] = _json.loads(value)
+        except Exception:
+            out[key] = value
+    return out
+
+
+def _load_file() -> dict:
+    raw = read_json(CONFIG_PATH, {})
+    cfg = _migrate(raw)
+    if cfg != raw:
+        write_json(CONFIG_PATH, cfg)
+    return cfg
+
+
 def load() -> dict:
     with _lock:
-        raw = read_json(CONFIG_PATH, {})
-        cfg = _migrate(raw)
-        if cfg != raw:
-            write_json(CONFIG_PATH, cfg)
+        cfg = _load_file()
+        cfg.update(_env_overrides())
         return cfg
 
 
@@ -232,7 +266,7 @@ def save(cfg: dict) -> dict:
 
 def update(partial: dict) -> dict:
     with _lock:
-        cfg = load()
+        cfg = _load_file()  # file values only, so environment overrides are never persisted
         for k, v in (partial or {}).items():
             if k not in DEFAULTS:
                 continue
@@ -246,7 +280,9 @@ def update(partial: dict) -> dict:
                 cfg[k] = merged
             else:
                 cfg[k] = v
-        return save(cfg)
+        saved = save(cfg)
+        saved.update(_env_overrides())
+        return saved
 
 
 def remember_repo(path: str) -> None:

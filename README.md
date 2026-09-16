@@ -9,7 +9,7 @@ use all of their own tools, and you can step in at any moment from the browser.
 ![version](https://img.shields.io/badge/version-14.1.0-d97757)
 ![license](https://img.shields.io/badge/license-MIT-3a8f62)
 ![python](https://img.shields.io/badge/python-3.10%2B-4f6fd0)
-![platform](https://img.shields.io/badge/platform-Windows-8a5fc7)
+![platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20Docker-8a5fc7)
 
 ```text
                      ┌──────────────── you (browser) ────────────────┐
@@ -41,7 +41,7 @@ use all of their own tools, and you can step in at any moment from the browser.
 
 ## Requirements
 
-- Windows, Python 3.10+ and Git.
+- Windows or Linux, with Python 3.10+ and Git. Or Docker on a Linux host.
 - At least two of [Codex CLI](https://github.com/openai/codex), [Claude Code](https://claude.com/claude-code) and
   [Gemini CLI](https://github.com/google-gemini/gemini-cli), each installed and signed in.
 - Optionally the [GitHub CLI](https://cli.github.com/) for issue intake and draft pull requests.
@@ -50,7 +50,7 @@ Relay never proxies your credentials. It launches the CLIs you have already auth
 
 ## Quick start
 
-1. Double-click `run.bat`. It installs Flask and waitress on first run.
+1. Start Relay: double-click `run.bat` on Windows, run `./run.sh` on Linux, or `docker compose up -d --build`.
 2. Open <http://127.0.0.1:8767>.
 3. Go to **Agents** and press **Test all** to confirm each CLI answers.
 4. Press **New task**, choose a repository, describe the change and pick a team.
@@ -67,7 +67,7 @@ and Thorough presets. Details in [docs/RUNNING.md](docs/RUNNING.md#models-effort
 
 | Document | What it covers |
 |---|---|
-| [docs/RUNNING.md](docs/RUNNING.md) | Install, first task, presets, models and usage, troubleshooting |
+| [docs/RUNNING.md](docs/RUNNING.md) | Windows, Ubuntu and Docker setup, first task, models and usage, troubleshooting |
 | [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) | A task from start to finish, and how to steer the team |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Components, sessions, the protocol, persistence |
 | [rules/](rules/) | The policies agents receive, including [DESIGN.md](rules/DESIGN.md) for UI work |

@@ -1,0 +1,10 @@
+# Shell scripts and Docker files must keep LF endings, or they fail inside Linux
+# containers with "bad interpreter" even when edited on Windows.
+*.sh            text eol=lf
+Dockerfile      text eol=lf
+docker/**       text eol=lf
+deploy/*.service text eol=lf
+.env.example    text eol=lf
+
+# Windows launcher stays CRLF.
+*.bat           text eol=crlf

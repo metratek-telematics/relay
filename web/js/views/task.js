@@ -18,7 +18,7 @@ export function mountTask(main, id) {
     <section class="roster" id="roster"></section>
     <div class="ws-body ${S.ui.inspector ? "" : "inspector-hidden"}" id="wsBody">
       <div class="convo-pane">
-        <div class="convo-head"><span>Team conversation</span><div class="convo-toolbar">
+        <div class="convo-head"><span class="row" style="gap:10px">Team conversation<button class="files-chip" id="filesChip" hidden></button></span><div class="convo-toolbar">
           <button class="btn xs ${S.ui.showTools ? "" : "ghost"}" id="toggleTools" title="Show tool calls">${icon("terminal")}Tools</button>
           <button class="btn xs ${S.ui.showThinking ? "" : "ghost"}" id="toggleThinking" title="Show agent reasoning">${icon("brain")}Reasoning</button>
         </div></div>
@@ -200,6 +200,19 @@ export function mountTask(main, id) {
     }
     if (S.route.id !== id) return;
     convo.render(store.list);
+    renderFilesChip();
+  }
+
+  // Which files the agents have edited, taken from their edit and shell calls.
+  function renderFilesChip() {
+    const chip = $("#filesChip", main);
+    if (!chip) return;
+    const files = convo.filesTouched();
+    chip.hidden = !files.length;
+    if (!files.length) return;
+    chip.innerHTML = `${icon("edit", "sm")}${files.length} file${files.length === 1 ? "" : "s"} edited`;
+    chip.title = files.slice(0, 25).join("\n") + (files.length > 25 ? `\n…and ${files.length - 25} more` : "");
+    chip.onclick = () => insp.setTab("changes");
   }
 
   renderHeader(); renderRoster(); renderComposer(); loadMessages();
@@ -215,8 +228,8 @@ export function mountTask(main, id) {
         if (pendingChanged || payload?.statusChanged) { renderComposer(); convo.refreshQuestions(); }
         convo.updateTyping();
         insp.refresh("task");
-      } else if (reason === "message") { convo.append(payload); }
-      else if (reason === "message_update") { convo.patch(payload); }
+      } else if (reason === "message") { convo.append(payload); convo.updateTyping(); renderFilesChip(); }
+      else if (reason === "message_update") { convo.patch(payload); convo.updateTyping(); renderFilesChip(); }
       else if (reason === "process") { renderRoster(); convo.updateTyping(); }
       else if (reason === "event") { insp.refresh("event"); }
       else if (reason === "artifact") { insp.refresh("artifact"); }

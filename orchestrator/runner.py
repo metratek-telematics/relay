@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 
 from .agents import TurnContext, adapter
-from .util import CREATE_NO_WINDOW, IS_WINDOWS, kill_tree, new_id, now, truncate
+from .util import IS_WINDOWS, kill_tree, new_id, now, popen_group_kwargs, truncate
 
 NOISE = (
     "failed to load skill", "hook: sessionstart", "hook: stop", "warning: unable to access",
@@ -139,7 +139,7 @@ class Runner:
             args, cwd=str(cwd) if cwd else None,
             stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8",
-            errors="replace", bufsize=1, creationflags=CREATE_NO_WINDOW, env=env,
+            errors="replace", bufsize=1, env=env, **popen_group_kwargs(),
         )
         self.proc = p
         started = time.time()
@@ -291,7 +291,7 @@ class Runner:
                           "turns": int(session.get("turns", 0)) + 1, "agent": agent_name}
         res["elapsed"] = elapsed
         if log_lines:
-            interesting = [l for l in log_lines if any(w in l.lower() for w in ("error", "fail", "denied", "cannot", "unable", "requires"))]
+            interesting = list(dict.fromkeys(l for l in log_lines if any(w in l.lower() for w in ("error", "fail", "denied", "cannot", "unable", "requires", "ignoring"))))
             if interesting:
                 self.msg(role=role, agent=agent_name, kind="notice", content=truncate("\n".join(interesting[-12:]), 3000), turn=turn)
         self.m.metrics_add(self.tid, agent_name, role, res.get("usage") or {}, elapsed, res.get("tool_calls", 0))
