@@ -260,7 +260,7 @@ export function mountInspector(container, getTask) {
     const cmds = (s) => s.commands.join("\n");
     body.innerHTML = `<div class="stack handoff" style="gap:14px">
       <div class="card"><div class="card-body stack" style="gap:8px">
-        <div class="row between wrap"><span class="row">${icon("branch")}<code class="mono">${esc(h.branch)}</code><button class="btn xs ghost" data-copy="${esc(h.branch)}" title="Copy branch name">${icon("copy", "sm")}</button></span>
+        <div class="row between wrap"><span class="row" style="min-width:0">${icon("branch")}<code class="mono truncate" title="${esc(h.branch)}">${esc(h.branch)}</code><button class="btn xs ghost" data-copy="${esc(h.branch)}" title="Copy branch name">${icon("copy", "sm")}</button></span>
           ${h.pr_url ? `<a class="btn sm" href="${esc(h.pr_url)}" target="_blank" rel="noopener">${icon("external")}PR #${esc(h.pr_number)}</a>` : `<span class="badge ${h.pushed ? "green" : ""}">${h.pushed ? "pushed" : "on this machine only"}</span>`}</div>
         ${h.diffstat ? `<div class="muted">${esc(h.diffstat)} vs <code>${esc(h.base)}</code></div>` : ""}
         <div class="row wrap muted" style="gap:6px">${icon("folder", "sm")}<code class="mono truncate" title="${esc(h.worktree)}">${esc(h.worktree)}</code><button class="btn xs ghost" data-copy="${esc(h.worktree)}" title="Copy worktree path">${icon("copy", "sm")}</button>${h.worktree_exists ? "" : '<span class="badge amber">worktree removed</span>'}</div>
