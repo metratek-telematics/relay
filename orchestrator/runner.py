@@ -294,7 +294,7 @@ class Runner:
             interesting = list(dict.fromkeys(l for l in log_lines if any(w in l.lower() for w in ("error", "fail", "denied", "cannot", "unable", "requires", "ignoring"))))
             if interesting:
                 self.msg(role=role, agent=agent_name, kind="notice", content=truncate("\n".join(interesting[-12:]), 3000), turn=turn)
-        self.m.metrics_add(self.tid, agent_name, role, res.get("usage") or {}, elapsed, res.get("tool_calls", 0))
+        self.m.metrics_add(self.tid, agent_name, role, res.get("usage") or {}, elapsed, res.get("tool_calls", 0), turn)
         if rc not in (0, None) and not res.get("text"):
             tail = "\n".join(log_lines[-15:])
             res["ok"] = False

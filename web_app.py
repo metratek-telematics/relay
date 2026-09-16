@@ -16,7 +16,7 @@ from flask import Flask, Response, jsonify, request, send_from_directory
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
-from orchestrator import agents, config as C, github, gitops, handoff, repos  # noqa: E402
+from orchestrator import agents, config as C, github, gitops, handoff, history, repos  # noqa: E402
 from orchestrator.manager import Manager  # noqa: E402
 from orchestrator.util import IN_DOCKER, IS_WINDOWS, RUNTIME_DIR, quiet, read_text  # noqa: E402
 
@@ -420,6 +420,30 @@ def task_files(tid):
 @app.get("/api/tasks/<tid>/handoff")
 def task_handoff(tid):
     return jsonify(handoff.build(task_or_404(tid)))
+
+
+@app.get("/api/tasks/<tid>/commits")
+def task_commits(tid):
+    return jsonify(history.commits(task_or_404(tid)))
+
+
+@app.get("/api/tasks/<tid>/commits/<sha>/diff")
+def task_commit_diff(tid, sha):
+    return jsonify(history.commit_diff(task_or_404(tid), sha, request.args.get("path", "")))
+
+
+@app.get("/api/tasks/<tid>/work")
+def task_work(tid):
+    return jsonify(history.work_segments(task_or_404(tid), manager.store.messages(tid)))
+
+
+@app.get("/api/tasks/<tid>/pr")
+def task_pr(tid):
+    t = task_or_404(tid)
+    try:
+        return jsonify(history.pr_status(t, force=request.args.get("force") == "1"))
+    except Exception as e:  # the header polls this; a GitHub hiccup must read as a message, not a server error
+        return jsonify({"ok": False, "error": str(e) or e.__class__.__name__})
 
 
 @app.get("/api/branch-name")

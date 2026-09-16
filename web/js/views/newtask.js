@@ -71,15 +71,23 @@ export function defaultWorkflow() {
     approval_before_delivery: !!cfg.approval_before_delivery, allow_agent_questions: cfg.allow_agent_questions !== false, verification_commands: [], auto_detect_verification: cfg.auto_detect_verification !== false };
 }
 
+// A follow-up is a new task on a delivered task's branch, with the same repository and team.
+export function openFollowUp(t) { openNewTask({ followUp: t }); }
+
 export function openNewTask(prefill = {}) {
   const edit = prefill.edit;
+  const parent = prefill.followUp;
   const data = {
-    repo: edit?.repo || prefill.repo || S.config.recent_repos?.[0] || "",
-    name: edit?.name || "", requirements: edit?.requirements || prefill.requirements || "", issue: edit?.issue || prefill.issue || "",
-    template: edit?.template || "feature", priority: edit?.priority || "normal", tags: (edit?.tags || []).join(", "),
-    workflow: edit ? JSON.parse(JSON.stringify(edit.workflow)) : defaultWorkflow(), queue: true, branch: "", branchEdited: false,
+    repo: edit?.repo || parent?.repo || prefill.repo || S.config.recent_repos?.[0] || "",
+    name: edit?.name || (parent ? `Follow-up: ${parent.name}` : ""), requirements: edit?.requirements || prefill.requirements || "", issue: edit?.issue || prefill.issue || "",
+    template: edit?.template || parent?.template || "feature", priority: edit?.priority || parent?.priority || "normal", tags: (edit?.tags || parent?.tags || []).join(", "),
+    workflow: edit ? JSON.parse(JSON.stringify(edit.workflow)) : parent?.workflow ? JSON.parse(JSON.stringify(parent.workflow)) : defaultWorkflow(), queue: true,
+    branch: parent ? (parent.branch || parent.branch_name || "") : "", branchEdited: !!parent,
   };
-  let step = edit ? 1 : 0;
+  let step = edit || parent ? 1 : 0;
+  const parentNote = parent ? `<div class="followup-note">${icon("retry", "sm")}<div><strong>Follows up <a href="#/task/${encodeURIComponent(parent.id)}">${esc(parent.name)}</a></strong>
+    <span>Builds on <code>${esc(data.branch)}</code> where it left off, with the same team.</span>
+    ${parent.summary ? `<blockquote>${esc(parent.summary.length > 360 ? parent.summary.slice(0, 360) + "…" : parent.summary)}</blockquote>` : ""}</div></div>` : "";
   let repoInfo = null;
   const steps = ["Repository", "Request", "Team & workflow", "Review"];
   const m = modal(`<div class="wizard"><div class="wiz-steps" id="wizSteps"></div><div class="wiz-body" id="wizBody"></div></div>`, { wide: true });
@@ -152,9 +160,10 @@ export function openNewTask(prefill = {}) {
       $("#wNext", body).onclick = () => { data.repo = input.value.trim().replace(/^"|"$/g, ""); if (!data.repo) { toast("warning", "Choose a repository folder"); return; } if (repoInfo && !repoInfo.is_git) { toast("error", "Not a git repository", "Run git init and make an initial commit first."); return; } go(1); };
     } else if (step === 1) {
       const tpl = (S.templates || []).find((x) => x.id === data.template) || {};
-      body.innerHTML = `<h2>Describe the request</h2><p class="hint">Write it once. The supervisor turns it into a plan, acceptance criteria and work packages.</p>
+      body.innerHTML = `<h2>${parent ? "What should happen next?" : "Describe the request"}</h2><p class="hint">${parent ? "Describe only what should change on top of the delivered work. The team sees the branch as it is now." : "Write it once. The supervisor turns it into a plan, acceptance criteria and work packages."}</p>
+        ${parentNote}
         <div class="field"><label>Type</label><div class="templ">${(S.templates || []).map((x) => `<button type="button" class="chip ${data.template === x.id ? "active" : ""}" data-tpl="${esc(x.id)}">${esc(x.name)}</button>`).join("")}</div></div>
-        <div class="field"><label>Requirements</label><textarea id="req" rows="9" placeholder="${esc(tpl.hint || "Describe what you want…")}">${esc(data.requirements)}</textarea><div class="help">${esc(tpl.hint || "")}</div></div>
+        <div class="field"><label>Requirements</label><textarea id="req" rows="9" placeholder="${esc(parent ? `What should change next? Last time: ${(parent.summary || parent.name).slice(0, 160)}` : (tpl.hint || "Describe what you want…"))}">${esc(data.requirements)}</textarea><div class="help">${esc(tpl.hint || "")}</div></div>
         <div class="grid3">
           <div class="field"><label>Task name (optional)</label><input id="tname" value="${esc(data.name)}" placeholder="auto from the first line"></div>
           <div class="field"><label>GitHub issue # (optional)</label><input id="tissue" value="${esc(data.issue)}" placeholder="123"></div>
@@ -163,6 +172,7 @@ export function openNewTask(prefill = {}) {
         <div class="field"><label>Tags (comma separated)</label><input id="ttags" value="${esc(data.tags)}" placeholder="frontend, billing"></div>
         ${nav("Back", "Next: choose the team")}`;
       $$("[data-tpl]", body).forEach((b) => (b.onclick = () => { data.template = b.dataset.tpl; collect1(); render(); }));
+      $(".followup-note a", body)?.addEventListener("click", () => m.close());
       const collect1 = () => { data.requirements = $("#req", body).value; data.name = $("#tname", body).value; data.issue = $("#tissue", body).value; data.priority = $("#tprio", body).value; data.tags = $("#ttags", body).value; };
       $("#wBack", body).onclick = () => { collect1(); go(0); };
       $("#wNext", body).onclick = () => { collect1(); if (!data.requirements.trim() && !data.issue.trim()) { toast("warning", "Describe the task or give an issue number"); return; } go(2); };
@@ -178,13 +188,14 @@ export function openNewTask(prefill = {}) {
       body.innerHTML = `<h2>${edit ? "Save changes" : "Ready to launch"}</h2>
         <div class="summary-box">
           <div><b>Repository</b>${esc(data.repo)}</div>
+          ${parent ? `<div><b>Follows up</b>${esc(parent.name)}</div>` : ""}
           <div><b>Request</b>${esc((data.requirements || `Issue #${data.issue}`).slice(0, 400))}${data.requirements.length > 400 ? "…" : ""}</div>
           <div><b>Team</b>${["supervisor", "worker", "reviewer"].filter((x) => r[x].agent).map((x) => `${esc(agentLabel(r[x].agent))} (${x}${r[x].model ? `, ${esc(r[x].model)}` : ", CLI default model"}${r[x].effort ? `, ${esc(r[x].effort)} effort` : ""})`).join(" · ")}</div>
           <div><b>Budget</b>${data.workflow.max_turns} work packages · ${data.workflow.max_review_rounds} review rounds · verification ${esc(data.workflow.verify_mode)}${data.workflow.approval_before_delivery ? " · approval gate on" : ""}</div>
           <div><b>Delivery</b>isolated branch → ${S.config.github_auto_create_pr ? "draft PR" : "branch only"} (never merges)</div>
         </div>
         ${warn.length ? `<div class="modal-error" style="margin-top:12px">${warn.map(esc).join("<br>")}<br><a href="#/agents" data-close>Open Agents page</a></div>` : ""}
-        ${!edit ? `<div class="field" style="margin-top:14px"><label>Branch</label><input id="tbranch" class="mono" value="${esc(data.branch)}" placeholder="suggesting…" spellcheck="false"><div class="help">Suggested from the task name. Edit it freely; an existing branch is built on.</div></div>` : ""}
+        ${!edit ? `<div class="field" style="margin-top:14px"><label>Branch</label><input id="tbranch" class="mono" value="${esc(data.branch)}" placeholder="suggesting…" spellcheck="false"><div class="help">${parent && data.branch === (parent.branch || parent.branch_name) ? `The branch ${esc(parent.name)} delivered; this task adds commits on top of it.` : "Suggested from the task name. Edit it freely; an existing branch is built on."}</div></div>` : ""}
         ${!edit ? `<div class="field inline" style="margin-top:14px"><label>Queue immediately (and start the queue if idle)</label><span class="switch ${data.queue ? "on" : ""}" id="qSwitch"></span></div>` : ""}
         <div class="modal-actions"><button type="button" class="btn" id="wBack">Back</button><span style="flex:1"></span><button type="button" class="btn primary" id="wCreate">${icon(edit ? "save" : "sparkles")}${edit ? "Save" : data.queue ? "Create & queue" : "Create draft"}</button></div>`;
       $("#wBack", body).onclick = () => go(2);
@@ -199,7 +210,7 @@ export function openNewTask(prefill = {}) {
         const btn = $("#wCreate", body); btn.disabled = true; btn.innerHTML = `${icon("spinner", "spin")}${edit ? "Saving…" : "Creating…"}`;
         try {
           const payload = { repo: data.repo, name: data.name, requirements: data.requirements, issue: data.issue, template: data.template, priority: data.priority,
-            tags: data.tags.split(",").map((x) => x.trim()).filter(Boolean), workflow: data.workflow, queue: data.queue, branch: edit ? undefined : data.branch };
+            tags: data.tags.split(",").map((x) => x.trim()).filter(Boolean), workflow: data.workflow, queue: data.queue, branch: edit ? undefined : data.branch, follow_up_of: parent?.id };
           if (edit) { await api.updateTask(edit.id, payload); toast("success", "Task updated"); m.close(); return; }
           const t = await api.createTask(payload);
           m.close();

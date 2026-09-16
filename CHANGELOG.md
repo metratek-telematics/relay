@@ -28,6 +28,20 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   removes worktrees, deletes merged branches, or cleans up delivered-and-merged worktrees in bulk after a preview. It
   refuses to touch a worktree whose task is still running. A Branch graph tab draws the default branch with task
   branches forking off and merged ones joining back.
+- **History tab.** Lists the commits on a task's branch since it started, newest first, with author, relative and
+  absolute time, and per-file +/− counts, under a summary of commits, files touched, lines and time span. Uncommitted
+  work in the worktree shows as its own entry at the top. Expanding a commit shows its full message and files, and
+  clicking a file opens its diff. After the worktree is removed the history is read from the branch.
+- **Where the time went.** The Overview tab charts wall time for planning, each work package, each review round and
+  delivery, coloured by the agent that did the work. Hovering a bar shows its tool calls, tokens and cost. Tokens and
+  cost are now recorded per agent turn, so tasks run before this version show time only.
+- **Live pull request status.** The task header shows a pill with the pull request's state (draft, open, merged or
+  closed) and its checks, and the Try it tab opens with a pull request card: review decision, checks, size and
+  mergeability, with a Refresh button. Once the pull request is merged, the Accept step says so instead of offering
+  merge commands. Status comes from `gh pr view` and is cached for a minute.
+- **Follow up.** Delivered tasks have a Follow up button, in the header and on the Delivered card, that opens the New
+  task wizard on the same repository, team and branch, with the previous summary quoted. A follow-up may reuse a
+  branch whose task is done, failed or stopped, and links back to the task it builds on.
 
 - **Ubuntu support.** `run.sh` sets up a virtual environment and starts Relay, and
   `deploy/relay.service` runs it as a systemd user service with your own logins.

@@ -4,7 +4,8 @@ import { S, agentLabel, agentInitial, ROLE_LABEL, roleAgent, roleModel, roleEffo
 import { api } from "../api.js";
 import { Conversation } from "./conversation.js";
 import { mountInspector, TABS } from "./inspector.js";
-import { openNewTask } from "./newtask.js";
+import { openNewTask, openFollowUp } from "./newtask.js";
+import { prStatus, prCached, prPill } from "../prstatus.js";
 
 const PHASES = [["kickoff", "Plan"], ["dialogue", "Work"], ["review", "Review"], ["deliver", "Deliver"], ["done", "Done"]];
 
@@ -53,7 +54,7 @@ export function mountTask(main, id) {
     $("#wsTitle", main).innerHTML = `
       <div class="crumbs">${icon("folder")}<span>${esc(basename(t.repo))}</span>${t.branch ? `<span>›</span>${icon("branch")}<span class="mono">${esc(t.branch)}</span>` : ""}</div>
       <h1><span class="truncate">${esc(t.name)}</span><span class="status-pill ${st.attention ? "needs" : ""}" title="${esc(t.detail || "")}"><span class="dot ${live ? "live" : ""}" style="background:${st.tone ? `var(--${st.tone === "accent" ? "accent" : st.tone})` : "var(--text-3)"}"></span><span>${esc(st.label)}</span></span></h1>
-      <div class="ws-meta"><span>${icon("bot")}${esc(chain)}</span><span>${icon("clock")}${esc(t.detail || "")}</span>${t.pr_url ? `<a href="${esc(t.pr_url)}" target="_blank" rel="noopener">${icon("external")}PR #${esc(t.pr_number || "")}</a>` : ""}${t.github_issue_url ? `<a href="${esc(t.github_issue_url)}" target="_blank" rel="noopener">${icon("github")}Issue #${esc(t.github_issue_number)}</a>` : ""}<span title="${esc(t.created_at)}">created ${timeAgo(t.created_at)}</span></div>`;
+      <div class="ws-meta"><span>${icon("bot")}${esc(chain)}</span><span>${icon("clock")}${esc(t.detail || "")}</span>${lineage(t)}${t.github_issue_url ? `<a href="${esc(t.github_issue_url)}" target="_blank" rel="noopener">${icon("github")}Issue #${esc(t.github_issue_number)}</a>` : ""}<span title="${esc(t.created_at)}">created ${timeAgo(t.created_at)}</span></div>`;
     const active = live || t.status === "needs_input" || t.status === "paused";
     const paused = t.status === "paused" || t.pause_requested;
     $("#wsActions", main).innerHTML = `
@@ -62,7 +63,8 @@ export function mountTask(main, id) {
       ${["failed", "stopped", "interrupted"].includes(t.status) ? `<button class="btn sm primary" data-act="retry" title="${t.checkpoint ? "Resume from checkpoint using the same agent sessions" : "Start again"}">${icon("retry")}${t.checkpoint ? "Resume" : "Retry"}</button>` : ""}
       ${["queued", "draft"].includes(t.status) ? `<button class="btn sm primary" data-act="start" title="Start this task now, alongside anything already running">${icon("play")}Start now</button>` : ""}
       ${t.branch ? `<button class="btn sm ${t.status === "done" ? "primary" : ""}" data-open-tab="result" title="Commands to see, run, accept or clean up the result">${icon("play")}Try it</button>` : ""}
-      ${t.pr_url ? `<a class="btn sm" href="${esc(t.pr_url)}" target="_blank" rel="noopener">${icon("external")}Open PR</a>` : ""}
+      ${t.status === "done" ? `<button class="btn sm" data-act="followup" title="Start a new task that builds on this branch">${icon("arrowRight")}Follow up</button>` : ""}
+      ${t.pr_url || t.pr_number ? prPill(t, prCached(t.id)) : ""}
       <button class="btn sm icon" id="moreBtn" title="More">${icon("more")}</button>
       <button class="btn sm icon ghost" id="inspToggle" title="Toggle inspector">${icon("panel")}</button>`;
     $$("[data-act]", main).forEach((b) => (b.onclick = () => act(b.dataset.act)));
@@ -83,6 +85,18 @@ export function mountTask(main, id) {
     $("#inspToggle", main).onclick = () => { S.ui.inspector = !S.ui.inspector; $("#wsBody", main).classList.toggle("inspector-hidden", !S.ui.inspector); };
   }
 
+  // A follow-up points back at its parent, and a parent lists what followed it.
+  function lineage(t) {
+    const out = [];
+    if (t.follow_up_of) {
+      const p = S.tasks.get(t.follow_up_of);
+      out.push(`<a href="#/task/${encodeURIComponent(t.follow_up_of)}" title="${esc(p ? p.name : t.follow_up_of)}">${icon("retry")}Follow-up of ${esc(p ? p.name : "a deleted task")}</a>`);
+    }
+    const kids = [...S.tasks.values()].filter((x) => x.follow_up_of === t.id).sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+    if (kids.length) out.push(`<span class="lineage">${icon("arrowRight")}Followed up by <a href="#/task/${encodeURIComponent(kids[0].id)}">${esc(kids[0].name)}</a>${kids.length > 1 ? ` <span title="${esc(kids.slice(1).map((k) => k.name).join("\n"))}">+${kids.length - 1} more</span>` : ""}</span>`);
+    return out.join("");
+  }
+
   async function act(a) {
     t = getTask();
     try {
@@ -93,6 +107,7 @@ export function mountTask(main, id) {
       else if (a === "retry-fresh") { if (!(await confirm("Retry from scratch?", "A new worktree and new agent sessions are created. The current worktree is kept on disk.", { okLabel: "Retry fresh" }))) return; await api.action(t.id, "retry", { fresh: true }); }
       else if (a === "queue") { await api.action(t.id, "queue"); toast("success", "Queued"); }
       else if (a === "start") { await api.action(t.id, "start"); toast("success", "Started", "Running alongside any other active tasks."); }
+      else if (a === "followup") { openFollowUp(t); }
       else if (a === "duplicate") { const n = await api.action(t.id, "duplicate"); toast("success", "Duplicated", n.name); navigate(`#/task/${n.id}`); }
       else if (a === "archive") { await api.action(t.id, "archive", { archived: true }); toast("info", "Archived"); }
       else if (a === "unarchive") { await api.action(t.id, "archive", { archived: false }); }
@@ -220,6 +235,10 @@ export function mountTask(main, id) {
   }
 
   renderHeader(); renderRoster(); renderComposer(); loadMessages();
+  if (t.pr_url || t.pr_number) prStatus(id);
+  const offPr = bus.on("pr", (tid) => { if (tid === id) renderHeader(); });
+  // Merges and check runs happen on GitHub, not in Relay, so an open pull request is re-read while the page is open.
+  const prTimer = setInterval(() => { const x = getTask(); const st = prCached(id)?.state; if (x && (x.pr_url || x.pr_number) && st !== "merged" && st !== "closed") prStatus(id); }, 60000);
   const timer = setInterval(() => { t = getTask(); if (t && (LIVE.has(t.status) || t.process?.state === "running")) { renderRoster(); convo.updateTyping(); } }, 1000);
   const offRoute = bus.on("route", () => { if (S.route.id === id && S.route.tab && S.route.tab !== insp.tab) insp.setTab(S.route.tab); });
 
@@ -238,6 +257,6 @@ export function mountTask(main, id) {
       else if (reason === "event") { insp.refresh("event"); }
       else if (reason === "artifact") { insp.refresh("artifact"); }
     },
-    destroy() { clearInterval(timer); insp.destroy(); offRoute(); },
+    destroy() { clearInterval(timer); clearInterval(prTimer); insp.destroy(); offRoute(); offPr(); },
   };
 }

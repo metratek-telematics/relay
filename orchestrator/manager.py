@@ -16,6 +16,12 @@ from .store import ACTIVE, TERMINAL, WAITING, TaskStore
 from .util import RUNTIME_DIR, new_id, new_task_id, now, truncate
 
 
+MAX_TURN_LOG = 400
+
+# Statuses whose branch another task may take over. Interrupted tasks resume on their branch, so they keep it.
+BRANCH_REUSABLE = {"done", "failed", "stopped"}
+
+
 class Manager:
     def __init__(self, emit):
         self._emit = emit
@@ -135,6 +141,9 @@ class Manager:
         if not requirements and not issue:
             raise ValueError("Describe the task or provide a GitHub issue number.")
         wf = self.build_workflow(payload)
+        parent = str(payload.get("follow_up_of") or "").strip()
+        if parent and not self.store.get(parent):
+            raise ValueError("The task this follows up no longer exists.")
         tid = new_task_id()
         name = (payload.get("name") or "").strip() or (requirements.splitlines()[0][:60] if requirements else f"Issue #{issue}")
         branch = self.branch_for(payload, repo, name, requirements, issue)
@@ -153,10 +162,14 @@ class Manager:
             "github_repo": github.remote_repo_name(repo),
             "branch_name": branch,
         }
+        if parent:
+            t["follow_up_of"] = parent
         self.store.add(t)
         C.remember_repo(repo)
         self.config_changed()
         self.timeline(tid, "user", "Task created", f"{C.AGENTS[wf['roles']['supervisor']['agent']]['label']} supervises {C.AGENTS[wf['roles']['worker']['agent']]['label']}")
+        if parent:
+            self.timeline(tid, "user", "Follow-up", f"Builds on {(self.store.get(parent) or {}).get('name', parent)} · {branch}")
         self.emit_task(tid)
         return self.get(tid)
 
@@ -191,8 +204,12 @@ class Manager:
         if wanted:
             if not gitops.valid_branch_name(wanted):
                 raise ValueError(f"'{wanted}' is not a valid Git branch name.")
-            if wanted in self.taken_branches(repo):
-                raise ValueError(f"Another task already uses the branch {wanted}.")
+            # A finished task's branch can be built on by a follow-up; an unfinished one is still being written to.
+            holders = [t for t in self.store.list() if t.get("repo") == repo and wanted in (t.get("branch_name"), t.get("branch"))]
+            busy = [t for t in holders if t.get("status") not in BRANCH_REUSABLE]
+            if busy:
+                raise ValueError(f"The task \"{busy[0].get('name')}\" still uses the branch {wanted}. "
+                                 "Follow up once it has finished, or stop or delete it first.")
             # An existing branch is fine: the task builds on it, as a retry would.
             return wanted
         return gitops.suggest_branch(self.cfg(), name, requirements, payload.get("template") or "feature",
@@ -530,12 +547,18 @@ class Manager:
                 + out * float(price.get("output") or 0)) / 1_000_000
         return round(cost, 5), cost > 0
 
-    def metrics_add(self, tid, agent, role, usage, elapsed, tool_calls):
+    def metrics_add(self, tid, agent, role, usage, elapsed, tool_calls, turn=None):
         t = self.store.get(tid) or {}
         m = copy.deepcopy(t.get("metrics") or {})
         m.setdefault("agents", {})
         m.setdefault("roles", {})
         cost, estimated = self.estimate_cost(agent, usage or {})
+        # Totals alone cannot say which phase spent what, so each turn is also kept, compactly, for the work chart.
+        end = time.time()
+        m["log"] = (list(m.get("log") or []) + [{
+            "start": round(end - float(elapsed or 0), 1), "end": round(end, 1), "role": role, "agent": agent, "turn": turn,
+            "input": int(usage.get("input") or 0), "output": int(usage.get("output") or 0), "cached": int(usage.get("cached") or 0),
+            "cost_usd": round(cost, 5), "estimated": estimated, "tool_calls": int(tool_calls or 0)}])[-MAX_TURN_LOG:]
         for key, bucket in ((agent, m["agents"]), (role, m["roles"])):
             d = bucket.setdefault(key, {"turns": 0, "input": 0, "output": 0, "cached": 0, "cost_usd": 0.0, "seconds": 0.0, "tool_calls": 0, "estimated": False})
             d["turns"] += 1
