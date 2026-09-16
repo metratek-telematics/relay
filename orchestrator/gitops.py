@@ -186,11 +186,49 @@ def remove_worktree(repo, wt) -> bool:
         return False
 
 
-def changed_files(wt) -> list:
+def default_branch(repo) -> str:
+    def git(*args):
+        p = quiet(["git", *args], cwd=repo)
+        return p.stdout.strip() if p.returncode == 0 else ""
+    head = git("symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+    if head:
+        return head.split("/", 1)[-1]
+    for name in ("main", "master"):
+        if git("rev-parse", "--verify", "--quiet", f"refs/heads/{name}"):
+            return name
+    return git("rev-parse", "--abbrev-ref", "HEAD") or "main"
+
+
+def base_commit(wt, repo=None) -> str:
+    """The commit a task branched from, so its changes still show after Relay commits them."""
+    if not wt or not Path(wt).exists():
+        return ""
+    if repo and Path(repo).exists():
+        p = quiet(["git", "merge-base", "HEAD", default_branch(repo)], cwd=wt)
+        if p.returncode == 0 and p.stdout.strip():
+            return p.stdout.strip()
+    return quiet(["git", "rev-parse", "HEAD"], cwd=wt).stdout.strip()
+
+
+def task_base(task) -> str:
+    return task.get("base_commit") or base_commit(task.get("worktree"), task.get("repo"))
+
+
+def changed_files(wt, base=None) -> list:
     if not wt or not Path(wt).exists():
         return []
-    p = quiet(["git", "status", "--short"], cwd=wt)
     out = []
+    if base:
+        # Committed and uncommitted changes since the task began, plus new untracked files.
+        for line in quiet(["git", "diff", "--name-status", base], cwd=wt).stdout.splitlines():
+            parts = line.split("\t")
+            if len(parts) >= 2:
+                out.append({"status": parts[0][:1] or "M", "path": parts[-1].strip('"')})
+        for line in quiet(["git", "ls-files", "--others", "--exclude-standard"], cwd=wt).stdout.splitlines():
+            if line.strip():
+                out.append({"status": "??", "path": line.strip().strip('"')})
+        return out
+    p = quiet(["git", "status", "--short"], cwd=wt)
     for line in p.stdout.splitlines():
         if not line.strip():
             continue
@@ -198,10 +236,10 @@ def changed_files(wt) -> list:
     return out
 
 
-def diff_stat(wt) -> dict:
+def diff_stat(wt, base=None) -> dict:
     if not wt or not Path(wt).exists():
         return {"files": 0, "insertions": 0, "deletions": 0}
-    p = quiet(["git", "diff", "--shortstat", "HEAD"], cwd=wt)
+    p = quiet(["git", "diff", "--shortstat", base or "HEAD"], cwd=wt)
     s = p.stdout.strip()
     import re
     files = int((re.search(r"(\d+) files? changed", s) or [0, 0])[1] or 0)
@@ -211,10 +249,10 @@ def diff_stat(wt) -> dict:
     return {"files": files + untracked, "insertions": ins, "deletions": dele, "untracked": untracked}
 
 
-def diff_file(wt, path) -> str:
+def diff_file(wt, path, base=None) -> str:
     if not wt:
         return ""
-    p = quiet(["git", "diff", "HEAD", "--", path], cwd=wt, timeout=30)
+    p = quiet(["git", "diff", base or "HEAD", "--", path], cwd=wt, timeout=30)
     if p.stdout.strip():
         return p.stdout
     fp = Path(wt) / path
@@ -227,10 +265,10 @@ def diff_file(wt, path) -> str:
     return ""
 
 
-def full_diff(wt, limit=60000) -> str:
+def full_diff(wt, limit=60000, base=None) -> str:
     if not wt or not Path(wt).exists():
         return ""
-    p = quiet(["git", "diff", "HEAD"], cwd=wt, timeout=60)
+    p = quiet(["git", "diff", base or "HEAD"], cwd=wt, timeout=60)
     txt = p.stdout or ""
     untracked = [l for l in quiet(["git", "ls-files", "--others", "--exclude-standard"], cwd=wt).stdout.splitlines() if l.strip()]
     if untracked:

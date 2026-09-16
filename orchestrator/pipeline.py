@@ -19,7 +19,7 @@ from pathlib import Path
 from . import config as C
 from . import gitops, github, protocol
 from .runner import Interrupted, Stopped, TurnTimeout
-from .util import new_id, now, read_text, truncate, write_text
+from .util import new_id, now, quiet, read_text, truncate, write_text
 
 SUP_TYPES = {"plan", "instruction", "decision", "question"}
 WRK_TYPES = {"report", "question"}
@@ -84,6 +84,7 @@ class Pipeline:
         self.state = dict(task.get("checkpoint") or {})
         self.wt = None
         self.branch = None
+        self.base = None
         self.issue_text = ""
         self.refs_text = ""
         self.verify_cmds = []
@@ -306,8 +307,11 @@ class Pipeline:
             self.r.timeline("system", "Task started", t["name"])
             self.wt, self.branch = gitops.create_worktree(self.r, t, self.cfg, self.run_dir)
             self.r.timeline("git", "Worktree ready", f"{self.branch} → {self.wt}")
+            # Recorded before any agent works, so changes still count once Relay commits them.
+            t["base_commit"] = quiet(["git", "rev-parse", "HEAD"], cwd=self.wt).stdout.strip()
+        self.base = t.get("base_commit") or gitops.base_commit(self.wt, t.get("repo"))
         repo_full = t.get("github_repo") or github.remote_repo_name(t.get("repo"))
-        self.m.set_meta(self.tid, worktree=str(self.wt), branch=self.branch, run_dir=str(self.run_dir), github_repo=repo_full)
+        self.m.set_meta(self.tid, worktree=str(self.wt), branch=self.branch, run_dir=str(self.run_dir), github_repo=repo_full, base_commit=self.base)
         self.repo_full = repo_full
 
         if t.get("issue"):
@@ -397,8 +401,8 @@ class Pipeline:
                 continue
 
             # supervisor evaluates the report
-            changed = gitops.changed_files(self.wt)
-            ds = gitops.diff_stat(self.wt)
+            changed = gitops.changed_files(self.wt, self.base)
+            ds = gitops.diff_stat(self.wt, self.base)
             self.m.set_meta(self.tid, diffstat=ds, changed_count=len(changed))
             guidance = self.take_guidance("supervisor")
             remaining = max(0, self.max_turns - turn)
@@ -465,7 +469,7 @@ class Pipeline:
             if self.verify_cmds and self.verify_mode != "off" and not vt:
                 vt = self.run_verification()
                 self.state["last_verification"] = vt
-            diff = gitops.full_diff(self.wt, int(self.cfg.get("budget_diff_chars") or 50000))
+            diff = gitops.full_diff(self.wt, int(self.cfg.get("budget_diff_chars") or 50000), self.base)
             sess = self.sessions.get("reviewer") or {}
             if int(sess.get("turns", 0)) == 0 or sess.get("agent") != rev_agent:
                 prompt = protocol.reviewer_kickoff(self.task, self.wt, self.branch, self.state.get("plan") or {},
@@ -506,8 +510,8 @@ class Pipeline:
 
     def deliver(self):
         t = self.task_meta()
-        ds = gitops.diff_stat(self.wt)
-        changed = gitops.changed_files(self.wt)
+        ds = gitops.diff_stat(self.wt, self.base)
+        changed = gitops.changed_files(self.wt, self.base)
         if self.approval and not self.state.get("approved"):
             qid = new_id("a")
             summary = self.state.get("pr_summary") or self.state.get("summary") or ""
@@ -573,7 +577,7 @@ class Pipeline:
         self.state["phase"] = "done"
         self.save()
         self.m.complete(self.tid, {"branch": self.branch, "worktree": str(self.wt), "pr_url": pr.get("url"), "pr_number": pr.get("number"),
-                                   "summary": self.state.get("summary") or self.state.get("pr_summary") or "", "diffstat": gitops.diff_stat(self.wt)})
+                                   "summary": self.state.get("summary") or self.state.get("pr_summary") or "", "diffstat": gitops.diff_stat(self.wt, self.base), "changed_count": len(gitops.changed_files(self.wt, self.base))})
         self.r.msg(role="orchestrator", agent=None, kind="complete", content=self.state.get("summary") or "", pr_url=pr.get("url"),
                    branch=self.branch, turn=self.state.get("turn"))
 

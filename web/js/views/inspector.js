@@ -53,6 +53,8 @@ export function mountInspector(container, getTask) {
 
   // ---------------------------------------------------------------- overview
   function renderOverview(t) {
+    // Delivered tasks from older builds stored 0 changed files; asking for the file list corrects the count.
+    if (t.status === "done" && !(t.diffstat && t.diffstat.files) && t.worktree && !state.statFixed) { state.statFixed = true; api.files(t.id).catch(() => {}); }
     const st = statusOf(t);
     const m = t.metrics?.total || {};
     const plan = t.plan || {};

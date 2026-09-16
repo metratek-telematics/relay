@@ -409,7 +409,12 @@ def task_messages(tid):
 @app.get("/api/tasks/<tid>/files")
 def task_files(tid):
     t = task_or_404(tid)
-    return jsonify({"files": gitops.changed_files(t.get("worktree")), "stat": gitops.diff_stat(t.get("worktree"))})
+    base = gitops.task_base(t)
+    files, stat = gitops.changed_files(t.get("worktree"), base), gitops.diff_stat(t.get("worktree"), base)
+    if t.get("status") in ("done", "failed", "stopped") and Path(t.get("worktree") or "").exists() and t.get("diffstat") != stat:
+        # Tasks delivered before base-aware counts stored 0 files; correct them when they are looked at.
+        manager.set_meta(tid, diffstat=stat, changed_count=len(files), base_commit=base)
+    return jsonify({"files": files, "stat": stat})
 
 
 @app.get("/api/tasks/<tid>/handoff")
@@ -435,8 +440,8 @@ def task_diff(tid):
     t = task_or_404(tid)
     path = request.args.get("path", "")
     if path:
-        return jsonify({"text": gitops.diff_file(t.get("worktree"), path)})
-    return jsonify({"text": gitops.full_diff(t.get("worktree"), 400000)})
+        return jsonify({"text": gitops.diff_file(t.get("worktree"), path, gitops.task_base(t))})
+    return jsonify({"text": gitops.full_diff(t.get("worktree"), 400000, gitops.task_base(t))})
 
 
 @app.get("/api/tasks/<tid>/artifact/<kind>")

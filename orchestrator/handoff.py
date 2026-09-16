@@ -9,6 +9,7 @@ import json
 import shlex
 from pathlib import Path
 
+from . import gitops
 from .util import IS_WINDOWS, quiet
 
 
@@ -25,16 +26,6 @@ def _git(args, cwd, timeout=20) -> str:
         return (p.stdout or "").strip() if p.returncode == 0 else ""
     except Exception:
         return ""
-
-
-def _default_branch(repo) -> str:
-    head = _git(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], repo)
-    if head:
-        return head.split("/", 1)[-1]
-    for name in ("main", "master"):
-        if _git(["rev-parse", "--verify", "--quiet", f"refs/heads/{name}"], repo):
-            return name
-    return _git(["rev-parse", "--abbrev-ref", "HEAD"], repo) or "main"
 
 
 def _run_commands(wt: Path) -> tuple[list[str], str]:
@@ -66,11 +57,12 @@ def build(task: dict) -> dict:
         return {"ready": False, "reason": "The team has not created its branch yet."}
 
     wt_exists = wt.exists()
-    base = _default_branch(repo) if repo.exists() else "main"
+    base = gitops.default_branch(repo) if repo.exists() else "main"
+    since = gitops.task_base(task) or base
     has_remote = bool(_git(["remote", "get-url", "origin"], repo)) if repo.exists() else False
     pushed = has_remote and bool(_git(["ls-remote", "--heads", "origin", branch], repo, timeout=15))
     pr = task.get("pr_number")
-    stat = _git(["diff", "--shortstat", f"{base}...HEAD"], wt) if wt_exists else ""
+    stat = _git(["diff", "--shortstat", since], wt) if wt_exists else ""
     q_wt, q_repo, q_branch = _q(wt), _q(repo), _q(branch)
 
     sections = []

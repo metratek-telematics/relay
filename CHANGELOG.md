@@ -49,6 +49,9 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Delivered tasks showed 0 files changed.** Change counts, the Changes tab and the reviewer's diff compared
+  against the last commit, so once Relay committed the result they came back empty. They now compare against the
+  commit the task started from; older delivered tasks correct themselves when opened.
 - **False verification failures on JavaScript repositories.** `python -m pytest` was added for any repository with a
   `tests/` folder and its "no tests collected" exit code 5 failed the run. It is now added only when the repository
   has Python tests, and exit 5 is reported as skipped.
