@@ -148,9 +148,13 @@ def index():
 
 
 # ----------------------------------------------------------------------------- meta
+# Changes on every server start, so an open browser can tell it is running code from before a deploy.
+BOOT_ID = f"{time.time():.0f}"
+
+
 @app.get("/api/ping")
 def ping():
-    return jsonify({"ok": True, "service": "Relay", "build": C.BUILD, "port": PORT, "time": time.time()})
+    return jsonify({"ok": True, "service": "Relay", "build": C.BUILD, "boot": BOOT_ID, "port": PORT, "time": time.time()})
 
 
 @app.get("/api/build")

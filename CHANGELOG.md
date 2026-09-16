@@ -121,6 +121,8 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Stale pages after a deploy.** An open browser kept running the previous JavaScript after Relay restarted, so fixed
+  buttons still showed old errors. The page now notices the server restart and offers a Reload.
 - **Open folder failed on a server install.** In Docker, the task menu and the Overview tab's Worktree, VS Code and
   Run folder buttons tried to open a desktop window and returned an error. With browser VS Code configured they now open there (run folders are mounted
   read-only into it), are disabled until the task has a worktree, and Copy worktree path is added.

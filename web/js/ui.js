@@ -217,7 +217,7 @@ export function toast(level, title, body = "", opts = {}) {
   if (opts.action) t.querySelector(".toast-action").onclick = () => { opts.action.onClick(); close(); };
   toastHost.appendChild(t);
   requestAnimationFrame(() => t.classList.add("in"));
-  setTimeout(close, opts.duration || (level === "error" ? 9000 : 5000));
+  if (!opts.sticky) setTimeout(close, opts.duration || (level === "error" ? 9000 : 5000));
   return t;
 }
 
