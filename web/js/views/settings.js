@@ -3,8 +3,10 @@ import { $, $$, esc, icon, toast, confirm, debounce } from "../ui.js";
 import { S, agentLabel, agentInitial, bus } from "../state.js";
 import { api } from "../api.js";
 import { workflowEditor } from "./newtask.js";
+import { NOTIFY_EVENTS, chime, permission, requestPermission, showDesktop } from "../notify.js";
+import { openShortcuts, keysFor } from "../shortcuts.js";
 
-const SECTIONS = [["workflow", "Workflow", "layers"], ["agents", "Agents", "bot"], ["budget", "Usage & budget", "gauge"], ["verification", "Verification", "shield"], ["git", "Git & GitHub", "github"], ["appearance", "Appearance", "sun"], ["rules", "Rules", "docs"], ["about", "About", "info"]];
+const SECTIONS = [["workflow", "Workflow", "layers"], ["agents", "Agents", "bot"], ["budget", "Usage & budget", "gauge"], ["verification", "Verification", "shield"], ["git", "Git & GitHub", "github"], ["appearance", "Appearance", "sun"], ["notifications", "Notifications", "bell"], ["prompts", "Saved prompts", "message"], ["rules", "Rules", "docs"], ["about", "About", "info"]];
 
 export function mountSettings(main, section) {
   let cur = SECTIONS.some(([k]) => k === section) ? section : "workflow";
@@ -91,7 +93,7 @@ export function mountSettings(main, section) {
           ${catalogField("claude")}
           <div class="field"><label>Environment variables for Claude</label><div class="env-table" id="env-claude">${envRows("claude")}</div></div>
         </div></div>
-        <div class="card"><div class="card-head"><h3><span class="av sm gemini">Ge</span> Gemini CLI</h3><span class="badge ${S.agents?.gemini?.ok ? "green" : "red"}">${esc(S.agents?.gemini?.version || "missing")}</span></div><div class="card-body">
+        <div class="card"><div class="card-head"><h3><span class="av sm gemini">Ge</span> Gemini CLI</h3><span class="badge ${S.agents?.gemini?.ok ? "green" : S.agents?.gemini?.signed_in === false ? "amber" : "red"}">${esc(S.agents?.gemini?.signed_in === false ? "not signed in" : S.agents?.gemini?.version || "missing")}</span></div><div class="card-body">
           <div class="field"><label>Approval mode</label><select data-cfg="gemini_approval"><option value="yolo" ${c.gemini_approval === "yolo" ? "selected" : ""}>yolo (auto-approve all tools)</option><option value="auto_edit" ${c.gemini_approval === "auto_edit" ? "selected" : ""}>auto_edit (auto-approve edits only)</option></select></div>
           <div class="field"><label>Extra CLI arguments</label><input data-cfg="gemini_extra_args" data-args="1" value="${esc((c.gemini_extra_args || []).join(" "))}"></div>
           ${catalogField("gemini")}
@@ -238,13 +240,17 @@ export function mountSettings(main, section) {
       body.innerHTML = `<div class="card"><div class="card-head"><h3>Appearance</h3></div><div class="card-body">
         <div class="grid2"><div class="field"><label>Theme</label><select data-cfg="ui_theme">${["system", "light", "dark"].map((x) => `<option ${c.ui_theme === x ? "selected" : ""}>${x}</option>`).join("")}</select></div>
         <div class="field"><label>Density</label><select data-cfg="ui_density">${["comfortable", "compact"].map((x) => `<option ${c.ui_density === x ? "selected" : ""}>${x}</option>`).join("")}</select></div></div>
-        <div class="field inline"><label>Desktop notifications (questions, approvals, delivery, failures)</label><span class="switch ${c.ui_notifications ? "on" : ""}" data-sw-cfg="ui_notifications"></span></div>
-        <div class="field inline"><label>Sound on attention events</label><span class="switch ${c.ui_sound ? "on" : ""}" data-sw-cfg="ui_sound"></span></div>
-        <div class="hint">Keyboard: <kbd>Ctrl</kbd>+<kbd>K</kbd> command palette · <kbd>N</kbd> new task · <kbd>/</kbd> search · <kbd>[</kbd> <kbd>]</kbd> inspector tabs · <kbd>Esc</kbd> close.</div>
+      </div></div>
+      <div class="card"><div class="card-head"><h3>Keyboard</h3><button type="button" class="btn sm" id="showKeys">${icon("keyboard")}All shortcuts <kbd>?</kbd></button></div><div class="card-body hint">
+        <kbd>${esc(keysFor("palette"))}</kbd> command palette · <kbd>N</kbd> new task · <kbd>/</kbd> search · <kbd>J</kbd> <kbd>K</kbd> next and previous task · <kbd>G</kbd> then <kbd>D</kbd> <kbd>T</kbd> <kbd>A</kbd> <kbd>H</kbd> <kbd>S</kbd> go to a page · <kbd>T</kbd> Try it · <kbd>.</kbd> guidance · <kbd>Esc</kbd> close.
       </div></div>`;
       bindAuto();
       $$("[data-cfg='ui_theme'],[data-cfg='ui_density']", body).forEach((s) => s.addEventListener("change", () => bus.emit("theme", { theme: $("[data-cfg='ui_theme']", body).value, density: $("[data-cfg='ui_density']", body).value })));
-      $("[data-sw-cfg='ui_notifications']", body).addEventListener("click", () => { if ("Notification" in window && Notification.permission === "default") Notification.requestPermission(); });
+      $("#showKeys", body).onclick = () => openShortcuts();
+    } else if (cur === "notifications") {
+      renderNotifications(c);
+    } else if (cur === "prompts") {
+      renderPrompts(c);
     } else if (cur === "rules") {
       body.innerHTML = `<div class="card"><div class="card-head"><h3>Engineering rules</h3><span class="muted" style="font-size:12px">Injected into agent prompts by role</span></div><div class="card-body"><div class="row wrap" id="ruleList"></div><div id="ruleEd" style="margin-top:12px"></div></div></div>`;
       api.rules().then((rows) => {
@@ -272,6 +278,85 @@ export function mountSettings(main, section) {
       };
     }
   }
+  function renderNotifications(c) {
+    const perm = permission();
+    const events = c.ui_notify_events || {};
+    const [tone, label, text] = {
+      granted: ["green", "Allowed", "This browser lets Relay show desktop notifications."],
+      denied: ["red", "Blocked", "This browser blocks notifications from Relay. Allow them in the site settings (the icon to the left of the address) and reload the page."],
+      default: ["amber", "Not allowed yet", "Your browser asks once, when you click Allow notifications. Until then you only see alerts inside Relay."],
+      unsupported: ["", "Not supported", "This browser has no desktop notifications. Alerts inside Relay still appear."],
+    }[perm] || ["", perm, ""];
+    body.innerHTML = `<div class="card"><div class="card-head"><h3>Desktop notifications</h3><span class="badge ${tone}">${esc(label)}</span></div><div class="card-body">
+        <div class="notif-perm"><div class="notif-perm-copy"><strong>Browser permission</strong><span class="hint">${esc(text)}</span></div>${perm === "default" ? `<button type="button" class="btn sm primary" id="nAllow">${icon("bell")}Allow notifications</button>` : ""}</div>
+        <div class="field inline"><label>Notify me when Relay is in the background<span class="help">Inside the Relay window you always get in-app alerts instead.</span></label><span class="switch ${c.ui_notifications ? "on" : ""}" data-sw-cfg="ui_notifications"></span></div>
+        <div class="notif-events ${c.ui_notifications ? "" : "is-off"}" id="nEvents">
+          ${NOTIFY_EVENTS.map(([k, l, d]) => `<div class="field inline"><label>${esc(l)}<span class="help">${esc(d)}</span></label><span class="switch ${events[k] !== false ? "on" : ""}" data-ev="${k}" role="switch" aria-label="${esc(l)}"></span></div>`).join("")}
+          <div class="help">Anything else, such as an issue picked up from GitHub, follows the switch above.</div>
+        </div>
+      </div></div>
+      <div class="card"><div class="card-head"><h3>Sound</h3></div><div class="card-body">
+        <div class="field inline"><label>Play a short chime with each desktop alert<span class="help">It rises for deliveries and questions and falls for failures.</span></label><span class="switch ${c.ui_sound ? "on" : ""}" data-sw-cfg="ui_sound"></span></div>
+        <div class="row wrap"><button type="button" class="btn sm" id="nChime">${icon("play")}Play chime</button><button type="button" class="btn sm" id="nChimeFail">${icon("play")}Play failure chime</button></div>
+      </div></div>
+      <div class="card"><div class="card-head"><h3>Check it works</h3></div><div class="card-body stack">
+        <div class="hint">Sends a sample notification right away, even with Relay in front. If nothing appears, check your system's Do Not Disturb or Focus settings.</div>
+        <div class="row wrap"><button type="button" class="btn sm" id="nTest">${icon("send")}Send test notification</button><span class="help" id="nTestResult" role="status"></span></div>
+        <div class="hint">While something needs you, the browser tab shows a count, such as <b>(2) Relay</b>, and its icon gets a red dot. It counts questions, approvals, paused or interrupted tasks, and failures you have not opened yet.</div>
+      </div></div>`;
+    bindAuto();
+    $("[data-sw-cfg='ui_notifications']", body).addEventListener("click", (e) => $("#nEvents", body).classList.toggle("is-off", !e.currentTarget.classList.contains("on")));
+    $$("[data-ev]", body).forEach((sw) => (sw.onclick = () => {
+      sw.classList.toggle("on");
+      save({ ui_notify_events: { ...(S.config.ui_notify_events || {}), [sw.dataset.ev]: sw.classList.contains("on") } });
+    }));
+    $("#nAllow", body) && ($("#nAllow", body).onclick = async () => { await requestPermission(); renderNotifications(S.config); });
+    $("#nChime", body).onclick = () => chime("success");
+    $("#nChimeFail", body).onclick = () => chime("error");
+    $("#nTest", body).onclick = async () => {
+      const out = $("#nTestResult", body);
+      let perm = permission();
+      if (perm === "default") { perm = await requestPermission(); renderNotifications(S.config); }
+      const sample = { id: `test-${Date.now()}`, level: "success", kind: "delivered", title: "Test notification", body: "This is how Relay lets you know a task needs you." };
+      if (S.config.ui_sound) chime("success");
+      const sent = perm === "granted" && showDesktop(sample);
+      const target = $("#nTestResult", body) || out;
+      target.textContent = sent ? "Sent." : perm === "denied" ? "The browser blocked it. Allow notifications for this site first." : perm === "unsupported" ? "This browser cannot show desktop notifications." : "Not sent: notifications are not allowed yet.";
+      target.style.color = sent ? "var(--green)" : "var(--red)";
+    };
+  }
+
+  function renderPrompts(c) {
+    const rows = JSON.parse(JSON.stringify(c.saved_prompts || []));
+    const tpls = S.templates || [];
+    const persist = () => save({ saved_prompts: rows.filter((p) => p.name.trim() || p.text.trim()) });
+    const persistSoon = debounce(persist, 600);
+    const draw = () => {
+      body.innerHTML = `<div class="card"><div class="card-head"><h3>Saved prompts</h3><button type="button" class="btn sm primary" id="pAdd">${icon("plus")}Add prompt</button></div><div class="card-body">
+        <div class="hint" style="margin-bottom:12px">Requests you make often. Pick one in step 2 of the New task wizard to fill in the requirements, then edit the placeholders in angle brackets. Changes save as you type.</div>
+        <div class="stack" style="gap:12px">${rows.length ? rows.map((p, i) => `<div class="prompt-edit" data-i="${i}">
+          <div class="prompt-edit-head">
+            <div class="field"><label for="pName${i}">Name</label><input id="pName${i}" data-p="name" value="${esc(p.name)}" placeholder="e.g. Add an empty state to a list"></div>
+            <div class="field"><label for="pTpl${i}">Task type</label><select id="pTpl${i}" data-p="template"><option value="">Any type</option>${tpls.map((x) => `<option value="${esc(x.id)}" ${p.template === x.id ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></div>
+            <button type="button" class="btn sm danger" data-pdel="${i}" title="Delete this prompt">${icon("trash")}<span>Delete</span></button>
+          </div>
+          <div class="field" style="margin-bottom:0"><label for="pText${i}">Request</label><textarea id="pText${i}" data-p="text" rows="5" placeholder="Describe the change the way you would in the wizard.">${esc(p.text)}</textarea></div>
+        </div>`).join("") : `<div class="empty small">${icon("message", "lg")}<p>No saved prompts yet. Add one for a request you make often.</p></div>`}</div>
+      </div></div>`;
+      $("#pAdd", body).onclick = () => { rows.unshift({ id: `p_${Date.now().toString(36)}`, name: "", text: "", template: "" }); draw(); $("#pName0", body).focus(); };
+      $$(".prompt-edit", body).forEach((box) => {
+        const p = rows[Number(box.dataset.i)];
+        $$("[data-p]", box).forEach((f) => f.addEventListener(f.tagName === "SELECT" ? "change" : "input", () => { p[f.dataset.p] = f.value; persistSoon(); }));
+      });
+      $$("[data-pdel]", body).forEach((b) => (b.onclick = async () => {
+        const i = Number(b.dataset.pdel);
+        if ((rows[i].name || rows[i].text) && !(await confirm("Delete this prompt?", rows[i].name || "Untitled prompt", { danger: true, okLabel: "Delete" }))) return;
+        rows.splice(i, 1); persist(); draw();
+      }));
+    };
+    draw();
+  }
+
   render();
   return { update(reason) { if (reason === "route") { const s = S.route.section; if (s && s !== cur && SECTIONS.some(([k]) => k === s)) { cur = s; render(); } } }, destroy() {} };
 }

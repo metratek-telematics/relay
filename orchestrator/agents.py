@@ -540,9 +540,50 @@ class GeminiAdapter(AgentAdapter):
 
     def extra_health(self, info, cfg):
         env = self.env(cfg)
+        if info["ok"] and not self.signed_in(env):
+            # `gemini --version` succeeds without any login, and Docker creates an empty
+            # ~/.gemini for a missing mount, so neither proves the CLI can run a turn.
+            info["ok"] = False
+            info["signed_in"] = False
+            info["error"] = "Not signed in"
+            info["hint"] = ("Run `gemini` once and choose Login with Google, or set GEMINI_API_KEY "
+                            "under Settings → Agents → Gemini environment.")
+            return
+        info["signed_in"] = True
         if info["ok"] and not (env.get("GOOGLE_CLOUD_PROJECT") or env.get("GOOGLE_CLOUD_PROJECT_ID") or env.get("GEMINI_API_KEY")):
             info["hint"] = ("If Gemini reports that your account needs GOOGLE_CLOUD_PROJECT, set it under "
                             "Settings → Agents → Gemini environment (or set GEMINI_API_KEY).")
+
+    @staticmethod
+    def signed_in(env) -> bool:
+        """True when Gemini CLI has credentials it can use without asking."""
+        if any(env.get(k) for k in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_APPLICATION_CREDENTIALS")):
+            return True
+        home = Path(env.get("HOME") or Path.home()) / ".gemini"
+        # oauth_creds.json holds a Google login; the CLI also loads keys from ~/.gemini/.env.
+        if (home / "oauth_creds.json").is_file():
+            return True
+        try:
+            dotenv = (home / ".env").read_text(encoding="utf-8", errors="replace")
+            if re.search(r"^\s*(?:export\s+)?(?:GEMINI_API_KEY|GOOGLE_API_KEY)\s*=\s*\S", dotenv, re.M):
+                return True
+        except OSError:
+            pass
+        try:
+            d = json.loads((home / "settings.json").read_text(encoding="utf-8", errors="replace"))
+            auth = ((d.get("security") or {}).get("auth") or {}).get("selectedType") or d.get("selectedAuthType") or ""
+        except (OSError, ValueError, AttributeError):
+            return False
+        # Vertex AI and Cloud Shell use ambient credentials once chosen in settings.json.
+        if auth in ("vertex-ai", "cloud-shell", "compute-default-credentials"):
+            return True
+        # Builds that keep the Google token in the system keychain still record the account here.
+        if auth == "oauth-personal":
+            try:
+                return bool(json.loads((home / "google_accounts.json").read_text(encoding="utf-8", errors="replace")).get("active"))
+            except (OSError, ValueError, AttributeError):
+                return False
+        return False
 
     def build(self, prompt, cwd, cfg, model, session, run_dir, role, effort=""):
         session = dict(session or {})

@@ -167,7 +167,24 @@ DEFAULTS = {
     "ui_theme": "system",
     "ui_density": "comfortable",
     "ui_notifications": True,
+    # Which server notifications may raise a desktop alert or a sound. In-app toasts
+    # always show; these only decide what is allowed to interrupt you elsewhere.
+    "ui_notify_events": {"delivered": True, "failed": True, "needs_input": True, "pr_opened": True},
     "ui_sound": False,
+    # Reusable requests offered in the New task wizard. A list, so saving replaces it
+    # whole and a deleted prompt stays deleted.
+    "saved_prompts": [
+        {"id": "p_design_page", "name": "Redesign a page following rules/DESIGN.md", "template": "feature",
+         "text": "Redesign the <page or view> so it follows rules/DESIGN.md.\n\n"
+                 "- Keep every existing behaviour and data flow; this is a visual and layout change only.\n"
+                 "- Use the colour tokens and spacing scale, never raw hex values.\n"
+                 "- It must work at 1500, 1100, 700 and 420 pixels wide, in light and dark themes, with nothing clipped.\n"
+                 "- Attach before and after screenshots to the final report."},
+        {"id": "p_bug_regression", "name": "Fix a bug with a regression test", "template": "bugfix",
+         "text": "Fix this bug: <what happens>.\n\nSteps to reproduce:\n1. <step>\n\nExpected: <expected>\nActual: <actual>\n\n"
+                 "First write a test that fails because of the bug, then make it pass with the smallest change "
+                 "that addresses the root cause. Run the full test suite before reporting."},
+    ],
     "recent_repos": [],
     "model_recent": {"codex": [], "claude": [], "gemini": []},
 }
@@ -215,8 +232,24 @@ def _migrate(cfg: dict) -> dict:
         out["model_recent"].setdefault(a, [])
         if not isinstance(out["models"].get(a), list):
             out["models"][a] = list(DEFAULT_MODELS[a])
+    out["saved_prompts"] = _clean_prompts(out.get("saved_prompts"))
     out["build"] = BUILD
     return out
+
+
+def _clean_prompts(rows) -> list:
+    """Keep saved prompts well formed whatever the browser or a hand edit sent."""
+    import uuid
+    out = []
+    for r in rows if isinstance(rows, list) else []:
+        if not isinstance(r, dict):
+            continue
+        name, text = str(r.get("name") or "").strip()[:120], str(r.get("text") or "")[:20000]
+        if not name and not text.strip():
+            continue
+        out.append({"id": str(r.get("id") or f"p_{uuid.uuid4().hex[:8]}")[:40], "name": name or "Untitled prompt",
+                    "text": text, "template": str(r.get("template") or "")[:40]})
+    return out[:100]
 
 
 def _env_overrides() -> dict:

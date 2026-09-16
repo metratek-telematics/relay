@@ -7,14 +7,16 @@ export function agentHealthRow(name, h, { compact = false } = {}) {
   h = h || {};
   const meta = S.agentMeta[name] || {};
   const ok = h.ok;
+  // Installed but without credentials: the CLI answers --version yet cannot run a turn.
+  const signedOut = h.installed && h.signed_in === false;
   return `<div class="ah" data-agent="${esc(name)}">
     <span class="av lg ${esc(name)}">${esc(agentInitial(name))}</span>
     <div class="who"><strong>${esc(agentLabel(name))} <span class="muted" style="font-weight:500">· ${esc(meta.vendor || "")}</span></strong>
       <span>${h.installed ? esc(h.version || h.path || "installed") : "not installed"}</span>
-      ${h.error ? `<span class="err">${esc(h.error)}</span>` : ""}${h.hint && !compact ? `<span class="hint">${esc(h.hint)}</span>` : ""}
+      ${h.error && !signedOut ? `<span class="err">${esc(h.error)}</span>` : ""}${h.hint && !compact ? `<span class="hint">${esc(h.hint)}</span>` : ""}
       ${h.test ? `<span class="${h.test.ok ? "" : "err"}">${h.test.ok ? `✓ smoke test passed in ${h.test.seconds}s${h.test.model ? ` · ${esc(h.test.model)}` : ""}` : `✗ smoke test failed: ${esc(h.test.error || "")}`}</span>` : ""}
     </div>
-    <div class="row"><span class="badge ${ok ? "green" : h.installed ? "amber" : "red"}">${ok ? "ready" : h.installed ? "check" : "missing"}</span>${compact ? "" : `<button class="btn sm" data-test="${esc(name)}" ${h.installed ? "" : "disabled"}>${icon("zap")}Test</button>`}</div>
+    <div class="row"><span class="badge ${ok ? "green" : h.installed ? "amber" : "red"}" ${signedOut && h.hint ? `title="${esc(h.hint)}"` : ""}>${ok ? "ready" : signedOut ? "not signed in" : h.installed ? "check" : "missing"}</span>${compact ? "" : `<button class="btn sm" data-test="${esc(name)}" ${h.installed ? "" : "disabled"}>${icon("zap")}Test</button>`}</div>
   </div>`;
 }
 

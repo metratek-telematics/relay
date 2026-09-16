@@ -50,6 +50,10 @@ export const api = {
   action: (id, action, body = {}) => post(`/api/tasks/${encodeURIComponent(id)}/${action}`, body),
   messages: (id, after = 0, limit = 0) => get(`/api/tasks/${encodeURIComponent(id)}/messages?after=${after}&limit=${limit}`),
   handoff: (id) => get(`/api/tasks/${encodeURIComponent(id)}/handoff`),
+  commits: (id) => get(`/api/tasks/${encodeURIComponent(id)}/commits`),
+  commitDiff: (id, sha, path) => get(`/api/tasks/${encodeURIComponent(id)}/commits/${encodeURIComponent(sha)}/diff${path ? `?path=${encodeURIComponent(path)}` : ""}`),
+  work: (id) => get(`/api/tasks/${encodeURIComponent(id)}/work`),
+  pr: (id, force) => get(`/api/tasks/${encodeURIComponent(id)}/pr${force ? "?force=1" : ""}`),
   branchName: (p) => get(`/api/branch-name?${new URLSearchParams(p)}`),
   files: (id) => get(`/api/tasks/${encodeURIComponent(id)}/files`),
   diff: (id, path) => get(`/api/tasks/${encodeURIComponent(id)}/diff${path ? `?path=${encodeURIComponent(path)}` : ""}`),
@@ -69,6 +73,16 @@ export const api = {
   ghDeleteSource: (id) => del(`/api/github/sources/${encodeURIComponent(id)}`),
   ghPoll: () => post("/api/github/poll"),
   notificationsRead: () => post("/api/notifications/read"),
+  repos: () => get("/api/repos"),
+  repoFetch: (path) => post("/api/repos/fetch", { path }),
+  repoPull: (path) => post("/api/repos/pull", { path }),
+  repoGraph: (path) => get(`/api/repos/graph?path=${encodeURIComponent(path)}`),
+  worktrees: () => get("/api/worktrees"),
+  worktreeSize: (path) => get(`/api/worktrees/size?path=${encodeURIComponent(path)}`),
+  removeWorktree: (path, discard) => post("/api/worktrees/remove", { path, discard }),
+  deleteBranch: (repo, branch) => post("/api/worktrees/delete-branch", { repo, branch }),
+  cleanupPreview: () => get("/api/worktrees/cleanup"),
+  cleanup: (paths) => post("/api/worktrees/cleanup", { paths }),
 };
 
 // ---------------------------------------------------------------------------- SSE

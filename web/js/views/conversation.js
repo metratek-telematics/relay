@@ -3,6 +3,7 @@ import { $, $$, el, esc, icon, md, fmtTime, fmtSec, fmtDur, copyText, diffHtml }
 import { S, agentLabel, agentInitial, ROLE_LABEL, roleAgent } from "../state.js";
 import { api } from "../api.js";
 import { toast } from "../ui.js";
+import { openFollowUp } from "./newtask.js";
 
 // ---------------------------------------------------------------------------- edits
 // Agents change files in two ways: an edit tool, whose input carries the file and the
@@ -277,7 +278,7 @@ export function renderMessage(m, t, prevInfo) {
   }
   if (k === "complete") {
     return `<div class="m m-complete" ${idAttr}><div class="ccard"><strong>${icon("check")}Delivered</strong><div class="md" style="margin-top:6px">${md(m.content || "")}</div>
-      <div class="row wrap"><button class="btn sm primary" data-open-tab="result">${icon("play")}Try it</button>${m.pr_url ? `<a class="btn sm" href="${esc(m.pr_url)}" target="_blank" rel="noopener">${icon("external")}Open pull request</a>` : ""}${m.branch ? `<span class="badge outline">${icon("branch", "sm")}${esc(m.branch)}</span>` : ""}</div></div></div>`;
+      <div class="row wrap"><button class="btn sm primary" data-open-tab="result">${icon("play")}Try it</button><button class="btn sm" data-follow-up title="Start a new task that builds on this branch">${icon("arrowRight")}Follow up</button>${m.pr_url ? `<a class="btn sm" href="${esc(m.pr_url)}" target="_blank" rel="noopener">${icon("external")}Open pull request</a>` : ""}${m.branch ? `<span class="badge outline">${icon("branch", "sm")}${esc(m.branch)}</span>` : ""}</div></div></div>`;
   }
   if (k === "file_edit") {
     return `<div class="m m-sys" ${idAttr}>${icon("edit", "sm")} You edited <code>${esc(m.content)}</code> in the worktree</div>`;
@@ -444,6 +445,7 @@ export class Conversation {
       if (body) { body.classList.toggle("clamp"); more.textContent = body.classList.contains("clamp") ? "Show more" : "Show less"; }
       return;
     }
+    if (e.target.closest("[data-follow-up]")) { const t = this.getTask(); if (t) openFollowUp(t); return; }
     const opt = e.target.closest("[data-opt]");
     if (opt) { const ta = opt.closest(".qcard").querySelector("[data-answer]"); if (ta) { ta.value = opt.dataset.opt; ta.focus(); } return; }
     const send = e.target.closest("[data-send-answer]");

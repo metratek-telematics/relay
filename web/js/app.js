@@ -7,8 +7,11 @@ import { mountTask } from "./views/task.js";
 import { mountSettings } from "./views/settings.js";
 import { mountAgents } from "./views/agents.js";
 import { mountGithub } from "./views/github.js";
+import { mountRepos } from "./views/repos.js";
 import { openNewTask } from "./views/newtask.js";
 import { TABS } from "./views/inspector.js";
+import { deliver, markSeen, renderAttention, permission, requestPermission } from "./notify.js";
+import { GOTO, keysFor, openShortcuts } from "./shortcuts.js";
 
 const main = $("#main");
 let view = null;
@@ -65,7 +68,9 @@ addEventListener("click", (e) => {
   try {
     const w = Number(localStorage.getItem("relay.sidebarW"));
     if (w) applySidebarWidth(w);
-    setSidebarCollapsed(localStorage.getItem("relay.sidebarCollapsed") === "1");
+    // On a phone the list is a drawer over the page; opening it on load would hide
+    // the page you asked for, so it starts closed there.
+    setSidebarCollapsed(matchMedia("(max-width: 980px)").matches || localStorage.getItem("relay.sidebarCollapsed") === "1");
   } catch {}
   const handle = $("#sidebarResize");
   if (!handle) return;
@@ -123,6 +128,7 @@ function parseRoute() {
   if (!parts.length) return { view: "dashboard", id: null, tab: null, section: null };
   if (parts[0] === "task" && parts[1]) return { view: "task", id: decodeURIComponent(parts[1]), tab: parts[2] || null, section: null };
   if (parts[0] === "settings") return { view: "settings", id: null, tab: null, section: parts[1] || "workflow" };
+  if (parts[0] === "repos") return { view: "repos", id: null, tab: null, section: parts[1] || "list" };
   if (["agents", "github", "tasks", "dashboard"].includes(parts[0])) return { view: parts[0] === "dashboard" ? "dashboard" : parts[0], id: null, tab: null, section: null };
   return { view: "dashboard", id: null, tab: null, section: null };
 }
@@ -130,6 +136,7 @@ function route() {
   const r = parseRoute();
   const same = view && S.route.view === r.view && S.route.id === r.id;
   S.route = r;
+  if (r.id) { markSeen(r.id); renderAttention(); }
   $$(".rail-btn[data-nav]").forEach((b) => b.classList.toggle("active", b.dataset.nav === (r.view === "task" ? "tasks" : r.view)));
   document.getElementById("app").classList.toggle("no-sidebar", false);
   if (same) { view.update && view.update("route"); bus.emit("route"); renderSidebar(); return; }
@@ -139,6 +146,7 @@ function route() {
   else if (r.view === "settings") view = mountSettings(main, r.section);
   else if (r.view === "agents") view = mountAgents(main);
   else if (r.view === "github") view = mountGithub(main);
+  else if (r.view === "repos") view = mountRepos(main, r.section);
   else if (r.view === "tasks") view = mountTasksHome();
   else view = mountDashboard(main);
   renderSidebar();
@@ -249,25 +257,20 @@ $("#notifBtn").onclick = () => {
   const p = $("#notifPanel");
   if (!p.hidden) { p.hidden = true; return; }
   const rows = S.notifications || [];
-  p.innerHTML = `<div class="row between" style="padding:8px 10px 4px"><strong>Notifications</strong><button class="btn xs" id="notifClear">Mark all read</button></div>` + (rows.length ? rows.slice(0, 40).map((n) => `<div class="notif-row" data-n="${esc(n.task_id || "")}"><span class="toast-ic ${esc(n.level)}" style="background:var(--${n.level === "success" ? "green" : n.level === "error" ? "red" : n.level === "warning" ? "amber" : "blue"}-soft);color:var(--${n.level === "success" ? "green" : n.level === "error" ? "red" : n.level === "warning" ? "amber" : "blue"})">${icon(n.level === "success" ? "check" : n.level === "info" ? "info" : "alert")}</span><div><strong>${esc(n.title)}</strong><span>${esc(n.body || "")}</span><time>${timeAgo(n.time)}</time></div></div>`).join("") : '<div class="empty small">No notifications yet.</div>');
+  const askDesktop = S.config.ui_notifications && permission() === "default";
+  p.innerHTML = `<div class="row between" style="padding:8px 10px 4px"><strong>Notifications</strong><button class="btn xs" id="notifClear">Mark all read</button></div>` +
+    (askDesktop ? `<div class="notif-ask"><span>Get a desktop alert when a task needs you, even with Relay in the background.</span><button class="btn xs primary" id="notifAllow">${icon("bell")}Allow</button></div>` : "") + (rows.length ? rows.slice(0, 40).map((n) => `<div class="notif-row" data-n="${esc(n.task_id || "")}"><span class="toast-ic ${esc(n.level)}" style="background:var(--${n.level === "success" ? "green" : n.level === "error" ? "red" : n.level === "warning" ? "amber" : "blue"}-soft);color:var(--${n.level === "success" ? "green" : n.level === "error" ? "red" : n.level === "warning" ? "amber" : "blue"})">${icon(n.level === "success" ? "check" : n.level === "info" ? "info" : "alert")}</span><div><strong>${esc(n.title)}</strong><span>${esc(n.body || "")}</span><time>${timeAgo(n.time)}</time></div></div>`).join("") : '<div class="empty small">No notifications yet.</div>');
   p.hidden = false;
+  $("#notifAllow", p) && ($("#notifAllow", p).onclick = async () => {
+    const res = await requestPermission();
+    toast(res === "granted" ? "success" : "info", res === "granted" ? "Desktop notifications on" : "Desktop notifications not allowed", res === "granted" ? "Choose which events alert you in Settings → Notifications." : "You can change this in the browser's site settings.");
+    p.hidden = true;
+  });
   $("#notifClear", p).onclick = async () => { await api.notificationsRead(); S.notifications.forEach((n) => (n.read = true)); renderNotifBadge(); p.hidden = true; };
   $$("[data-n]", p).forEach((r) => (r.onclick = () => { p.hidden = true; if (r.dataset.n) navigate(`#/task/${r.dataset.n}`); }));
   const close = (e) => { if (!p.contains(e.target) && e.target !== $("#notifBtn") && !$("#notifBtn").contains(e.target)) { p.hidden = true; document.removeEventListener("mousedown", close); } };
   setTimeout(() => document.addEventListener("mousedown", close), 0);
 };
-function desktopNotify(n) {
-  if (!S.config.ui_notifications || document.hasFocus()) return;
-  try {
-    if ("Notification" in window && Notification.permission === "granted") {
-      const nt = new Notification(`Relay · ${n.title}`, { body: n.body || "", tag: n.id });
-      nt.onclick = () => { window.focus(); if (n.task_id) navigate(`#/task/${n.task_id}`); };
-    }
-  } catch {}
-  if (S.config.ui_sound && (n.level === "warning" || n.level === "error")) {
-    try { const ctx = new (window.AudioContext || window.webkitAudioContext)(); const o = ctx.createOscillator(); const g = ctx.createGain(); o.connect(g); g.connect(ctx.destination); o.frequency.value = 660; g.gain.value = 0.04; o.start(); setTimeout(() => { o.stop(); ctx.close(); }, 180); } catch {}
-  }
-}
 
 // ---------------------------------------------------------------------------- live events
 const sidebarSoon = throttle(renderSidebar, 400);
@@ -282,6 +285,8 @@ function onEvent(ev) {
     case "task": {
       const info = upsertTask(p);
       sidebarSoon();
+      if (S.route.id === p.id) markSeen(p.id);
+      if (info.statusChanged || info.pendingChanged) renderAttention();
       if (view && (S.route.view !== "task" || S.route.id === p.id)) view.update && view.update("task", info);
       if (info.statusChanged && S.route.id !== p.id && statusOf(p).attention && p.pending) {
         toast("warning", `${p.name}: ${p.pending.kind === "approval" ? "approval needed" : "question for you"}`, p.pending.question || "", { action: { label: "Open", onClick: () => navigate(`#/task/${p.id}`) } });
@@ -294,6 +299,7 @@ function onEvent(ev) {
       S.notifications = (S.notifications || []).filter((n) => n.task_id !== p.id);
       renderNotifBadge();
       renderSidebar();
+      renderAttention();
       if (S.route.id === p.id) navigate("#/");
       else if (view && view.update) view.update("task", {});
       break;
@@ -319,7 +325,7 @@ function onEvent(ev) {
       break;
     }
     case "artifact": if (S.route.id === p.task_id && view) view.update("artifact", p); break;
-    case "notify": S.notifications.unshift(p); S.notifications = S.notifications.slice(0, 100); renderNotifBadge(); toast(p.level, p.title, p.body, p.task_id ? { action: { label: "Open", onClick: () => navigate(`#/task/${p.task_id}`) } } : {}); desktopNotify(p); break;
+    case "notify": S.notifications.unshift(p); S.notifications = S.notifications.slice(0, 100); renderNotifBadge(); toast(p.level, p.title, p.body, p.task_id ? { action: { label: "Open", onClick: () => navigate(`#/task/${p.task_id}`) } } : {}); deliver(p); break;
     case "github": S.github = { ...S.github, ...p }; view && view.update && view.update("github", p); break;
     case "config": S.config = p; applyTheme(p.ui_theme, p.ui_density); renderQueue(); break;
     case "queue": S.queue = { ...S.queue, ...p }; renderQueue(); break;
@@ -330,21 +336,26 @@ function onEvent(ev) {
 function paletteItems() {
   const t = S.route.id ? S.tasks.get(S.route.id) : null;
   const items = [
-    { group: "Actions", label: "New task", icon: "plus", hint: "N", onClick: () => openNewTask() },
+    { group: "Actions", label: "New task", icon: "plus", hint: keysFor("new"), onClick: () => openNewTask() },
     { group: "Actions", label: S.queue.running ? "Halt queue" : "Run queue", icon: S.queue.running ? "stop" : "play", onClick: () => (S.queue.running ? $("#stopQueueBtn") : $("#runBtn")).click() },
     { group: "Actions", label: "Toggle theme", icon: "sun", onClick: () => $("#themeBtn").click() },
-    { group: "Navigate", label: "Dashboard", icon: "home", onClick: () => navigate("#/") },
-    { group: "Navigate", label: "Agents", icon: "bot", onClick: () => navigate("#/agents") },
-    { group: "Navigate", label: "GitHub inbox", icon: "github", onClick: () => navigate("#/github") },
-    { group: "Navigate", label: "Settings", icon: "settings", onClick: () => navigate("#/settings") },
+    { group: "Actions", label: "Show or hide the task list", icon: "tasks", hint: keysFor("sidebar"), onClick: () => $("#sidebarToggle").click() },
+    { group: "Navigate", label: "Dashboard", icon: "home", hint: keysFor("goDashboard"), onClick: () => navigate("#/") },
+    { group: "Navigate", label: "Agents", icon: "bot", hint: keysFor("goAgents"), onClick: () => navigate("#/agents") },
+    { group: "Navigate", label: "GitHub inbox", icon: "github", hint: keysFor("goGithub"), onClick: () => navigate("#/github") },
+    { group: "Navigate", label: "Repositories", icon: "folder", hint: keysFor("goRepos"), keywords: "branches clone git", onClick: () => navigate("#/repos") },
+    { group: "Navigate", label: "Worktrees", icon: "layers", keywords: "clean up repositories", onClick: () => navigate("#/repos/worktrees") },
+    { group: "Navigate", label: "Settings", icon: "settings", hint: keysFor("goSettings"), onClick: () => navigate("#/settings") },
+    { group: "Navigate", label: "Notification settings", icon: "bell", onClick: () => navigate("#/settings/notifications") },
+    { group: "Help", label: "Keyboard shortcuts", icon: "keyboard", hint: keysFor("help"), keywords: "keys hotkeys help", onClick: () => openShortcuts() },
   ];
   if (t) {
     const active = LIVE.has(t.status) || t.status === "needs_input" || t.status === "paused";
     if (active) items.push({ group: "Current task", label: "Stop task", icon: "stop", onClick: () => $("[data-act='stop']")?.click() }, { group: "Current task", label: t.status === "paused" ? "Resume task" : "Pause task", icon: "pause", onClick: () => ($("[data-act='pause']") || $("[data-act='resume']"))?.click() });
     if (["failed", "stopped", "interrupted"].includes(t.status)) items.push({ group: "Current task", label: "Retry / resume task", icon: "retry", onClick: () => $("[data-act='retry']")?.click() });
     if (t.pr_url) items.push({ group: "Current task", label: "Open pull request", icon: "external", onClick: () => window.open(t.pr_url, "_blank") });
-    for (const [k, l] of TABS) items.push({ group: "Inspector", label: `Show ${l}`, icon: "panel", onClick: () => navigate(`#/task/${t.id}/${k}`) });
-    items.push({ group: "Current task", label: "Focus guidance box", icon: "message", onClick: () => $("#guidance")?.focus() });
+    for (const [k, l] of TABS) items.push({ group: "Inspector", label: `Show ${l}`, icon: "panel", hint: k === "result" ? keysFor("tryIt") : "", onClick: () => openTab(k) });
+    items.push({ group: "Current task", label: "Focus guidance box", icon: "message", hint: keysFor("guidance"), onClick: () => $("#guidance")?.focus() });
   }
   for (const x of [...S.tasks.values()].filter((x) => !x.archived).sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || "")).slice(0, 30)) {
     items.push({ group: "Tasks", label: x.name, keywords: x.repo, icon: "tasks", hint: statusOf(x).label, onClick: () => navigate(`#/task/${x.id}`) });
@@ -352,19 +363,71 @@ function paletteItems() {
   return items;
 }
 $("#paletteBtn").onclick = () => palette(paletteItems);
+$("#shortcutsBtn").onclick = () => openShortcuts();
+
+function openTab(tab) {
+  if (S.route.view !== "task") return;
+  // The inspector may be hidden, or replaced by the conversation on a narrow screen.
+  bus.emit("show-inspector");
+  navigate(`#/task/${S.route.id}/${tab}`);
+}
+function stepTask(delta) {
+  const ids = $$("#taskList [data-task]").map((b) => b.dataset.task);
+  if (!ids.length) return;
+  const cur = ids.indexOf(S.route.id);
+  const next = ids[cur < 0 ? (delta > 0 ? 0 : ids.length - 1) : Math.max(0, Math.min(ids.length - 1, cur + delta))];
+  if (next === S.route.id) return;
+  navigate(`#/task/${next}`);
+  requestAnimationFrame(() => $("#taskList .task-row.active")?.scrollIntoView({ block: "nearest" }));
+}
+
+// "g" starts a two-key sequence; a small pill shows it is waiting for the second key.
+let chordUntil = 0;
+const chordPill = el('<div class="chord-pill" hidden><kbd>G</kbd> then <kbd>D</kbd> dashboard · <kbd>T</kbd> tasks · <kbd>A</kbd> agents · <kbd>H</kbd> GitHub · <kbd>S</kbd> settings · <kbd>R</kbd> repositories</div>');
+document.body.appendChild(chordPill);
+const endChord = () => { chordUntil = 0; chordPill.hidden = true; };
+
 document.addEventListener("keydown", (e) => {
-  const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName) || document.activeElement?.isContentEditable;
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); palette(paletteItems); return; }
-  if (typing) return;
-  if (e.key === "n" && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); openNewTask(); }
-  if (e.key === "/") { e.preventDefault(); setSidebarCollapsed(false); $("#taskSearch").focus(); }
-  if (e.key === "b") { e.preventDefault(); $("#sidebarToggle").click(); }
-  if ((e.key === "[" || e.key === "]") && S.route.view === "task") {
-    const keys = TABS.map(([k]) => k); const cur = keys.indexOf(S.ui.inspectorTab || "overview");
-    const next = keys[(cur + (e.key === "]" ? 1 : keys.length - 1)) % keys.length];
-    navigate(`#/task/${S.route.id}/${next}`);
+  const a = document.activeElement;
+  const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(a?.tagName) || a?.isContentEditable;
+  // A dialog or the palette owns the keyboard; they handle Escape themselves.
+  const overlay = !!$(".modal-backdrop, .palette-back");
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { if (!overlay) { e.preventDefault(); palette(paletteItems); } return; }
+  if (e.key === "Escape") {
+    endChord();
+    if (overlay) return;
+    $("#notifPanel").hidden = true;
+    if (appEl.classList.contains("show-sidebar")) setSidebarCollapsed(true);
+    return;
   }
-  if (e.key === "Escape") { $("#notifPanel").hidden = true; }
+  if (typing || overlay || e.ctrlKey || e.metaKey || e.altKey) return;
+  const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  if (chordUntil) {
+    const target = Date.now() < chordUntil && GOTO[key];
+    endChord();
+    if (target) { e.preventDefault(); navigate(target); }
+    return;
+  }
+  switch (e.key) {
+    case "?": e.preventDefault(); openShortcuts(); return;
+    case "/": e.preventDefault(); setSidebarCollapsed(false); $("#taskSearch").focus(); return;
+    case ".": if (S.route.view === "task" && $("#guidance")) { e.preventDefault(); $("#guidance").focus(); } return;
+    case "[": case "]": {
+      if (S.route.view !== "task") return;
+      const keys = TABS.map(([k]) => k); const cur = keys.indexOf(S.ui.inspectorTab || "overview");
+      openTab(keys[(cur + (e.key === "]" ? 1 : keys.length - 1)) % keys.length]);
+      return;
+    }
+  }
+  if (e.shiftKey) return;
+  switch (key) {
+    case "n": e.preventDefault(); openNewTask(); break;
+    case "b": e.preventDefault(); $("#sidebarToggle").click(); break;
+    case "g": e.preventDefault(); chordUntil = Date.now() + 1500; chordPill.hidden = false; setTimeout(() => { if (chordUntil && Date.now() >= chordUntil) endChord(); }, 1600); break;
+    case "j": e.preventDefault(); stepTask(1); break;
+    case "k": e.preventDefault(); stepTask(-1); break;
+    case "t": if (S.route.view === "task") { e.preventDefault(); openTab("result"); } break;
+  }
 });
 
 // ---------------------------------------------------------------------------- bootstrap
@@ -375,11 +438,12 @@ async function bootstrap() {
   S.github = st.github || {}; S.queue = st.queue || {}; S.notifications = st.notifications || [];
   S.tasks = new Map((st.tasks || []).map((t) => [t.id, t]));
   applyTheme(S.config.ui_theme, S.config.ui_density);
-  renderQueue(); renderNotifBadge(); renderConn();
+  renderQueue(); renderNotifBadge(); renderConn(); renderAttention();
   if (!S.ready) { S.ready = true; connectEvents(onEvent); route(); }
   else { renderSidebar(); view && view.update && view.update("task", {}); }
-  if (S.config.ui_notifications && "Notification" in window && Notification.permission === "default") setTimeout(() => Notification.requestPermission().catch(() => {}), 4000);
 }
 bootstrap();
+// Coming back to the tab counts as looking at the task that is open.
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && S.route.id) { markSeen(S.route.id); renderAttention(); } });
 // Periodic reconciliation in case an SSE event was missed.
-setInterval(async () => { if (!conn.online) return; try { const rows = await api.tasks(); const seen = new Set(); for (const t of rows) { seen.add(t.id); const prev = S.tasks.get(t.id); if (!prev || prev.updated_at !== t.updated_at || prev.status !== t.status) { const info = upsertTask(t); if (S.route.id === t.id && view) view.update("task", info); } } for (const id of [...S.tasks.keys()]) if (!seen.has(id)) S.tasks.delete(id); renderSidebar(); } catch {} }, 20000);
+setInterval(async () => { if (!conn.online) return; try { const rows = await api.tasks(); const seen = new Set(); for (const t of rows) { seen.add(t.id); const prev = S.tasks.get(t.id); if (!prev || prev.updated_at !== t.updated_at || prev.status !== t.status) { const info = upsertTask(t); if (S.route.id === t.id && view) view.update("task", info); } } for (const id of [...S.tasks.keys()]) if (!seen.has(id)) S.tasks.delete(id); renderSidebar(); renderAttention(); } catch {} }, 20000);

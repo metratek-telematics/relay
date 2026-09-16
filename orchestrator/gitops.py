@@ -5,6 +5,7 @@ import json
 import re
 import shutil
 import subprocess
+import tempfile
 import unicodedata
 from pathlib import Path
 
@@ -167,11 +168,30 @@ def create_worktree(runner, task, cfg, run_dir):
     # If the branch already exists (retry), reuse it.
     exists = quiet(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], cwd=repo).returncode == 0
     if exists:
+        holder = worktree_holding(repo, branch)
+        managed = holder and WORKTREES_DIR.resolve() in Path(holder).resolve().parents
+        if managed and Path(holder).resolve() != wt.resolve():
+            # A follow-up builds on a finished task's branch, which is still checked out in that task's
+            # worktree. Detaching it at the same commit leaves its files untouched and frees the branch.
+            # Only Relay's own worktrees are touched, never the person's checkout.
+            runner.run_shell_args(["git", "-C", holder, "switch", "--detach"], cwd=repo, role="git", title="Release branch from previous worktree")
         runner.run_shell_args(["git", "worktree", "add", str(wt), branch], cwd=repo, role="git", title="Attach worktree")
     else:
         runner.run_shell_args(["git", "worktree", "add", "-b", branch, str(wt), "HEAD"], cwd=repo, role="git", title="Create worktree")
     snapshot_source(repo, wt, run_dir, cfg, runner)
     return wt, branch
+
+
+def worktree_holding(repo, branch) -> str:
+    """The path of the worktree that has `branch` checked out, if any."""
+    p = quiet(["git", "worktree", "list", "--porcelain"], cwd=repo)
+    path = ""
+    for line in (p.stdout or "").splitlines():
+        if line.startswith("worktree "):
+            path = line[len("worktree "):].strip()
+        elif line.strip() == f"branch refs/heads/{branch}":
+            return path
+    return ""
 
 
 def remove_worktree(repo, wt) -> bool:
@@ -322,7 +342,9 @@ def branch_exists(repo, name: str) -> bool:
 
 
 def valid_branch_name(name: str) -> bool:
-    return bool(name) and quiet(["git", "check-ref-format", "--branch", name]).returncode == 0
+    # Run from a neutral directory: inside a broken or foreign checkout git fails
+    # before it looks at the name, which would reject every branch.
+    return bool(name) and quiet(["git", "check-ref-format", "--branch", name], cwd=tempfile.gettempdir()).returncode == 0
 
 
 def suggest_branch(cfg: dict, name: str = "", requirements: str = "", template: str = "feature",

@@ -16,6 +16,12 @@ from .store import ACTIVE, TERMINAL, WAITING, TaskStore
 from .util import RUNTIME_DIR, new_id, new_task_id, now, truncate
 
 
+MAX_TURN_LOG = 400
+
+# Statuses whose branch another task may take over. Interrupted tasks resume on their branch, so they keep it.
+BRANCH_REUSABLE = {"done", "failed", "stopped"}
+
+
 class Manager:
     def __init__(self, emit):
         self._emit = emit
@@ -61,8 +67,11 @@ class Manager:
         if t:
             self.emit("task", self.task_view(t))
 
-    def notify(self, level, title, body="", tid=None):
-        n = {"id": new_id("n"), "level": level, "title": title, "body": body, "task_id": tid, "time": now(), "read": False}
+    def notify(self, level, title, body="", tid=None, kind="info"):
+        # `kind` lets each browser decide which events deserve a desktop alert or a
+        # sound without guessing from titles: delivered, failed, stopped,
+        # needs_input, approval, pr_opened, github_issue or info.
+        n = {"id": new_id("n"), "level": level, "kind": kind, "title": title, "body": body, "task_id": tid, "time": now(), "read": False}
         self.notifications.insert(0, n)
         self.notifications = self.notifications[:100]
         self.emit("notify", n)
@@ -135,6 +144,9 @@ class Manager:
         if not requirements and not issue:
             raise ValueError("Describe the task or provide a GitHub issue number.")
         wf = self.build_workflow(payload)
+        parent = str(payload.get("follow_up_of") or "").strip()
+        if parent and not self.store.get(parent):
+            raise ValueError("The task this follows up no longer exists.")
         tid = new_task_id()
         name = (payload.get("name") or "").strip() or (requirements.splitlines()[0][:60] if requirements else f"Issue #{issue}")
         branch = self.branch_for(payload, repo, name, requirements, issue)
@@ -153,10 +165,14 @@ class Manager:
             "github_repo": github.remote_repo_name(repo),
             "branch_name": branch,
         }
+        if parent:
+            t["follow_up_of"] = parent
         self.store.add(t)
         C.remember_repo(repo)
         self.config_changed()
         self.timeline(tid, "user", "Task created", f"{C.AGENTS[wf['roles']['supervisor']['agent']]['label']} supervises {C.AGENTS[wf['roles']['worker']['agent']]['label']}")
+        if parent:
+            self.timeline(tid, "user", "Follow-up", f"Builds on {(self.store.get(parent) or {}).get('name', parent)} · {branch}")
         self.emit_task(tid)
         return self.get(tid)
 
@@ -191,8 +207,12 @@ class Manager:
         if wanted:
             if not gitops.valid_branch_name(wanted):
                 raise ValueError(f"'{wanted}' is not a valid Git branch name.")
-            if wanted in self.taken_branches(repo):
-                raise ValueError(f"Another task already uses the branch {wanted}.")
+            # A finished task's branch can be built on by a follow-up; an unfinished one is still being written to.
+            holders = [t for t in self.store.list() if t.get("repo") == repo and wanted in (t.get("branch_name"), t.get("branch"))]
+            busy = [t for t in holders if t.get("status") not in BRANCH_REUSABLE]
+            if busy:
+                raise ValueError(f"The task \"{busy[0].get('name')}\" still uses the branch {wanted}. "
+                                 "Follow up once it has finished, or stop or delete it first.")
             # An existing branch is fine: the task builds on it, as a retry would.
             return wanted
         return gitops.suggest_branch(self.cfg(), name, requirements, payload.get("template") or "feature",
@@ -324,17 +344,19 @@ class Manager:
             except Stopped:
                 self.store.update(tid, immediate=True, status="stopped", detail="Stopped by user", finished_at=now(), pending=None)
                 self.timeline(tid, "user", "Stopped", "")
+                if not self.store.is_deleted(tid):  # deleting a task stops it too; that needs no alert
+                    self.notify("info", "Task stopped", (self.store.get(tid) or {}).get("name", ""), tid, kind="stopped")
             except TurnBudget as e:
                 self.store.update(tid, immediate=True, status="failed", detail=str(e), finished_at=now(), pending=None, error=str(e))
                 self.timeline(tid, "system", "Turn budget exhausted", str(e))
-                self.notify("error", "Turn budget exhausted", self.store.get(tid).get("name", ""), tid)
+                self.notify("error", "Turn budget exhausted", self.store.get(tid).get("name", ""), tid, kind="failed")
             except Exception as e:
                 tb = traceback.format_exc()
                 self.store.update(tid, immediate=True, status="failed", detail=truncate(str(e), 300), finished_at=now(), pending=None,
                                   error=str(e), traceback=tb)
                 self.message(tid, {"id": new_id("m"), "role": "orchestrator", "kind": "error", "content": truncate(str(e), 3000)})
                 self.timeline(tid, "system", "Task failed", truncate(str(e), 300))
-                self.notify("error", "Task failed", truncate(str(e), 140), tid)
+                self.notify("error", "Task failed", truncate(str(e), 140), tid, kind="failed")
             finally:
                 self.runners.pop(tid, None)
                 self.process_state[tid] = {"state": "idle"}
@@ -372,6 +394,7 @@ class Manager:
             if t and t.get("status") in ACTIVE | WAITING | {"queued"}:
                 self.store.update(tid, immediate=True, status="stopped", detail="Stopped", finished_at=now(), pending=None)
                 self.emit_task(tid)
+                self.notify("info", "Task stopped", t.get("name", ""), tid, kind="stopped")
 
     def pause(self, tid):
         r = self.runners.get(tid)
@@ -530,12 +553,18 @@ class Manager:
                 + out * float(price.get("output") or 0)) / 1_000_000
         return round(cost, 5), cost > 0
 
-    def metrics_add(self, tid, agent, role, usage, elapsed, tool_calls):
+    def metrics_add(self, tid, agent, role, usage, elapsed, tool_calls, turn=None):
         t = self.store.get(tid) or {}
         m = copy.deepcopy(t.get("metrics") or {})
         m.setdefault("agents", {})
         m.setdefault("roles", {})
         cost, estimated = self.estimate_cost(agent, usage or {})
+        # Totals alone cannot say which phase spent what, so each turn is also kept, compactly, for the work chart.
+        end = time.time()
+        m["log"] = (list(m.get("log") or []) + [{
+            "start": round(end - float(elapsed or 0), 1), "end": round(end, 1), "role": role, "agent": agent, "turn": turn,
+            "input": int(usage.get("input") or 0), "output": int(usage.get("output") or 0), "cached": int(usage.get("cached") or 0),
+            "cost_usd": round(cost, 5), "estimated": estimated, "tool_calls": int(tool_calls or 0)}])[-MAX_TURN_LOG:]
         for key, bucket in ((agent, m["agents"]), (role, m["roles"])):
             d = bucket.setdefault(key, {"turns": 0, "input": 0, "output": 0, "cached": 0, "cost_usd": 0.0, "seconds": 0.0, "tool_calls": 0, "estimated": False})
             d["turns"] += 1
@@ -569,7 +598,7 @@ class Manager:
         self.store.update(tid, immediate=True, status="done", detail="Delivered", finished_at=now(), pending=None, **payload)
         self.emit_task(tid)
         t = self.store.get(tid) or {}
-        self.notify("success", "Task delivered", t.get("name", ""), tid)
+        self.notify("success", "Task delivered", t.get("name", ""), tid, kind="delivered")
 
     # ------------------------------------------------------------ github intake
     def start_github_watcher(self):
@@ -624,7 +653,7 @@ class Manager:
                                                   github_issue_title=issue["title"], github_issue_url=issue.get("url"),
                                                   github_issue_key=key, github_source="watcher")
                                 existing.add(key)
-                                self.notify("info", "Issue queued from GitHub", f"#{issue['number']} {issue['title']}", t["id"])
+                                self.notify("info", "Issue queued from GitHub", f"#{issue['number']} {issue['title']}", t["id"], kind="github_issue")
                                 self.emit_task(t["id"])
                             except Exception as e:
                                 err = f"{repo}#{issue['number']}: {e}"
@@ -687,4 +716,82 @@ class Manager:
             "agents": agents_tot, "recent": recent,
             "prs": [{"task_id": t["id"], "name": t["name"], "url": t.get("pr_url"), "number": t.get("pr_number"), "repo": t.get("github_repo")} for t in done if t.get("pr_url")][:10],
             "queue": self.queue_state(),
+            "median_duration": _median(durations),
+            "insights": self.insights(rows),
         }
+
+    def insights(self, rows, days=14) -> dict:
+        """Per-day outcomes, spend and duration for the dashboard charts.
+
+        Tasks are bucketed by the local day they finished, so a task that ran over
+        midnight counts once, on the day its result appeared. Unfinished tasks have
+        no outcome yet but have already spent money, so their cost lands on the day
+        they were last updated.
+        """
+        from datetime import date, datetime, timedelta
+        today = date.today()
+        first = today - timedelta(days=days - 1)
+        series = [{"date": (first + timedelta(days=i)).isoformat(), "done": 0, "failed": 0, "stopped": 0,
+                   "cost_usd": 0.0, "cost_by_agent": {}} for i in range(days)]
+        durations = [[] for _ in range(days)]
+
+        def day_index(iso):
+            try:
+                i = (datetime.fromisoformat(iso).date() - first).days
+            except (TypeError, ValueError):
+                return None
+            return i if 0 <= i < days else None
+
+        repos = {}
+        for t in rows:
+            status = t.get("status")
+            finished = status in ("done", "failed", "stopped")
+            i = day_index(t.get("finished_at") if finished else t.get("updated_at"))
+            if i is None:
+                continue
+            bucket = series[i]
+            if finished:
+                bucket[status] += 1
+            if status == "done":
+                try:
+                    durations[i].append((datetime.fromisoformat(t["finished_at"]) - datetime.fromisoformat(t["started_at"])).total_seconds())
+                except (KeyError, TypeError, ValueError):
+                    pass
+            for agent, d in ((t.get("metrics") or {}).get("agents") or {}).items():
+                cost = float(d.get("cost_usd") or 0)
+                bucket["cost_by_agent"][agent] = round(bucket["cost_by_agent"].get(agent, 0.0) + cost, 4)
+                bucket["cost_usd"] = round(bucket["cost_usd"] + cost, 4)
+            key = t.get("github_repo") or t.get("repo") or ""
+            r = repos.setdefault(key, {"repo": key, "path": t.get("repo") or "", "tasks": 0, "done": 0, "failed": 0})
+            r["tasks"] += 1
+            r["done"] += status == "done"
+            r["failed"] += status in ("failed", "stopped")
+
+        for b, ds in zip(series, durations):
+            outcomes = b["done"] + b["failed"] + b["stopped"]
+            b["success_rate"] = (b["done"] / outcomes) if outcomes else None
+            b["median_duration"] = _median(ds)
+
+        def window(lo, hi):
+            part = series[lo:hi]
+            finished = sum(b["done"] + b["failed"] + b["stopped"] for b in part)
+            done = sum(b["done"] for b in part)
+            return {"finished": finished, "done": done, "success_rate": (done / finished) if finished else None,
+                    "median_duration": _median([x for ds in durations[lo:hi] for x in ds]),
+                    "cost_usd": round(sum(b["cost_usd"] for b in part), 2)}
+
+        # Two equal halves let the dashboard say whether things are getting better.
+        half = days // 2
+        return {
+            "days": series, "window_days": half,
+            "current": window(days - half, days), "previous": window(0, days - half),
+            "top_repos": sorted(repos.values(), key=lambda r: (-r["tasks"], r["repo"]))[:6],
+        }
+
+
+def _median(values):
+    values = sorted(v for v in values if v is not None)
+    if not values:
+        return None
+    mid = len(values) // 2
+    return values[mid] if len(values) % 2 else (values[mid - 1] + values[mid]) / 2
