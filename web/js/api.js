@@ -107,5 +107,18 @@ export function connectEvents(onEvent) {
 
 export function onConnection(fn) { conn.listeners.add(fn); return () => conn.listeners.delete(fn); }
 
-// periodic reachability probe (cheap)
-setInterval(async () => { try { await get("/api/ping"); } catch {} }, 8000);
+// Periodic reachability probe (cheap). It also notices a server restart: after a deploy the page still runs
+// the old JavaScript until reloaded, which is how fixed buttons kept showing old errors.
+let bootSeen = null, reloadOffered = false;
+setInterval(async () => {
+  try {
+    const r = await get("/api/ping");
+    if (!r.boot) return;
+    if (bootSeen === null) { bootSeen = r.boot; return; }
+    if (r.boot !== bootSeen && !reloadOffered) {
+      reloadOffered = true;
+      const { toast } = await import("./ui.js");
+      toast("info", "Relay was updated", "Reload to use the new version.", { sticky: true, action: { label: "Reload", onClick: () => location.reload() } });
+    }
+  } catch {}
+}, 8000);

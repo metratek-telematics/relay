@@ -6,6 +6,7 @@ import { Conversation } from "./conversation.js";
 import { mountInspector, TABS } from "./inspector.js";
 import { openNewTask, openFollowUp } from "./newtask.js";
 import { prStatus, prCached, prPill } from "../prstatus.js";
+import { openTaskFolder } from "../ide.js";
 
 const PHASES = [["kickoff", "Plan"], ["dialogue", "Work"], ["review", "Review"], ["deliver", "Deliver"], ["done", "Done"]];
 
@@ -105,18 +106,12 @@ export function mountTask(main, id) {
     return out.join("");
   }
 
-  // With browser VS Code configured, folders open there: a server-side Relay (Docker, remote host) cannot
-  // open windows on the viewer's desktop. Without it, fall back to the local open, which works on a desktop install.
   function openItems(t) {
-    const ide = (S.config.ide_url || "").replace(/\/$/, "");
-    const inIde = (path) => window.open(`${ide}/?folder=${encodeURIComponent(path)}`, "_blank", "noopener");
-    const local = (what) => api.open(t.id, what).catch((e) => toast("error", "Cannot open", e.message));
     const waiting = !t.worktree;
     const hint = waiting ? " (once the task starts)" : "";
     return [
-      { label: `Open worktree in VS Code${hint}`, icon: "code", disabled: waiting, onClick: () => (ide ? inIde(t.worktree) : local("vscode")) },
-      { label: `Open worktree folder${ide ? "" : hint}`, icon: "folder", disabled: waiting, onClick: () => (ide ? inIde(t.worktree) : local("worktree")) },
-      { label: "Open run folder (logs, artifacts)", icon: "file", disabled: !t.run_dir, onClick: () => (ide ? inIde(t.run_dir) : local("run")) },
+      { label: `Open worktree in VS Code${hint}`, icon: "code", disabled: waiting, onClick: () => openTaskFolder(t, "vscode") },
+      { label: "Open run folder (logs, artifacts)", icon: "file", disabled: !t.run_dir, onClick: () => openTaskFolder(t, "run") },
       { label: "Copy worktree path", icon: "copy", disabled: waiting, onClick: () => copyText(t.worktree) },
     ];
   }

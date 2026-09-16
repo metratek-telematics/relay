@@ -29,7 +29,9 @@ function stackedColumns(width, days, stacks, fmtAxis, label) {
   const H = 170, top = 10, bottom = 22, left = 38, right = 6;
   const plotW = Math.max(60, width - left - right), plotH = H - top - bottom;
   const totals = days.map((d) => stacks.reduce((a, s) => a + (s.value(d) || 0), 0));
-  const max = niceMax(Math.max(...totals));
+  // Formatting rounds (whole counts, cents): widen the scale until the half and full gridlines read differently.
+  let max = niceMax(Math.max(...totals));
+  while (fmtAxis(max / 2) === fmtAxis(max) && max < 1e9) max *= 2;
   const band = plotW / days.length;
   const bw = Math.max(4, Math.min(24, band * 0.62));
   const every = band < 22 ? 3 : band < 34 ? 2 : 1;

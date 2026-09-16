@@ -121,8 +121,15 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- **Open folder failed on a server install.** In Docker, Open worktree folder and Open run folder tried to open a
-  desktop window and returned an error. With browser VS Code configured they now open there (run folders are mounted
+- **Preview failed for HTTPS dev servers.** code-server's port proxy speaks plain HTTP, so projects whose dev server
+  uses HTTPS (Vite with basic-ssl) returned an error. The IDE image now has `relay-preview`, which starts the dev
+  server with the right base path and bridges the proxy to it over HTTPS or HTTP, including the live-reload
+  websocket; Try it's preview step runs it.
+- **Duplicate axis labels.** The Finished per day chart labelled two gridlines "1" when at most one task finished a day.
+- **Stale pages after a deploy.** An open browser kept running the previous JavaScript after Relay restarted, so fixed
+  buttons still showed old errors. The page now notices the server restart and offers a Reload.
+- **Open folder failed on a server install.** In Docker, the task menu and the Overview tab's Worktree, VS Code and
+  Run folder buttons tried to open a desktop window and returned an error. With browser VS Code configured they now open there (run folders are mounted
   read-only into it), are disabled until the task has a worktree, and Copy worktree path is added.
 - **New task wizard on phones.** The dialog ran off the right edge at 420px; it now fits, the step list collapses
   to numbers, and the clone fields wrap onto two rows. The folder browser's GIT badge no longer stretches across the

@@ -4,6 +4,7 @@ import { S, agentLabel, agentInitial, ROLE_LABEL, roleAgent, roleModel, roleEffo
 import { api } from "../api.js";
 import { prStatus, PR_STATE, REVIEW_LABEL, checksDetail } from "../prstatus.js";
 import { packetHtml, blockedHtml } from "../packet.js";
+import { openTaskFolder } from "../ide.js";
 
 export const TABS = [
   ["overview", "Overview", "layers"], ["result", "Try it", "play"], ["history", "History", "clock"], ["timeline", "Timeline", "activity"], ["changes", "Changes", "branch"],
@@ -106,13 +107,14 @@ export function mountInspector(container, getTask) {
         </div></div>
         <div class="card"><div class="card-head"><h3>Request</h3><span class="badge outline">${esc(t.template || "feature")}</span></div><div class="card-body md">${md(t.requirements || "(from issue)")}${t.github_issue_url ? `<p><a href="${esc(t.github_issue_url)}" target="_blank" rel="noopener">Issue #${esc(t.github_issue_number)} ${icon("external", "sm")}</a></p>` : ""}</div></div>
         <div class="row wrap">
-          <button class="btn sm" data-open="worktree">${icon("folder")}Worktree</button>
-          <button class="btn sm" data-open="vscode">${icon("code")}VS Code</button>
-          <button class="btn sm" data-open="run">${icon("file")}Run folder</button>
+          <button class="btn sm" data-open="vscode" ${t.worktree ? "" : "disabled"} title="${t.worktree ? "" : "Available once the task starts"}">${icon("code")}Open in VS Code</button>
+          <button class="btn sm" data-open="run" ${t.run_dir ? "" : "disabled"}>${icon("file")}Run folder</button>
+          ${t.worktree ? `<button class="btn sm" data-copy-path="${esc(t.worktree)}">${icon("copy")}Copy path</button>` : ""}
           <a class="btn sm" href="/api/tasks/${encodeURIComponent(t.id)}/export" download>${icon("download")}Export report</a>
         </div>
       </div>`;
-    $$("[data-open]", body).forEach((b) => (b.onclick = async () => { try { await api.open(t.id, b.dataset.open); } catch (e) { toast("error", "Cannot open", e.message); } }));
+    $$("[data-open]", body).forEach((b) => (b.onclick = () => openTaskFolder(t, b.dataset.open)));
+    $$("[data-copy-path]", body).forEach((b) => (b.onclick = () => copyText(b.dataset.copyPath)));
     loadWork(t);
   }
 
