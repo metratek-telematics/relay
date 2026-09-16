@@ -37,6 +37,19 @@ def repo_summary(path) -> dict:
     return out
 
 
+def has_python_tests(repo: Path) -> bool:
+    # A bare tests/ folder is common in JavaScript repositories too; pytest there
+    # collects nothing and exits 5, which used to read as a failed verification.
+    if (repo / "pytest.ini").exists() or (repo / "conftest.py").exists():
+        return True
+    for name in ("pyproject.toml", "setup.cfg", "tox.ini"):
+        p = repo / name
+        if p.exists() and "pytest" in p.read_text(encoding="utf-8", errors="replace"):
+            return True
+    tests = repo / "tests"
+    return tests.is_dir() and any(True for _ in (*tests.rglob("test_*.py"), *tests.rglob("*_test.py")))
+
+
 def detect_verify(repo) -> list[str]:
     repo = Path(repo)
     out = []
@@ -56,7 +69,7 @@ def detect_verify(repo) -> list[str]:
         out += [r".\gradlew.bat test"]
     elif not IS_WINDOWS and (repo / "gradlew").exists():
         out += ["./gradlew test"]
-    if (repo / "pyproject.toml").exists() or (repo / "pytest.ini").exists() or (repo / "tests").is_dir():
+    if has_python_tests(repo):
         out += ["python -m pytest -q"]
     if (repo / "go.mod").exists():
         out += ["go test ./..."]

@@ -55,15 +55,12 @@ You MUST inspect:
 
 ### Frontend / UX
 When visible UI changed:
-- architecture/theme reused?
-- hierarchy clear?
-- states complete?
-- responsive?
-- keyboard accessible?
-- light/dark correct?
-- no overlap/overflow?
+- does it follow `DESIGN.md` (tokens, typography, state colours, component conventions)?
+- is the hierarchy clear and the composition strong? For a redesign, is it actually a new design?
+- do existing features, maps, charts and tables still work?
+- states the data can be in handled?
+- usable from phone to desktop, keyboard accessible, both themes correct?
 - no generic AI-slop?
-- maps/charts/tables operational?
 
 ### Maintainability
 - names clear?
@@ -80,13 +77,13 @@ Block approval for:
 - unsafe/security regression;
 - data-loss risk;
 - race causing wrong user/entity data;
-- broken responsive behavior on required viewport;
+- broken layout at common desktop or phone widths;
 - inaccessible primary interaction;
 - unhandled critical state;
 - unrelated destructive changes;
 - misleading documentation.
 
-Do not block for purely subjective style preferences if the implementation follows repo conventions and is maintainable.
+Do not block for purely subjective style preferences if the implementation follows `DESIGN.md` and repository conventions. Do not block because an evidence artifact (screenshot set, results matrix) is missing when you can check the behaviour yourself.
 
 ## Required review output
 For each blocking issue state:

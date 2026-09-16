@@ -42,3 +42,5 @@ Avoid vague words like:
 unless followed by objective evidence.
 
 Do not require unnecessary scope merely to make the plan look comprehensive.
+
+Keep acceptance criteria to the outcomes that matter, usually no more than six. Do not copy checklists from the rule files (viewport lists, state lists, accessibility lists) into the criteria; they are working standards, not deliverables to prove one by one. For design work, include the design outcome itself: the composition and hierarchy the user should see.

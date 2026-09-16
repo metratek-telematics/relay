@@ -40,17 +40,13 @@ If a verification command fails:
 4. distinguish unrelated/pre-existing failures;
 5. do not suppress or weaken tests merely to obtain green output.
 
+## Proportion
+Verification exists to catch real problems, not to produce paperwork. Use the repository's existing test, lint and build commands. Add tests for changed logic where the repository already tests that layer.
+
+Do not build new verification infrastructure (browser harnesses, fixture recorders, mock servers, screenshot matrices, results tables) unless the task asks for it.
+
 ## Frontend verification
-Where practical verify:
-- supported viewport sizes;
-- interaction;
-- browser console;
-- failed requests;
-- loading/error/empty states;
-- keyboard use;
-- focus;
-- light/dark themes;
-- race conditions around route changes/refresh.
+Run the app and look at the result: the design loop in `DESIGN.md` (desktop and phone width, both themes) is the browser check. While it is open, note console errors and failed requests caused by the change, and try the main interactions you touched.
 
 ## Backend verification
 Where practical verify:
