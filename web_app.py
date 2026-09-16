@@ -16,7 +16,7 @@ from flask import Flask, Response, jsonify, request, send_from_directory
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
-from orchestrator import agents, config as C, github, gitops  # noqa: E402
+from orchestrator import agents, config as C, github, gitops, handoff  # noqa: E402
 from orchestrator.manager import Manager  # noqa: E402
 from orchestrator.util import IN_DOCKER, IS_WINDOWS, RUNTIME_DIR, quiet, read_text  # noqa: E402
 
@@ -409,7 +409,30 @@ def task_messages(tid):
 @app.get("/api/tasks/<tid>/files")
 def task_files(tid):
     t = task_or_404(tid)
-    return jsonify({"files": gitops.changed_files(t.get("worktree")), "stat": gitops.diff_stat(t.get("worktree"))})
+    base = gitops.task_base(t)
+    files, stat = gitops.changed_files(t.get("worktree"), base), gitops.diff_stat(t.get("worktree"), base)
+    if t.get("status") in ("done", "failed", "stopped") and Path(t.get("worktree") or "").exists() and t.get("diffstat") != stat:
+        # Tasks delivered before base-aware counts stored 0 files; correct them when they are looked at.
+        manager.set_meta(tid, diffstat=stat, changed_count=len(files), base_commit=base)
+    return jsonify({"files": files, "stat": stat})
+
+
+@app.get("/api/tasks/<tid>/handoff")
+def task_handoff(tid):
+    return jsonify(handoff.build(task_or_404(tid)))
+
+
+@app.get("/api/branch-name")
+def branch_name():
+    a = request.args
+    repo = (a.get("repo") or "").strip()
+    name = (a.get("name") or "").strip()
+    requirements = a.get("requirements") or ""
+    if not name:
+        name = requirements.strip().splitlines()[0][:60] if requirements.strip() else ""
+    return jsonify({"branch": gitops.suggest_branch(manager.cfg(), name, requirements, a.get("template") or "feature",
+                                                     (a.get("issue") or "").strip().lstrip("#"), repo or None,
+                                                     manager.taken_branches(repo))})
 
 
 @app.get("/api/tasks/<tid>/diff")
@@ -417,8 +440,8 @@ def task_diff(tid):
     t = task_or_404(tid)
     path = request.args.get("path", "")
     if path:
-        return jsonify({"text": gitops.diff_file(t.get("worktree"), path)})
-    return jsonify({"text": gitops.full_diff(t.get("worktree"), 400000)})
+        return jsonify({"text": gitops.diff_file(t.get("worktree"), path, gitops.task_base(t))})
+    return jsonify({"text": gitops.full_diff(t.get("worktree"), 400000, gitops.task_base(t))})
 
 
 @app.get("/api/tasks/<tid>/artifact/<kind>")

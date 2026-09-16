@@ -77,7 +77,7 @@ export function openNewTask(prefill = {}) {
     repo: edit?.repo || prefill.repo || S.config.recent_repos?.[0] || "",
     name: edit?.name || "", requirements: edit?.requirements || prefill.requirements || "", issue: edit?.issue || prefill.issue || "",
     template: edit?.template || "feature", priority: edit?.priority || "normal", tags: (edit?.tags || []).join(", "),
-    workflow: edit ? JSON.parse(JSON.stringify(edit.workflow)) : defaultWorkflow(), queue: true,
+    workflow: edit ? JSON.parse(JSON.stringify(edit.workflow)) : defaultWorkflow(), queue: true, branch: "", branchEdited: false,
   };
   let step = edit ? 1 : 0;
   let repoInfo = null;
@@ -184,15 +184,22 @@ export function openNewTask(prefill = {}) {
           <div><b>Delivery</b>isolated branch → ${S.config.github_auto_create_pr ? "draft PR" : "branch only"} (never merges)</div>
         </div>
         ${warn.length ? `<div class="modal-error" style="margin-top:12px">${warn.map(esc).join("<br>")}<br><a href="#/agents" data-close>Open Agents page</a></div>` : ""}
+        ${!edit ? `<div class="field" style="margin-top:14px"><label>Branch</label><input id="tbranch" class="mono" value="${esc(data.branch)}" placeholder="suggesting…" spellcheck="false"><div class="help">Suggested from the task name. Edit it freely; an existing branch is built on.</div></div>` : ""}
         ${!edit ? `<div class="field inline" style="margin-top:14px"><label>Queue immediately (and start the queue if idle)</label><span class="switch ${data.queue ? "on" : ""}" id="qSwitch"></span></div>` : ""}
         <div class="modal-actions"><button type="button" class="btn" id="wBack">Back</button><span style="flex:1"></span><button type="button" class="btn primary" id="wCreate">${icon(edit ? "save" : "sparkles")}${edit ? "Save" : data.queue ? "Create & queue" : "Create draft"}</button></div>`;
       $("#wBack", body).onclick = () => go(2);
+      const bInput = $("#tbranch", body);
+      if (bInput) {
+        bInput.addEventListener("input", () => { data.branch = bInput.value.trim(); data.branchEdited = true; });
+        if (!data.branchEdited) api.branchName({ repo: data.repo, name: data.name, requirements: data.requirements, template: data.template, issue: data.issue })
+          .then((r) => { if (!data.branchEdited) { data.branch = r.branch; bInput.value = r.branch; } }).catch(() => { bInput.placeholder = "chosen when the task starts"; });
+      }
       $("#qSwitch", body) && ($("#qSwitch", body).onclick = () => { data.queue = !data.queue; render(); });
       $("#wCreate", body).onclick = async () => {
         const btn = $("#wCreate", body); btn.disabled = true; btn.innerHTML = `${icon("spinner", "spin")}${edit ? "Saving…" : "Creating…"}`;
         try {
           const payload = { repo: data.repo, name: data.name, requirements: data.requirements, issue: data.issue, template: data.template, priority: data.priority,
-            tags: data.tags.split(",").map((x) => x.trim()).filter(Boolean), workflow: data.workflow, queue: data.queue };
+            tags: data.tags.split(",").map((x) => x.trim()).filter(Boolean), workflow: data.workflow, queue: data.queue, branch: edit ? undefined : data.branch };
           if (edit) { await api.updateTask(edit.id, payload); toast("success", "Task updated"); m.close(); return; }
           const t = await api.createTask(payload);
           m.close();

@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
+import unicodedata
 from pathlib import Path
 
 from .util import IS_WINDOWS, WORKTREES_DIR, quiet, safe_slug, truncate
@@ -155,7 +157,8 @@ def create_worktree(runner, task, cfg, run_dir):
     repo = Path(task["repo"]).resolve()
     if not is_git_repo(repo):
         raise RuntimeError(f"{repo} is not a Git repository. Initialize it with `git init` and make one commit first.")
-    branch = f"{cfg.get('branch_prefix','agent')}/{safe_slug(task['name'], 40)}-{task['id'][-6:]}"
+    # Tasks created before readable names existed keep their original scheme so a retry reattaches.
+    branch = task.get("branch_name") or f"{cfg.get('branch_prefix','agent')}/{safe_slug(task['name'], 40)}-{task['id'][-6:]}"
     wt = WORKTREES_DIR / f"{safe_slug(repo.name)}-{task['id'][-6:]}"
     if wt.exists():
         quiet(["git", "worktree", "remove", "--force", str(wt)], cwd=repo, timeout=60)
@@ -183,11 +186,49 @@ def remove_worktree(repo, wt) -> bool:
         return False
 
 
-def changed_files(wt) -> list:
+def default_branch(repo) -> str:
+    def git(*args):
+        p = quiet(["git", *args], cwd=repo)
+        return p.stdout.strip() if p.returncode == 0 else ""
+    head = git("symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+    if head:
+        return head.split("/", 1)[-1]
+    for name in ("main", "master"):
+        if git("rev-parse", "--verify", "--quiet", f"refs/heads/{name}"):
+            return name
+    return git("rev-parse", "--abbrev-ref", "HEAD") or "main"
+
+
+def base_commit(wt, repo=None) -> str:
+    """The commit a task branched from, so its changes still show after Relay commits them."""
+    if not wt or not Path(wt).exists():
+        return ""
+    if repo and Path(repo).exists():
+        p = quiet(["git", "merge-base", "HEAD", default_branch(repo)], cwd=wt)
+        if p.returncode == 0 and p.stdout.strip():
+            return p.stdout.strip()
+    return quiet(["git", "rev-parse", "HEAD"], cwd=wt).stdout.strip()
+
+
+def task_base(task) -> str:
+    return task.get("base_commit") or base_commit(task.get("worktree"), task.get("repo"))
+
+
+def changed_files(wt, base=None) -> list:
     if not wt or not Path(wt).exists():
         return []
-    p = quiet(["git", "status", "--short"], cwd=wt)
     out = []
+    if base:
+        # Committed and uncommitted changes since the task began, plus new untracked files.
+        for line in quiet(["git", "diff", "--name-status", base], cwd=wt).stdout.splitlines():
+            parts = line.split("\t")
+            if len(parts) >= 2:
+                out.append({"status": parts[0][:1] or "M", "path": parts[-1].strip('"')})
+        for line in quiet(["git", "ls-files", "--others", "--exclude-standard"], cwd=wt).stdout.splitlines():
+            if line.strip():
+                out.append({"status": "??", "path": line.strip().strip('"')})
+        return out
+    p = quiet(["git", "status", "--short"], cwd=wt)
     for line in p.stdout.splitlines():
         if not line.strip():
             continue
@@ -195,10 +236,10 @@ def changed_files(wt) -> list:
     return out
 
 
-def diff_stat(wt) -> dict:
+def diff_stat(wt, base=None) -> dict:
     if not wt or not Path(wt).exists():
         return {"files": 0, "insertions": 0, "deletions": 0}
-    p = quiet(["git", "diff", "--shortstat", "HEAD"], cwd=wt)
+    p = quiet(["git", "diff", "--shortstat", base or "HEAD"], cwd=wt)
     s = p.stdout.strip()
     import re
     files = int((re.search(r"(\d+) files? changed", s) or [0, 0])[1] or 0)
@@ -208,10 +249,10 @@ def diff_stat(wt) -> dict:
     return {"files": files + untracked, "insertions": ins, "deletions": dele, "untracked": untracked}
 
 
-def diff_file(wt, path) -> str:
+def diff_file(wt, path, base=None) -> str:
     if not wt:
         return ""
-    p = quiet(["git", "diff", "HEAD", "--", path], cwd=wt, timeout=30)
+    p = quiet(["git", "diff", base or "HEAD", "--", path], cwd=wt, timeout=30)
     if p.stdout.strip():
         return p.stdout
     fp = Path(wt) / path
@@ -224,10 +265,10 @@ def diff_file(wt, path) -> str:
     return ""
 
 
-def full_diff(wt, limit=60000) -> str:
+def full_diff(wt, limit=60000, base=None) -> str:
     if not wt or not Path(wt).exists():
         return ""
-    p = quiet(["git", "diff", "HEAD"], cwd=wt, timeout=60)
+    p = quiet(["git", "diff", base or "HEAD"], cwd=wt, timeout=60)
     txt = p.stdout or ""
     untracked = [l for l in quiet(["git", "ls-files", "--others", "--exclude-standard"], cwd=wt).stdout.splitlines() if l.strip()]
     if untracked:
@@ -251,3 +292,53 @@ def push_branch(runner, wt, branch):
 def log_since_base(wt, n=20) -> str:
     p = quiet(["git", "log", f"-{n}", "--oneline"], cwd=wt)
     return p.stdout
+
+
+# ----------------------------------------------------------------------------- branch names
+BRANCH_TYPES = {"feature": "feat", "bugfix": "fix", "refactor": "refactor", "tests": "test", "docs": "docs", "review": "chore"}
+
+# Words that carry no meaning in a branch name. Prompts start with "please can you
+# make…" far more often than with the thing being changed.
+_FILLER = set("""a an the and or but of to in on at for from with by as into onto about via per
+i we you it its it's this that these those my our your me us
+need needs want wants would could should can will must shall may might please pls kindly
+make makes making do does doing done implement implementing add adds adding create creating build
+complete completely fully full proper properly better good great nice new really very just also
+so then than is are be been being was were have has had get gets got use using follow following
+some any all every each thing things stuff etc like md rules""".split())
+
+
+def _slug_words(text: str, limit: int = 5) -> list[str]:
+    ascii_text = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode()
+    words = re.findall(r"[a-z0-9]+", ascii_text.lower())
+    keep = [w for w in words if w not in _FILLER and not (len(w) == 1 and not w.isdigit())]
+    return (keep or words)[:limit]
+
+
+def branch_exists(repo, name: str) -> bool:
+    if not repo or not Path(repo).exists():
+        return False
+    return quiet(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{name}"], cwd=repo).returncode == 0
+
+
+def valid_branch_name(name: str) -> bool:
+    return bool(name) and quiet(["git", "check-ref-format", "--branch", name]).returncode == 0
+
+
+def suggest_branch(cfg: dict, name: str = "", requirements: str = "", template: str = "feature",
+                   issue: str = "", repo=None, taken=()) -> str:
+    """A short, readable branch name such as feat/berth-status-page or fix/123-login-timeout."""
+    if (cfg.get("branch_naming") or "type") == "prefix":
+        head = (cfg.get("branch_prefix") or "agent").strip("/")
+    else:
+        head = BRANCH_TYPES.get(template or "feature", "feat")
+    words = _slug_words(name) or _slug_words(requirements) or ["task"]
+    slug = "-".join(words)[:48].strip("-")
+    if issue:
+        slug = f"{issue}-{slug}"
+    base = f"{head}/{slug}"
+    candidate, n = base, 2
+    taken = set(taken)
+    while candidate in taken or branch_exists(repo, candidate):
+        candidate, n = f"{base}-{n}", n + 1
+    return candidate
