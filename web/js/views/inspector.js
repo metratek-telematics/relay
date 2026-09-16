@@ -3,6 +3,7 @@ import { $, $$, el, esc, icon, md, fmtTime, fmtDateTime, fmtDur, fmtNum, fmtCost
 import { S, agentLabel, agentInitial, ROLE_LABEL, roleAgent, roleModel, roleEffort, statusOf, taskElapsed } from "../state.js";
 import { api } from "../api.js";
 import { prStatus, PR_STATE, REVIEW_LABEL, checksDetail } from "../prstatus.js";
+import { packetHtml, blockedHtml } from "../packet.js";
 
 export const TABS = [
   ["overview", "Overview", "layers"], ["result", "Try it", "play"], ["history", "History", "clock"], ["timeline", "Timeline", "activity"], ["changes", "Changes", "branch"],
@@ -93,9 +94,10 @@ export function mountInspector(container, getTask) {
           ${roles.map((role) => `<div class="row between"><span class="row"><span class="av sm ${esc(roleAgent(t, role))}">${esc(agentInitial(roleAgent(t, role)))}</span><strong>${esc(agentLabel(roleAgent(t, role)))}</strong><span class="muted">${esc(ROLE_LABEL[role])}</span></span><span class="mono muted">${esc(roleModel(t, role) || "default model")}${roleEffort(t, role) ? ` · ${esc(roleEffort(t, role))} effort` : ""}</span></div>`).join("")}
           <div class="kv" style="margin-top:6px"><dt>Verification</dt><dd>${esc(wf.verify_mode || "each_report")}${(t.verify_commands || []).length ? ` · ${t.verify_commands.length} command(s)` : ""}</dd><dt>Approval gate</dt><dd>${wf.approval_before_delivery ? "before delivery" : "off"}</dd><dt>Agent questions</dt><dd>${wf.allow_agent_questions === false ? "disabled" : "allowed"}</dd><dt>Review rounds</dt><dd>${wf.max_review_rounds || "—"}</dd></div>
         </div></div>
-        ${plan.plan ? `<div class="card"><div class="card-head"><h3>Plan</h3>${plan.summary ? `<span class="muted truncate" style="max-width:220px">${esc(plan.summary)}</span>` : ""}</div><div class="card-body md">${md(plan.plan)}${acc ? `<h4>Acceptance criteria</h4><ul class="acceptance">${acc}</ul>` : ""}</div></div>` : ""}
+        ${plan.plan ? `<div class="card"><div class="card-head"><h3>Plan</h3>${plan.summary ? `<span class="muted truncate" style="max-width:220px">${esc(plan.summary)}</span>` : ""}</div><div class="card-body md">${md(plan.plan)}${packetHtml(plan, { done: t.status === "done" })}</div></div>` : ""}
         <div class="card"><div class="card-head"><h3>Signals</h3></div><div class="card-body stack">
           <div class="row between"><span>Verification</span>${v ? `<span class="badge ${v.ok ? "green" : "red"}">${v.ok ? "passing" : "failing"}</span>` : '<span class="badge">not run</span>'}</div>
+          ${(t.blocked_checks || []).length ? `<div><div class="row between"><span>Checks that could not run</span><span class="badge amber">${t.blocked_checks.length}</span></div>${blockedHtml(t.blocked_checks)}</div>` : ""}
           <div class="row between"><span>Independent review</span>${r ? `<span class="badge ${r.verdict === "PASS" ? "green" : "red"}">${esc(r.verdict)} · round ${r.round}</span>` : '<span class="badge">—</span>'}</div>
           <div class="row between"><span>Diff</span>${t.diffstat ? `<span class="diffstat">${t.diffstat.files} files <span class="a">+${t.diffstat.insertions}</span> <span class="d">−${t.diffstat.deletions}</span></span>` : '<span class="muted">—</span>'}</div>
           <div class="row between"><span>Branch</span><span class="mono truncate" style="max-width:240px">${esc(t.branch || "—")}</span></div>

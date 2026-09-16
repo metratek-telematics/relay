@@ -74,6 +74,22 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **The plan is a context packet.** The supervisor's plan envelope separates `requirements` (the user's request,
+  nothing added), `acceptance` (derived from it) and `optional` improvements that never block done, and records
+  `known_files`, `findings` with their file, `constraints` and `unknowns`. The worker and reviewer receive it, and the
+  worker verifies what its package depends on instead of rediscovering the repository. Rule-file checklists may no
+  longer be copied into requirements or acceptance.
+- **Work is split by concern.** Supervisors split by independently verifiable concern when that creates a clear
+  dependency boundary (typically data and behaviour, then UI, then tests), keep tiny changes together, and keep
+  instructions short. Verification is no longer part of a work package: workers run focused checks and the
+  orchestrator runs the full suite.
+- **Blocked checks instead of workarounds.** Workers may not build improvised environments (dependency trees outside
+  the repository, symlinked installs, registry mirrors, stub packages) to get a check running. They report
+  `blocked_checks` and `blockers`; the task page shows them, the supervisor and reviewer see them, and the user is
+  asked only when an entry has `action_required: true`.
+- **Independent review by default.** New installs use the Codex → Claude + independent Codex review preset. The
+  reviewer compares the result with the requirements and acceptance criteria and requests corrections only for
+  concrete defects; optional items and alternative designs never block.
 - The dashboard's duration card shows the median time to deliver, with the mean underneath, so one very long task no
   longer skews it.
 - **Git noise hidden by default.** The orchestrator's git and GitHub commands no longer appear in the team

@@ -20,7 +20,7 @@ When instructions conflict, use this order:
 Never silently override a higher-priority requirement with a lower-priority preference.
 
 ## Before changing code
-Always:
+When a supervisor context packet covers the repository, treat it as the inspection already done: verify only what your own work depends on. Otherwise:
 - inspect repository structure;
 - inspect relevant files and adjacent implementations;
 - inspect package/build/test configuration;
@@ -79,12 +79,13 @@ Do not:
 - execute destructive database operations;
 - expose secrets.
 
-If blocked by credentials, external service access, OS policy, unavailable dependency, or a destructive boundary:
-1. diagnose the blocker;
-2. try safe local alternatives;
-3. continue any work that is still possible;
-4. report the exact blocker and remaining work.
-Do not sit waiting for input indefinitely.
+If blocked by credentials, external service access, OS policy, an unavailable dependency, or a destructive boundary:
+1. diagnose the blocker once, precisely;
+2. use only the repository's own documented setup (its install command, lockfile, scripts);
+3. do not improvise environments: no dependency trees or node_modules outside the repository, symlinked or copied installs, alternate or public mirrors of private registries, stub packages, global installs, or edited lockfiles to get around it;
+4. continue the implementation that is still possible;
+5. report it: a check that cannot run goes in `blocked_checks`, something that stops the implementation goes in `blockers`, with `action_required: true` only when the user alone can clear it.
+Do not sit waiting for input indefinitely, and do not interrupt the user for blockers they do not need to act on.
 
 ## Truthfulness
 Never claim:

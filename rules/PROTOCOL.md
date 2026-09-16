@@ -11,8 +11,18 @@ Every reply MUST end with exactly one fenced JSON envelope:
 Text before the envelope is fine (reasoning, notes, evidence). The envelope is what the orchestrator acts on. Keep the JSON valid: double quotes, no trailing commas, no comments.
 
 ## Envelopes the supervisor may send
-- First reply only, plan plus first work package:
-  `{"type":"plan","summary":"one line","plan":"markdown plan","acceptance":["criterion 1","criterion 2"],"instruction":"first work package for the worker"}`
+- First reply only, the plan as a context packet plus the first work package:
+  ```
+  {"type":"plan","summary":"one line","plan":"short markdown: the work packages in order",
+   "requirements":["the user's request, restated, nothing added"],
+   "acceptance":["observable criterion derived from the requirements"],
+   "optional":["improvement the user did not ask for; never blocks done"],
+   "known_files":{"primary":["path"],"supporting":["path"]},
+   "findings":[{"file":"path","finding":"what you observed"}],
+   "constraints":["e.g. no new dependencies"],
+   "unknowns":["e.g. full verification may need private registry access"],
+   "instruction":"first work package: the concern, the files, the expected result"}
+  ```
 - Next work package:
   `{"type":"instruction","summary":"one line","instruction":"exact work package"}`
 - Decision after a worker report:
@@ -25,8 +35,15 @@ Text before the envelope is fine (reasoning, notes, evidence). The envelope is w
 
 ## Envelopes the worker may send
 - Report when a work package is finished or cannot progress further:
-  `{"type":"report","status":"complete","summary":"one line","report":"markdown: what changed, decisions, checks run with results, limitations","files":["path/one","path/two"]}`
-  `status` is one of `complete`, `partial`, `blocked`.
+  ```
+  {"type":"report","status":"complete","summary":"one line","report":"markdown: what changed, decisions, checks run with results, limitations","files":["path/one","path/two"],
+   "blocked_checks":[{"check":"npm test","reason":"private package registry needs credentials this machine does not have","impact":"automated frontend tests could not run","action_required":false}],
+   "blockers":[{"reason":"required API schema cannot be accessed","impact":"implementation cannot continue safely","action_required":true}]}
+  ```
+  `status` is one of `complete`, `partial`, `blocked`. `blocked_checks` and `blockers` are optional; omit them when empty.
+  - `blocked_checks`: a check that could not run for an environment reason. Record it and keep implementing.
+  - `blockers`: something that stops the implementation itself.
+  - `action_required: true` only when the user alone can clear it (credentials, access, a product decision). The orchestrator then asks the user; otherwise nobody is interrupted.
 - Question to the supervisor or the human:
   `{"type":"question","to":"supervisor","question":"..."}`
   `{"type":"question","to":"user","question":"...","options":["..."]}`

@@ -84,11 +84,12 @@ TASK_TEMPLATES = [
 DEFAULTS = {
     "build": BUILD,
     # workflow
-    "workflow_preset": "codex-supervises-claude",
+    # An independent reviewer by default: a gate that checks the result against the request, not a second designer.
+    "workflow_preset": "codex-claude-independent-review",
     "roles": {
         "supervisor": {"agent": "codex", "model": "", "effort": ""},
         "worker": {"agent": "claude", "model": "", "effort": ""},
-        "reviewer": {"agent": "", "model": "", "effort": ""},
+        "reviewer": {"agent": "codex", "model": "", "effort": ""},
     },
     "models": copy.deepcopy(DEFAULT_MODELS),
     "max_turns": 12,

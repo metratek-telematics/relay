@@ -1066,3 +1066,16 @@ path.ch-agent.gemini, .sw.ch-agent.gemini { fill: var(--gemini); background: var
   .browser .bpath .bpath-path { flex-basis: calc(100% - 40px); }
   .browser .bpath #bUse { margin-left: auto; }
 }
+
+/* context packet + blocked checks */
+.packet h4 { margin: 12px 0 4px; }
+.pk-note { font-weight: 400; font-size: var(--fs-xs); }
+.pk-list { margin: 0; padding-left: 18px; display: grid; gap: 3px; font-size: 13px; }
+.pk-list li { overflow-wrap: anywhere; }
+.pk-files { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.pk-files code { overflow-wrap: anywhere; }
+.pk-files code.primary { border-color: var(--accent); }
+.blocked-checks { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 6px; }
+.blocked-checks li { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; min-width: 0; }
+.blocked-checks li > div { min-width: 0; overflow-wrap: anywhere; }
+.blocked-checks .ic { color: var(--amber); flex: none; margin-top: 2px; }

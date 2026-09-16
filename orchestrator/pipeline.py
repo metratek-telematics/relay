@@ -349,15 +349,15 @@ class Pipeline:
                        "acceptance": [], "instruction": env["instruction"]}
             else:
                 raise RuntimeError("The supervisor did not produce a plan envelope.")
-        plan = {"summary": env.get("summary", ""), "plan": env.get("plan", ""), "acceptance": env.get("acceptance") or []}
-        if not isinstance(plan["acceptance"], list):
-            plan["acceptance"] = [str(plan["acceptance"])]
+        plan = {"summary": env.get("summary", ""), "plan": env.get("plan", ""), **protocol.normalize_packet(env)}
         self.state["plan"] = plan
-        self.artifact("plan", "PLAN.md", plan["plan"])
+        self.artifact("plan", "PLAN.md", plan["plan"] + "\n\n## Context packet\n\n```\n" + protocol.packet_block(plan) + "\n```\n")
         self.artifact("acceptance", "ACCEPTANCE.md", "\n".join(f"- [ ] {a}" for a in plan["acceptance"]))
         self.m.set_meta(self.tid, plan=plan)
         self.r.msg(role="supervisor", agent=sup_agent, kind="plan", summary=plan["summary"], content=plan["plan"],
-                   acceptance=plan["acceptance"], turn=0)
+                   acceptance=plan["acceptance"], requirements=plan["requirements"], optional=plan["optional"],
+                   known_files=plan["known_files"], findings=plan["findings"], constraints=plan["constraints"],
+                   unknowns=plan["unknowns"], turn=0)
         self.r.timeline("supervisor", "Plan agreed", plan["summary"] or f"{len(plan['acceptance'])} acceptance criteria")
         self.state.update({"phase": "dialogue", "turn": 1, "awaiting": "worker",
                            "instruction": env.get("instruction") or "Implement the plan.", "instruction_kind": "instruction",
@@ -389,11 +389,21 @@ class Pipeline:
                     self.state["resumed"] = False
                 res, env = self.worker_turn(prompt, f"Work package #{turn}", turn)
                 report = {"status": env.get("status", "complete"), "summary": env.get("summary", ""),
-                          "report": env.get("report") or env.get("_text", ""), "files": env.get("files") or []}
+                          "report": env.get("report") or env.get("_text", ""), "files": env.get("files") or [],
+                          "blocked_checks": protocol.blocked_checks(env), "blockers": protocol.blockers(env)}
+                self.record_blocked(report["blocked_checks"])
+                # Only blockers the user alone can clear interrupt them; everything else is recorded and work goes on.
+                for b in [b for b in report["blockers"] + report["blocked_checks"] if b.get("action_required")]:
+                    what = b.get("check") or "Work"
+                    follow = self.ask_human("worker", {"question": f"{what} is blocked: {b['reason']}" + (f"\nImpact: {b['impact']}" if b.get("impact") else "")
+                                                        + "\nHow should the team proceed?",
+                                                        "options": ["Continue without it", "I have fixed it, retry", "Stop the task"]})
+                    report["report"] += "\n\n" + follow
                 self.state["report"] = report
                 self.artifact("implementation", "IMPLEMENTATION.md", f"# Work package #{turn} · {report['status']}\n\n{report['report']}")
                 self.handoff("worker", "supervisor", f"Report · work package #{turn} · {report['status']}", report["report"],
-                             subtype="report", status=report["status"], summary=report["summary"], files=report["files"][:60])
+                             subtype="report", status=report["status"], summary=report["summary"], files=report["files"][:60],
+                             blocked_checks=report["blocked_checks"] + [{"check": "Implementation", **b} for b in report["blockers"]])
                 self.r.timeline("worker", f"Work package #{turn} reported {report['status']}", report["summary"])
                 self.state["last_verification"] = self.run_verification() if self.verify_mode == "each_report" else ""
                 self.state["awaiting"] = "supervisor"
@@ -455,6 +465,17 @@ class Pipeline:
             return
         raise RuntimeError(f"Unexpected supervisor envelope: {typ}")
 
+    def record_blocked(self, checks):
+        """Keep one entry per check across work packages, so the reviewer and the task page see them all."""
+        if not checks:
+            return
+        merged = {(c.get("check") or c.get("reason")): c for c in self.state.get("blocked_checks") or []}
+        for c in checks:
+            merged[c.get("check") or c.get("reason")] = c
+        self.state["blocked_checks"] = list(merged.values())
+        self.m.set_meta(self.tid, blocked_checks=self.state["blocked_checks"])
+        self.r.timeline("worker", "Checks could not run", ", ".join(c.get("check") or c.get("reason") for c in checks))
+
     def task_meta(self):
         return self.m.store.get(self.tid) or {}
 
@@ -473,7 +494,8 @@ class Pipeline:
             sess = self.sessions.get("reviewer") or {}
             if int(sess.get("turns", 0)) == 0 or sess.get("agent") != rev_agent:
                 prompt = protocol.reviewer_kickoff(self.task, self.wt, self.branch, self.state.get("plan") or {},
-                                                   self.state.get("pr_summary", ""), vt, diff, rnd, self.cfg)
+                                                   self.state.get("pr_summary", ""), vt, diff, rnd, self.cfg,
+                                                   self.state.get("blocked_checks") or [])
             else:
                 prompt = protocol.reviewer_followup(rnd, vt, diff, self.state.get("pr_summary", ""))
             self.handoff("orchestrator", "reviewer", f"Independent review requested · round {rnd}", self.state.get("pr_summary", ""), subtype="review_request")
