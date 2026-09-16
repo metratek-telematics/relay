@@ -81,7 +81,7 @@ Do not:
 
 If blocked by credentials, external service access, OS policy, an unavailable dependency, or a destructive boundary:
 1. diagnose the blocker once, precisely;
-2. use only the repository's own documented setup (its install command, lockfile, scripts);
+2. use only the repository's own documented setup (its install command, lockfile, scripts). When Relay reports it already prepared the environment, do not install again;
 3. do not improvise environments: no dependency trees or node_modules outside the repository, symlinked or copied installs, alternate or public mirrors of private registries, stub packages, global installs, or edited lockfiles to get around it;
 4. continue the implementation that is still possible;
 5. report it: a check that cannot run goes in `blocked_checks`, something that stops the implementation goes in `blockers`, with `action_required: true` only when the user alone can clear it.

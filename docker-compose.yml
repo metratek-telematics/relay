@@ -57,6 +57,33 @@ services:
       - ${RELAY_REPOS}:${RELAY_REPOS}
       - ${RELAY_DATA}:${RELAY_DATA}
 
+      # ---- Package cache shared by every task's environment setup, so the second
+      # install of a repository takes seconds. Private registry credentials
+      # (~/.npmrc) are mounted in docker-compose.override.yml when you have them:
+      #   - ${HOST_HOME}/.npmrc:/home/relay/.npmrc:ro
+      - ${RELAY_CACHE:-./.cache}/npm:/home/relay/.npm
+
     # Agents run shells, test suites and dev servers. Give them room.
     shm_size: "1gb"
     stop_grace_period: 30s
+
+  # Browser VS Code (optional): docker compose --profile ide up -d
+  # Put it behind your reverse proxy's login and set Settings -> Verification -> Browser VS Code URL.
+  ide:
+    profiles: ["ide"]
+    build: ./docker/code-server
+    image: relay-ide:local
+    container_name: relay-ide
+    restart: unless-stopped
+    user: "${RELAY_UID:-1000}:${RELAY_GID:-1000}"
+    ports:
+      - "127.0.0.1:${RELAY_IDE_PORT:-8768}:8080"
+    environment:
+      HOME: /home/coder
+    volumes:
+      - ${RELAY_REPOS}:${RELAY_REPOS}
+      - ${RELAY_DATA}/worktrees:${RELAY_DATA}/worktrees
+      - ${RELAY_CACHE:-./.cache}/ide:/home/coder/.local/share/code-server
+      - ${RELAY_CACHE:-./.cache}/npm:/home/coder/.npm
+      - ${HOST_HOME:-~}/.gitconfig:/home/coder/.gitconfig:ro
+

@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .util import DELETED_FILE, RUNTIME_DIR, TASKS_FILE, append_line, now, read_json, write_json
 
-ACTIVE = {"running", "planning", "implementing", "verifying", "reviewing", "delivering"}
+ACTIVE = {"running", "preparing", "planning", "implementing", "verifying", "reviewing", "delivering"}
 WAITING = {"needs_input", "paused"}
 TERMINAL = {"done", "failed", "stopped", "interrupted"}
 

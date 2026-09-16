@@ -9,7 +9,9 @@ import json
 import shlex
 from pathlib import Path
 
-from . import gitops
+from urllib.parse import quote, urlparse
+
+from . import environment, gitops
 from .util import IS_WINDOWS, quiet
 
 
@@ -49,7 +51,12 @@ def _run_commands(wt: Path) -> tuple[list[str], str]:
     return [], ""
 
 
-def build(task: dict) -> dict:
+def ide_link(ide_url: str, folder) -> str:
+    return f"{ide_url.rstrip('/')}/?folder={quote(str(folder))}" if ide_url else ""
+
+
+def build(task: dict, cfg: dict | None = None) -> dict:
+    ide_url = ((cfg or {}).get("ide_url") or "").strip()
     wt = Path(task.get("worktree") or "")
     repo = Path(task.get("repo") or "")
     branch = task.get("branch") or task.get("branch_name")
@@ -76,6 +83,18 @@ def build(task: dict) -> dict:
         if run:
             sections.append({"id": "run", "title": "Run it", "text": note + " Runs straight from the task's worktree, so your own checkout is untouched.",
                              "commands": [f"cd {q_wt}", *run]})
+        dev = environment.dev_command(wt)
+        if ide_url and dev:
+            # code-server's absproxy forwards /absproxy/<port>/… with the path intact, so the preview is served
+            # from the site root (the proxy routes /absproxy to code-server) and Vite is told that base.
+            port = 5173
+            base = f"/absproxy/{port}/"
+            origin = "{0.scheme}://{0.netloc}".format(urlparse(ide_url))
+            flags = f" -- --host 127.0.0.1 --port {port} --strictPort" + (f" --base {base}" if environment.uses_vite(wt) else "")
+            sections.insert(1, {"id": "preview", "title": "Preview in VS Code", "link": origin + base,
+                                "link_label": "Open preview",
+                                "text": "Open the worktree in VS Code, run this in its terminal, then open the preview link. Dependencies are already installed by Relay when setup succeeded.",
+                                "commands": [f"cd {q_wt}", dev + flags]})
 
     if pushed:
         local = [f"git fetch origin {q_branch}", f"git switch {q_branch}"]
@@ -101,5 +120,5 @@ def build(task: dict) -> dict:
     sections.append({"id": "cleanup", "title": "Clean up", "text": "After merging or when you no longer want the result. `branch -d` refuses to delete unmerged work; use `-D` to discard it.",
                      "commands": cleanup})
 
-    return {"ready": True, "branch": branch, "base": base, "worktree": str(wt), "worktree_exists": wt_exists, "repo": str(repo),
+    return {"ready": True, "ide": ide_link(ide_url, wt) if wt_exists else "", "environment": task.get("environment"), "branch": branch, "base": base, "worktree": str(wt), "worktree_exists": wt_exists, "repo": str(repo),
             "pushed": pushed, "pr_url": task.get("pr_url"), "pr_number": pr, "diffstat": stat, "sections": sections}

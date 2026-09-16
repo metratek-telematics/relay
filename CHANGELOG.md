@@ -8,6 +8,15 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Prepared environments.** Relay installs a task's dependencies itself before any agent starts, using the
+  repository's lockfile (`npm ci`, pnpm or yarn), the registry credentials mounted into Relay and a shared package
+  cache. The result shows on the task Overview; a failure becomes a blocked check instead of an agent workaround. Tasks
+  can override the command with `setup_command`.
+- **A browser for agents.** The image ships headless Chromium and `relay-screenshot`, and workers are told how to run
+  the app and look at it in both themes, printing console errors and failed requests with each screenshot.
+- **Browser VS Code.** An optional code-server service (`--profile ide`) with the same Node toolchain. With its URL set,
+  tasks and repositories get Open in VS Code, and Try it adds a Preview step: the dev-server command with the right
+  base path and a link through code-server's port proxy.
 - **Design gate.** Design rules are enforced, not just described. On every line agents add, Relay fails verification
   (and so blocks delivery) for a literal colour outside the token files, a font outside the design system, gradient
   text, or a forbidden term; `!important`, deep selector overrides and `backdrop-filter` are reported as warnings.

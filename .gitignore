@@ -45,3 +45,6 @@ logs/
 
 # Legacy snapshot kept only for reference
 _legacy_v13/
+
+# Local package and IDE caches from docker compose
+/.cache/

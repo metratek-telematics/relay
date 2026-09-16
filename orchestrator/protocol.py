@@ -273,7 +273,7 @@ def task_block(task: dict, issue_text: str = "", refs_text: str = "") -> str:
     return "\n".join(parts)
 
 
-def supervisor_kickoff(task, wt, branch, issue_text, refs_text, guidance, verify_cmds, cfg=None) -> str:
+def supervisor_kickoff(task, wt, branch, issue_text, refs_text, guidance, verify_cmds, cfg=None, env_text="") -> str:
     cfg = cfg or {}
     return f"""You are the SUPERVISOR in a multi-agent engineering team run by Relay.
 
@@ -284,7 +284,7 @@ def supervisor_kickoff(task, wt, branch, issue_text, refs_text, guidance, verify
 USER GUIDANCE RECEIVED SO FAR
 {guidance or "(none)"}
 
-VERIFICATION COMMANDS THE ORCHESTRATOR WILL RUN AFTER EACH WORKER REPORT
+{("ENVIRONMENT PREPARED BY RELAY" + chr(10) + env_text + chr(10) + chr(10)) if env_text else ""}VERIFICATION COMMANDS THE ORCHESTRATOR WILL RUN AFTER EACH WORKER REPORT
 {chr(10).join('- ' + c for c in verify_cmds) if verify_cmds else "(none detected — ask the worker to add or name the right checks if the repository has any)"}
 
 {rules_block(rule_names_for("supervisor", cfg, task.get("requirements", "") + " " + (issue_text or "")))}
@@ -371,7 +371,7 @@ def supervisor_worker_question(worker_label, question) -> str:
             "containing your answer and how to proceed, or escalate with a question to the user if this needs a human decision.")
 
 
-def worker_kickoff(task, wt, branch, issue_text, refs_text, plan_env, instruction, guidance, cfg=None, gate_cmd="") -> str:
+def worker_kickoff(task, wt, branch, issue_text, refs_text, plan_env, instruction, guidance, cfg=None, gate_cmd="", env_text="") -> str:
     cfg = cfg or {}
     return f"""You are the WORKER (implementation engineer) in a multi-agent engineering team run by Relay.
 
@@ -384,7 +384,7 @@ PLAN AGREED BY THE SUPERVISOR
 
 CONTEXT PACKET FROM THE SUPERVISOR
 {packet_block(plan_env)}
-
+{(chr(10) + "ENVIRONMENT PREPARED BY RELAY" + chr(10) + env_text + chr(10)) if env_text else ""}
 {rules_block(rule_names_for("worker", cfg, task.get("requirements", "") + " " + str(plan_env.get("plan", ""))))}
 
 HOW THIS SESSION WORKS

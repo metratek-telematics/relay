@@ -17,7 +17,7 @@ import traceback
 from pathlib import Path
 
 from . import config as C
-from . import designcheck, gitops, github, protocol
+from . import designcheck, environment, gitops, github, protocol
 from .runner import Interrupted, Stopped, TurnTimeout
 from .util import APP_DIR, new_id, now, quiet, read_text, truncate, write_text
 
@@ -256,6 +256,48 @@ class Pipeline:
         return res, env
 
     # ------------------------------------------------------------ verification
+    def prepare_environment(self, t):
+        """Install the repository's dependencies before any agent starts, so nobody improvises one."""
+        cmd = environment.setup_command(t, self.cfg, self.wt)
+        info = {"command": cmd, "ok": None, "skipped": False, "duration": 0, "screenshot": environment.screenshot_tool()}
+        if not cmd:
+            info["skipped"] = True
+        elif environment.already_prepared(self.wt) and not (t.get("workflow") or {}).get("setup_command"):
+            info.update(skipped=True, note="dependencies already present in the worktree")
+        else:
+            self.r.status("preparing", f"Preparing the environment · {cmd}")
+            self.r.timeline("system", "Preparing environment", cmd)
+            timeout = float(self.cfg.get("env_prepare_timeout_minutes") or 20) * 60
+            res = self.r.run_shell(cmd, self.wt, "setup", timeout=timeout, title=f"Prepare environment · {cmd}")
+            info.update(ok=res["ok"], duration=round(res.get("duration") or 0, 1),
+                        output=truncate(res.get("output") or "", 1500, tail=True) if not res["ok"] else "")
+            if res["ok"]:
+                self.r.timeline("system", "Environment ready", f"{cmd} · {round(res.get('duration') or 0)}s")
+            else:
+                # Not fatal: the team implements without dependencies and the gap is visible to everyone.
+                self.record_blocked([{"check": f"Environment setup ({cmd})", "action_required": False,
+                                      "reason": truncate((res.get("output") or "").strip().splitlines()[-1] if (res.get("output") or "").strip() else f"exit {res.get('rc')}", 300),
+                                      "impact": "tests, builds and previews that need dependencies cannot run"}])
+                self.r.timeline("system", "Environment setup failed", cmd)
+        self.m.set_meta(self.tid, environment=info)
+        return info
+
+    def env_text(self):
+        info = self.state.get("environment") or (self.task_meta().get("environment") or {})
+        lines = []
+        if info.get("command"):
+            state = "installed" if info.get("ok") else ("already present" if info.get("skipped") else "FAILED, see blocked checks")
+            lines.append(f"- Dependencies: Relay ran `{info['command']}` before you started ({state}). Do not install dependencies another way.")
+        dev = environment.dev_command(self.wt) if self.wt else ""
+        if dev:
+            lines.append(f"- Run the app with `{dev}` from the worktree (pick a free port; stop it before you report).")
+        if info.get("screenshot"):
+            lines.append("- A headless browser is available to look at UI you build: "
+                         "`relay-screenshot <url> <out.png> --width 1440 --height 900 --theme light|dark [--full]` "
+                         "(also prints console errors and failed requests). Save screenshots under the run folder, not the repository: "
+                         f"{self.run_dir / 'screenshots'}")
+        return "\n".join(lines)
+
     def forbidden_terms_file(self):
         """Terms live in Relay's settings and its run folder, never in the repository the agents work on."""
         terms = [t.strip() for t in self.cfg.get("design_forbidden_terms") or [] if str(t).strip()]
@@ -338,6 +380,7 @@ class Pipeline:
             self.r.timeline("git", "Worktree ready", f"{self.branch} → {self.wt}")
             # Recorded before any agent works, so changes still count once Relay commits them.
             t["base_commit"] = quiet(["git", "rev-parse", "HEAD"], cwd=self.wt).stdout.strip()
+            self.state["environment"] = self.prepare_environment(t)
         self.base = t.get("base_commit") or gitops.base_commit(self.wt, t.get("repo"))
         repo_full = t.get("github_repo") or github.remote_repo_name(t.get("repo"))
         self.m.set_meta(self.tid, worktree=str(self.wt), branch=self.branch, run_dir=str(self.run_dir), github_repo=repo_full, base_commit=self.base)
@@ -370,7 +413,8 @@ class Pipeline:
         self.handoff("orchestrator", "supervisor", "Task briefing", self.task.get("requirements", ""),
                      subtype="briefing", issue=self.issue_text[:400] if self.issue_text else "")
         guidance = self.take_guidance("supervisor")
-        prompt = protocol.supervisor_kickoff(self.task, self.wt, self.branch, self.issue_text, self.refs_text, guidance, self.verify_cmds, self.cfg)
+        prompt = protocol.supervisor_kickoff(self.task, self.wt, self.branch, self.issue_text, self.refs_text, guidance, self.verify_cmds, self.cfg,
+                                             self.env_text())
         res, env = self.supervisor_turn(prompt, f"{_label(sup_agent)} is inspecting the repository and planning", turn=0)
         if env.get("type") != "plan":
             if env.get("type") in ("instruction", "decision") and env.get("instruction"):
@@ -411,7 +455,7 @@ class Pipeline:
                 if int(sess.get("turns", 0)) == 0 or sess.get("agent") != wrk_agent:
                     prompt = protocol.worker_kickoff(self.task, self.wt, self.branch, self.issue_text, self.refs_text,
                                                      self.state.get("plan") or {}, self.state.get("instruction", ""), guidance, self.cfg,
-                                                     self.gate_command())
+                                                     self.gate_command(), self.env_text())
                 else:
                     prompt = protocol.worker_followup(_label(sup_agent), turn, self.state.get("instruction", ""), guidance, kind)
                 if self.state.get("resumed"):

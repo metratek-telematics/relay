@@ -420,7 +420,7 @@ def task_files(tid):
 
 @app.get("/api/tasks/<tid>/handoff")
 def task_handoff(tid):
-    return jsonify(handoff.build(task_or_404(tid)))
+    return jsonify(handoff.build(task_or_404(tid), manager.cfg()))
 
 
 @app.get("/api/tasks/<tid>/commits")

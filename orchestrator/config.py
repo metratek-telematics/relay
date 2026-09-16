@@ -149,6 +149,11 @@ DEFAULTS = {
     # git
     # Design gate: enforced checks on what agents add (token colours, fonts, forbidden terms); see orchestrator/designcheck.py.
     "design_gate": True,
+    # Relay installs a task's dependencies itself before agents start (npm ci and friends).
+    "env_prepare": True,
+    "env_prepare_timeout_minutes": 20,
+    # Browser VS Code (code-server) base URL, e.g. https://relay.example.com/code; enables Open in VS Code and previews.
+    "ide_url": "",
     "design_forbidden_terms": [],
     "branch_naming": "type",               # type: feat/…, fix/… from the task type · prefix: <branch_prefix>/…
     "branch_prefix": "agent",

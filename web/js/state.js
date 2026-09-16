@@ -44,6 +44,7 @@ export const STATUS = {
   running: { label: "Starting", tone: "blue", live: true },
   planning: { label: "Planning", tone: "blue", live: true },
   implementing: { label: "Implementing", tone: "accent", live: true },
+  preparing: { label: "Preparing", tone: "blue", live: true },
   verifying: { label: "Verifying", tone: "amber", live: true },
   reviewing: { label: "Reviewing", tone: "purple", live: true },
   delivering: { label: "Delivering", tone: "green", live: true },
@@ -54,7 +55,7 @@ export const STATUS = {
   stopped: { label: "Stopped", tone: "", live: false },
   interrupted: { label: "Interrupted", tone: "amber", live: false, attention: true },
 };
-export const LIVE = new Set(["running", "planning", "implementing", "verifying", "reviewing", "delivering"]);
+export const LIVE = new Set(["running", "preparing", "planning", "implementing", "verifying", "reviewing", "delivering"]);
 export const statusOf = (t) => STATUS[t?.status] || STATUS.queued;
 export const toneVar = (tone) => ({ blue: "var(--blue)", accent: "var(--accent)", amber: "var(--amber)", purple: "var(--purple)", green: "var(--green)", red: "var(--red)" }[tone] || "var(--text-3)");
 

@@ -81,7 +81,7 @@ export function mountTask(main, id) {
       { label: "Edit task settings", icon: "edit", onClick: () => openNewTask({ edit: t }) },
       "-",
       { label: "Open worktree folder", icon: "folder", onClick: () => api.open(t.id, "worktree").catch((e) => toast("error", "Cannot open", e.message)) },
-      { label: "Open in VS Code", icon: "code", onClick: () => api.open(t.id, "vscode").catch((e) => toast("error", "Cannot open", e.message)) },
+      { label: "Open in VS Code", icon: "code", disabled: !t.worktree, onClick: () => (S.config.ide_url ? window.open(`${S.config.ide_url.replace(/\/$/, "")}/?folder=${encodeURIComponent(t.worktree)}`, "_blank", "noopener") : api.open(t.id, "vscode").catch((e) => toast("error", "Cannot open", e.message))) },
       { label: "Open run folder (logs, artifacts)", icon: "file", onClick: () => api.open(t.id, "run").catch((e) => toast("error", "Cannot open", e.message)) },
       { label: "Export report (markdown)", icon: "download", onClick: () => { location.href = `/api/tasks/${encodeURIComponent(t.id)}/export`; } },
       { label: "Copy task id", icon: "copy", onClick: () => copyText(t.id) },
