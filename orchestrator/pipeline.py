@@ -266,8 +266,13 @@ class Pipeline:
         fail_chars = int(self.cfg.get("budget_verify_chars") or 3500)
         for c in self.verify_cmds:
             res = self.r.run_shell(c, self.wt, "verify", timeout=timeout)
-            items.append({"command": c, "ok": res["ok"], "rc": res.get("rc"), "duration": round(res.get("duration") or 0, 1)})
-            head = f"$ {c}\n{'PASS' if res['ok'] else 'FAIL'} (exit {res.get('rc')}, {round(res.get('duration') or 0)}s)"
+            # pytest exit 5 means no tests were collected: nothing failed, so do not send the team chasing it.
+            skipped = res.get("rc") == 5 and "pytest" in c
+            if skipped:
+                res["ok"] = True
+            items.append({"command": c, "ok": res["ok"], "rc": res.get("rc"), "skipped": skipped, "duration": round(res.get("duration") or 0, 1)})
+            verdict = "SKIPPED (no tests collected)" if skipped else ("PASS" if res["ok"] else "FAIL")
+            head = f"$ {c}\n{verdict} (exit {res.get('rc')}, {round(res.get('duration') or 0)}s)"
             # A passing command only needs its verdict; a failure needs output the agents can act on.
             body = "" if (res["ok"] and quiet_pass) else "\n" + truncate(res["output"], fail_chars, tail=True)
             parts.append(head + body)

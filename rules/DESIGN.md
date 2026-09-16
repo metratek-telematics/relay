@@ -1,3 +1,23 @@
+# Design System & Design Craft
+
+This is the house design system. It defines how our products look and feel, and every piece of visible UI work
+is expected to reach it. The goal of UI work is the best design you are capable of, not the smallest diff.
+
+## How to apply it in any repository
+
+- **The visual language here is authoritative**: palette, themes, state colours, elevation, typography, shape,
+  component conventions and the principles below. When a repository's older visual guides conflict with it, this
+  document wins unless the task says otherwise.
+- **The repository decides the mechanics**: framework, component library, where tokens live, how themes switch.
+  The examples below come from the React + Tailwind + shadcn reference implementation (`bg-card`, `<PageHeader>`,
+  `useBranding`, `src/main.tsx`). In another stack, translate them rather than skipping them:
+  - tokens become that stack's theme variables (CSS custom properties, SCSS, a Tailwind config, a DevExtreme theme…),
+    keeping the names `--primary`, `--state-ok`, `--surface`… so white-labelling works everywhere;
+  - `PageHeader`, `Card`, `StatusPill`, `Metric` and the button variants are patterns: reuse the repository's
+    equivalent or build one in its framework;
+  - fonts are self-hosted packages in any stack; `useBranding` means "read `--primary` at runtime, never the literal teal".
+- If the repository has no token layer yet, add the tokens where the rest of the app can use them, scoped to the
+  screens you are changing only when the task is limited to those screens.
 
 ## 1. Design principles
 
@@ -137,3 +157,40 @@ Three self‑hosted variable fonts (via `@fontsource-variable`, no CDN/FOUT). Lo
 | A page title | `<PageHeader>` (font-display sans) |
 | Secondary text | `text-muted-foreground` |
 | Hairline | `border-border` |
+
+
+---
+
+## 10. Design craft: how to get a great result
+
+Good design comes from decisions, not from decoration. Work in this order.
+
+1. **Understand the screen's job.** Who opens it, what they must see in the first second, what they do next.
+   Rank the information: one primary thing, a few secondary things, everything else is reference.
+2. **Compose before you style.** Decide the regions, their relative size and the reading order at desktop and
+   phone widths. The primary thing gets the most space and the strongest position. Put actions next to what they act on.
+3. **Build the hierarchy with scale and space.** One dominant element per view. Clear size steps in the type scale.
+   Tight spacing inside a group, generous spacing between groups. Align to a consistent grid; ragged edges read as unfinished.
+4. **Use density deliberately.** Operational screens are dense and scannable: label/value ledgers, dividers and
+   sections instead of a card for every field. Prose gets a readable measure (roughly 60–80 characters).
+5. **Style from the tokens.** Surfaces, ink, primary, state colours and elevation all come from section 3–4.
+   Status colour is only for status.
+6. **Look at it and iterate.** Render the screen with real or realistic data and take a screenshot at a desktop
+   width and a phone width in both themes. Critique it honestly against this document: Is the hierarchy obvious?
+   Is anything cramped, floating or misaligned? Does it look like our product or like a template? Then improve it.
+   Do at least one improvement pass. Screenshots are a design tool for you, not an evidence checklist.
+7. **Finish the details.** Hover, focus and pressed states; loading, empty and error states that are designed rather
+   than default text; consistent icon sizes; numbers in mono with tabular figures; long names that wrap or truncate on purpose.
+
+## 11. Redesign requests
+
+When the task says redesign, overhaul, rebuild, new layout or "from scratch":
+
+- **Change the composition, not just the paint.** Rebuild the template and styles. A new colour scheme on the old
+  layout is not a redesign.
+- **The components the screen is made of are in scope.** Restructure or restyle child components when they do not
+  fit the new design. Do not pile `:deep()`, `!important` or wrapper overrides onto the old look.
+- **Preserve behaviour and data contracts, not markup.** Routes, API calls, emitted events and props used elsewhere,
+  stored preferences and existing features must keep working. Old CSS, class names and DOM structure do not need to survive.
+- **Deliver the whole new design in the first pass**, then refine. A timid first version costs more turns than a complete one.
+- Adding the design system's fonts and tokens is part of the job, not scope creep.

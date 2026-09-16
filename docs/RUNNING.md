@@ -222,6 +222,10 @@ All under `RELAY_DATA_DIR`, which defaults to the app folder:
 - **Turn budget exhausted.** Raise *Max work packages* under Edit task settings, then Resume.
 - **Docker: a CLI fails to sign in.** Check the startup log. The usual causes are a login file that did not exist on
   the host, now an empty directory, or `RELAY_UID` not matching the owner of the mounted folders.
+- **Codex supervisor says Node, npm or other tools are unavailable.** Codex's `workspace-write` sandbox can block the
+  toolchain it needs to check the worker's result. In Docker Relay already runs Codex unsandboxed. On a host, set
+  Settings → Agents → Codex → Sandbox to `danger-full-access` if the supervisor must run checks itself; otherwise it
+  relies on the orchestrator's verification results.
 - **Stray empty file named `CRLF` in a worktree.** A global Claude Code hook that echoes prompts through `cmd.exe`
   turns the text `LF->CRLF` into a shell redirect. Fix the hook, or set Claude's setting sources to project and local
   only under Settings → Agents.

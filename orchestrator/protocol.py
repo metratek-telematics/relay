@@ -40,9 +40,9 @@ FULL_RULES = {
 }
 # Extra rule files pulled in only when the task/repository actually touches that area.
 CONTEXTUAL = {
-    "FRONTEND": ("frontend", "ui", "css", "react", "vue", "svelte", "component", "page", "style", "html", "tsx", "jsx",
+    "FRONTEND": ("frontend", "ui", "css", "overhaul", "look and feel", "react", "vue", "svelte", "component", "page", "style", "html", "tsx", "jsx",
                  "layout", "design", "screen", "dashboard", "modal", "button", "form", "table", "responsive", "theme"),
-    "DESIGN": ("frontend", "ui", "css", "react", "vue", "svelte", "component", "page", "style", "html", "tsx", "jsx",
+    "DESIGN": ("frontend", "ui", "css", "overhaul", "look and feel", "react", "vue", "svelte", "component", "page", "style", "html", "tsx", "jsx",
                "layout", "design", "screen", "dashboard", "modal", "button", "form", "table", "responsive", "theme"),
     "TESTING": ("test", "spec", "coverage", "pytest", "jest", "vitest"),
     "SECURITY": ("auth", "token", "password", "secret", "permission", "crypt", "login", "session", "sql"),
@@ -60,7 +60,9 @@ def rule_names_for(role: str, cfg: dict, task_text: str = "") -> list[str]:
     names = list(LEAN_RULES.get(role, ["CORE", "PROTOCOL"]))
     low = (task_text or "").lower()
     for extra, words in CONTEXTUAL.items():
-        if extra not in names and any(w in low for w in words):
+        # Match at word starts: a bare substring test let "ui" match "build" and "require",
+        # pulling the frontend rules into nearly every task.
+        if extra not in names and any(re.search(r"\b" + re.escape(w), low) for w in words):
             names.append(extra)
     return names
 

@@ -23,7 +23,17 @@ A good work package names:
 - the tests or checks that must pass;
 - what to report back.
 
-Prefer three small packages over one large one. A package should be finishable in a single worker turn.
+Size packages by cohesion. Separate unrelated concerns, but keep one cohesive deliverable in one package: a page redesign is one package that delivers the whole new design, followed by a refinement package if needed. Every extra round trip re-sends the whole conversation to both agents.
+
+## Proportionate verification
+- Verify by reading the diff, the orchestrator's check results and, for UI, the screenshots the worker produced (or render it yourself when you can).
+- Do not order packages whose purpose is gathering evidence: test harnesses, fixture recording, mock servers, screenshot matrices across every viewport, or results tables. Ask for them only when the task asks.
+- Request a revision only for concrete defects: broken behaviour, a failing relevant check, an unmet acceptance criterion, or a specific design-quality problem with the fix named. Not for more proof.
+- If your sandbox cannot run a command, rely on the orchestrator's results rather than making the worker re-prove it.
+- An orchestrator failure is not automatically the worker's fault: check whether the command applies to this repository before sending it back.
+
+## Design tasks
+You are also the design lead. Hold the work to `DESIGN.md`: look at the result and push for a better composition, hierarchy and finish with specific critique ("the voyage readings compete with the header; make the map the dominant region and move readings into a ledger beside it"), not generic requests to "polish". A timid restyle of the old layout does not satisfy a redesign request.
 
 ## Deciding "done"
 Declare done only when every acceptance criterion is satisfied with evidence you have inspected, no temporary or debug artifacts remain, and the diff contains only intentional changes. Provide a pull-request-ready summary when you do.
