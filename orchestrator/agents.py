@@ -397,13 +397,10 @@ class CodexAdapter(AgentAdapter):
         eff = (effort or cfg.get("codex_reasoning_effort") or "").strip()
         if eff:
             common += ["-c", f"model_reasoning_effort=\"{eff}\""]
-        if cfg.get("subagent_cheap_enabled", True):
-            sub = (cfg.get("subagent_models", {}) or {}).get("codex", "").strip()
-            if sub:
-                # Codex exposes per-agent-role overrides as agents.<role>.{model,reasoning_effort}.
-                for r in ("worker", "reviewer", "explorer", "default"):
-                    common += ["-c", f"agents.{r}.model=\"{sub}\""]
-                common += ["-c", "agents.worker.reasoning_effort=\"low\""]
+        # No subagent-model override for Codex. Its `agents.<role>` config table
+        # defines whole custom agent roles (a description is mandatory), not a
+        # model for built-in helpers, so passing a model there only produced
+        # "malformed agent role" errors and was ignored.
         common += list(cfg.get("codex_extra_args") or [])
         if session.get("id") and session.get("turns", 0) > 0:
             args = ["exec", "resume", session["id"], *common, "-"]
@@ -474,8 +471,16 @@ class CodexAdapter(AgentAdapter):
                             "input": {"items": items}, "summary": f"{len(items)} step plan"})
                 out.append({"kind": "tool_result", "id": iid, "ok": True, "output": txt, "duration": 0})
         elif it == "error":
+            if phase != "completed" or iid in ctx.tools:
+                return out
+            ctx.tools[iid] = {"tool": "error", "at": time.time()}
             msg = item.get("message") or json.dumps(item)
-            out.append({"kind": "error", "text": msg})
+            if msg.lower().startswith(("ignoring", "warning")):
+                # Non-fatal configuration warnings: the turn carries on, so show them
+                # once in the turn's notice rather than as crash-style error cards.
+                out.append({"kind": "log", "text": msg})
+            else:
+                out.append({"kind": "error", "text": msg})
         return out
 
     def parse_line(self, line, ctx):

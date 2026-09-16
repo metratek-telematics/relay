@@ -13,20 +13,39 @@ from pathlib import Path
 
 APP_DIR = Path(__file__).resolve().parent.parent
 RULES_DIR = APP_DIR / "rules"
-RUNTIME_DIR = APP_DIR / "runtime"
-WORKTREES_DIR = APP_DIR / "worktrees"
-STATE_DIR = APP_DIR / "state"
-MANAGED_REPOS_DIR = APP_DIR / "managed-repos"
+
+# Everything Relay writes lives under DATA_DIR. By default that is the app folder,
+# but RELAY_DATA_DIR moves it elsewhere: a Docker volume, /var/lib/relay, and so on.
+# Git records each worktree by absolute path inside the source repository, so when
+# repositories are shared with a host, DATA_DIR must resolve to the same path on both.
+DATA_DIR = Path(os.environ.get("RELAY_DATA_DIR") or APP_DIR).expanduser().resolve()
+RUNTIME_DIR = DATA_DIR / "runtime"
+WORKTREES_DIR = DATA_DIR / "worktrees"
+STATE_DIR = DATA_DIR / "state"
+MANAGED_REPOS_DIR = DATA_DIR / "managed-repos"
 TASKS_FILE = STATE_DIR / "tasks.json"
 GITHUB_SOURCES_FILE = STATE_DIR / "github_sources.json"
 DELETED_FILE = STATE_DIR / "deleted_tasks.json"
-CONFIG_PATH = APP_DIR / "config.json"
+CONFIG_PATH = DATA_DIR / "config.json"
 
 for _p in (RUNTIME_DIR, WORKTREES_DIR, STATE_DIR, MANAGED_REPOS_DIR):
     _p.mkdir(parents=True, exist_ok=True)
 
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 IS_WINDOWS = os.name == "nt"
+IN_DOCKER = os.path.exists("/.dockerenv") or os.environ.get("RELAY_IN_DOCKER") == "1"
+
+
+def popen_group_kwargs() -> dict:
+    """Popen options that put a child in its own process group.
+
+    Agent CLIs are Node programs that spawn shells, test runners and MCP servers.
+    On POSIX, killing only the direct child leaves those running and still editing
+    files, so each agent gets a fresh session and the whole group is signalled.
+    """
+    if IS_WINDOWS:
+        return {"creationflags": CREATE_NO_WINDOW}
+    return {"start_new_session": True}
 
 
 def now() -> str:
@@ -110,11 +129,20 @@ def kill_tree(proc: subprocess.Popen) -> None:
             subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
                            capture_output=True, creationflags=CREATE_NO_WINDOW, timeout=15)
         else:
-            proc.terminate()
+            import signal
+            try:
+                pgid = os.getpgid(proc.pid)
+            except ProcessLookupError:
+                return
+            os.killpg(pgid, signal.SIGTERM)
             try:
                 proc.wait(timeout=5)
             except Exception:
-                proc.kill()
+                pass
+            try:
+                os.killpg(pgid, signal.SIGKILL)  # anything that ignored SIGTERM
+            except ProcessLookupError:
+                pass
     except Exception:
         try:
             proc.kill()

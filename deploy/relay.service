@@ -1,0 +1,37 @@
+# Relay as a systemd *user* service on Ubuntu.
+#
+# It runs as your own user, so the agents use the logins in your home directory
+# (~/.codex, ~/.claude, ~/.gemini, gh) exactly as they do in your terminal.
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/relay.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now relay
+#   sudo loginctl enable-linger "$USER"     # keep it running after you log out
+#   journalctl --user -u relay -f           # logs
+#
+# Reach the UI from your own computer through an SSH tunnel, never an open port:
+#   ssh -L 8767:127.0.0.1:8767 you@this-server
+
+[Unit]
+Description=Relay multi-agent coding orchestrator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust if you cloned Relay somewhere else.
+WorkingDirectory=%h/relay
+ExecStart=%h/relay/run.sh
+# Agent CLIs installed with `npm install -g` usually live in one of these.
+Environment=PATH=%h/.local/bin:%h/.npm-global/bin:/usr/local/bin:/usr/bin:/bin
+Environment=RELAY_HOST=127.0.0.1
+Environment=PYTHONUNBUFFERED=1
+# Stopping the service stops every agent process too.
+KillMode=control-group
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

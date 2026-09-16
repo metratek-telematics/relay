@@ -1,0 +1,62 @@
+# Relay in Docker, using the host's agent logins, settings and repositories.
+#
+#   cp .env.example .env      # then set RELAY_REPOS and RELAY_DATA (and UID/GID on Linux)
+#   docker compose up -d --build
+#   docker compose logs -f
+#
+# Open http://127.0.0.1:8767 on this machine. From another computer use an SSH
+# tunnel: ssh -L 8767:127.0.0.1:8767 you@server
+#
+# Only run ONE Relay against a data folder at a time. A host Relay and a container
+# Relay sharing RELAY_DATA would overwrite each other's task list.
+
+services:
+  relay:
+    build:
+      context: .
+      args:
+        UID: ${RELAY_UID:-1000}
+        GID: ${RELAY_GID:-1000}
+        CODEX_VERSION: ${CODEX_VERSION:-latest}
+        CLAUDE_VERSION: ${CLAUDE_VERSION:-latest}
+        GEMINI_VERSION: ${GEMINI_VERSION:-latest}
+    image: relay:local
+    container_name: relay
+    restart: unless-stopped
+    init: false  # tini is the entrypoint already
+
+    # Loopback only. Relay has no login, so it must never be reachable from the network.
+    ports:
+      - "127.0.0.1:${RELAY_PORT:-8767}:8767"
+
+    environment:
+      RELAY_DATA_DIR: ${RELAY_DATA:?set RELAY_DATA in .env}
+      RELAY_REPOS: ${RELAY_REPOS:?set RELAY_REPOS in .env}
+      RELAY_BROWSE_ROOT: ${RELAY_REPOS}
+      # GitHub CLI: on Windows and macOS hosts gh keeps its token in the system
+      # keychain, which cannot be mounted. Put a token here instead (gh auth token).
+      GH_TOKEN: ${GH_TOKEN:-}
+      # Gemini with a Google Workspace account also needs this.
+      GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
+
+    volumes:
+      # ---- Host agent logins and settings (read-write: CLIs refresh their tokens here)
+      - ${HOST_HOME:-~}/.codex:/home/relay/.codex
+      - ${HOST_HOME:-~}/.claude:/home/relay/.claude
+      - ${HOST_HOME:-~}/.claude.json:/home/relay/.claude.json
+      - ${HOST_HOME:-~}/.gemini:/home/relay/.gemini
+      - ${HOST_HOME:-~}/.config/gh:/home/relay/.config/gh
+      # ---- Git identity and SSH keys for pushing task branches (read-only)
+      - ${HOST_HOME:-~}/.gitconfig:/home/relay/.gitconfig:ro
+      - ${HOST_HOME:-~}/.ssh:/home/relay/.ssh:ro
+
+      # ---- Repositories and Relay data, mounted at the SAME absolute path as on
+      # the host. Git stores each task worktree's location as an absolute path
+      # inside your repository; identical paths keep those links valid from both
+      # the container and the host.
+      - ${RELAY_REPOS}:${RELAY_REPOS}
+      - ${RELAY_DATA}:${RELAY_DATA}
+
+    # Agents run shells, test suites and dev servers. Give them room.
+    shm_size: "1gb"
+    stop_grace_period: 30s

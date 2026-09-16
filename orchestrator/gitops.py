@@ -6,7 +6,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from .util import WORKTREES_DIR, quiet, safe_slug, truncate
+from .util import IS_WINDOWS, WORKTREES_DIR, quiet, safe_slug, truncate
 
 
 def is_git_repo(path) -> bool:
@@ -52,8 +52,10 @@ def detect_verify(repo) -> list[str]:
             pass
     if (repo / "pom.xml").exists():
         out += ["mvn -q test"]
-    if (repo / "gradlew.bat").exists():
+    if IS_WINDOWS and (repo / "gradlew.bat").exists():
         out += [r".\gradlew.bat test"]
+    elif not IS_WINDOWS and (repo / "gradlew").exists():
+        out += ["./gradlew test"]
     if (repo / "pyproject.toml").exists() or (repo / "pytest.ini").exists() or (repo / "tests").is_dir():
         out += ["python -m pytest -q"]
     if (repo / "go.mod").exists():
@@ -101,6 +103,39 @@ def snapshot_source(source, wt, run_dir, cfg, runner):
             copied += 1
         if copied:
             runner.timeline("git", "Untracked files copied", f"{copied} file(s)")
+    if cfg.get("copy_ignored_root_files", True):
+        copy_ignored_root_files(source, wt, runner)
+
+
+def copy_ignored_root_files(source, wt, runner=None) -> list[str]:
+    """Copy small gitignored files from the repository's top level into the worktree.
+
+    Projects keep what makes them run locally in gitignored files: `.env`,
+    `.env.local`, dev auth cookies. A fresh worktree lacks them, so the app cannot
+    reach its API and agents end up verifying against fake data. Only top-level
+    regular files are copied, never directories, and Git still ignores them in the
+    worktree, so they are never committed.
+    """
+    p = quiet(["git", "ls-files", "--others", "--ignored", "--exclude-standard", "--directory"], cwd=source)
+    copied = []
+    for rel in p.stdout.splitlines():
+        rel = rel.strip()
+        if not rel or "/" in rel.rstrip("/") or rel.endswith("/"):
+            continue  # top-level files only
+        if rel.lower().endswith((".log", ".tmp", ".pid")):
+            continue
+        s = Path(source) / rel
+        d = Path(wt) / rel
+        try:
+            if not s.is_file() or s.stat().st_size > 1024 * 1024 or d.exists():
+                continue
+            shutil.copy2(s, d)
+            copied.append(rel)
+        except OSError:
+            continue
+    if copied and runner:
+        runner.timeline("git", "Local config copied into worktree", ", ".join(copied))
+    return copied
 
 
 def create_worktree(runner, task, cfg, run_dir):

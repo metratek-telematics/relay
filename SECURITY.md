@@ -27,6 +27,9 @@ that port can create tasks, and a task can run arbitrary commands. Therefore:
 
 - Do not bind it to `0.0.0.0`, expose it through a tunnel, or put it behind a
   reverse proxy on a shared machine.
+- In Docker, keep the compose file's `127.0.0.1:` port binding. Publishing the
+  port on all interfaces exposes Relay to your network. Reach a remote server
+  through an SSH tunnel instead.
 - Treat it as a single-user, single-machine tool. Multi-user use needs
   authentication and per-user credential isolation that Relay does not yet
   have.
