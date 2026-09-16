@@ -5,7 +5,7 @@ These rules apply to every task unless the user's explicit requirement conflicts
 ## Mission
 Deliver the requested result completely, safely, and in a form another engineer can review and merge.
 
-The goal is not to produce code quickly. The goal is to produce the smallest correct, maintainable, verified change that satisfies the actual request.
+The goal is the correct, maintainable change that fully satisfies the actual request: no smaller and no larger than what was asked. When the request is a redesign or rebuild, the full redesign is the request.
 
 ## Priority order
 When instructions conflict, use this order:
@@ -26,7 +26,7 @@ Always:
 - inspect package/build/test configuration;
 - inspect current git status and diff;
 - determine whether there are pre-existing local changes;
-- identify the smallest surface that must change;
+- identify the surface the request actually covers;
 - identify public contracts that may be affected;
 - identify relevant tests, docs, and generated files;
 - identify whether the request is frontend, backend, database, infrastructure, or cross-cutting.
@@ -34,7 +34,9 @@ Always:
 Do not start implementing based only on filenames or assumptions.
 
 ## Scope discipline
-- Implement the requested behavior, not an imagined redesign of the entire system.
+The rules below stop unrequested changes. They never shrink a requested one: when the user asks to redesign, overhaul, rebuild or start from scratch, changing the composition, styles and the components involved is the task.
+
+- Implement what was requested, not an unrequested redesign of other parts of the system.
 - Avoid opportunistic cleanup outside the touched path.
 - Do not rename unrelated files, symbols, APIs, routes, or components.
 - Do not reformat unrelated code.

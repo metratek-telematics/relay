@@ -18,6 +18,9 @@ Do not return:
 - "the next step is...";
 when the work can be completed locally.
 
+## Where the effort goes
+Spend turns on the deliverable. For UI work, follow the design process in `DESIGN.md`: compose, build, look at it, improve it. Do not spend turns building verification tooling or collecting evidence nobody asked for.
+
 ## Debugging
 When something fails:
 1. reproduce;

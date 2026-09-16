@@ -6,6 +6,25 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Design-first rules.** `DESIGN.md` is now the house design system for every stack, with guidance on translating
+  its tokens and components into Vue, plain CSS or any other frontend. It adds a design process (compose, build,
+  look at it, improve) and explicit rules for redesign requests: change the composition and the components involved,
+  keep behaviour and data contracts. `CORE.md` no longer shrinks a requested redesign to the smallest diff.
+- **Proportionate verification.** `FRONTEND.md` is rewritten around structure and quality floors instead of
+  exhaustive viewport, state and accessibility checklists. Supervisors size work packages by cohesion, may not order
+  evidence-gathering packages (harnesses, fixture recording, screenshot matrices) unless the task asks, and revise
+  only for concrete defects. Planners keep acceptance criteria to the outcomes that matter.
+
+### Fixed
+
+- **False verification failures on JavaScript repositories.** `python -m pytest` was added for any repository with a
+  `tests/` folder and its "no tests collected" exit code 5 failed the run. It is now added only when the repository
+  has Python tests, and exit 5 is reported as skipped.
+- **Rule files pulled into unrelated tasks.** Contextual rule keywords matched inside other words, so `ui` in "build"
+  sent the frontend and design rules with nearly every task. Keywords now match at word starts.
+
 ### Added
 
 - **Ubuntu support.** `run.sh` sets up a virtual environment and starts Relay, and
