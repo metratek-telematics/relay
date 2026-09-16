@@ -111,17 +111,44 @@ export function openNewTask(prefill = {}) {
     } catch (e) { host.innerHTML = `<div class="bpath"><span>${esc(e.message)}</span></div>`; }
   }
 
+  async function loadClonable() {
+    const list = $("#cloneRepos", body), help = $("#cloneHelp", body); if (!list) return;
+    try {
+      const r = await api.ghRepos();
+      list.innerHTML = r.repos.map((x) => `<option value="${esc(x.repo)}">${esc([x.private ? "private" : "public", x.description].filter(Boolean).join(" · "))}</option>`).join("");
+      help.textContent = `${r.repos.length} repositories available. Clones go to ${r.root}; an existing clone is fetched and reused.`;
+    } catch (e) { help.textContent = `Could not list GitHub repositories (${e.message}). You can still type owner/repository or a git URL.`; }
+  }
+  async function cloneSelected() {
+    const input = $("#cloneRepo", body), btn = $("#cloneBtn", body);
+    const repo = input.value.trim(); if (!repo) { toast("warning", "Pick or type a repository to clone"); return; }
+    btn.disabled = true; btn.innerHTML = `${icon("spinner", "spin")}Cloning…`;
+    try {
+      const r = await api.ghClone(repo, $("#cloneName", body).value.trim());
+      data.repo = r.path; $("#repoInput", body).value = r.path;
+      toast("success", r.cloned ? "Repository cloned" : "Using existing clone", r.path);
+      loadRepoInfo(); drawBrowser(r.path);
+    } catch (e) { toast("error", "Clone failed", e.message); }
+    finally { btn.disabled = false; btn.innerHTML = `${icon("download")}Clone`; }
+  }
+
   function render() {
     if (step === 0) {
       body.innerHTML = `<h2>Choose the repository</h2><p class="hint">The team works in an isolated git worktree and branch; your checkout is never touched.</p>
         <div class="field"><label>Repository folder</label><input id="repoInput" value="${esc(data.repo)}" placeholder="C:\\Users\\you\\projects\\app"><div class="repo-facts" id="repoFacts"></div></div>
         ${(S.config.recent_repos || []).length ? `<div class="field"><label>Recent</label><div class="templ">${S.config.recent_repos.slice(0, 8).map((r) => `<button type="button" class="chip" data-recent="${esc(r)}" title="${esc(r)}">${icon("folder", "sm")} ${esc(basename(r))}</button>`).join("")}</div></div>` : ""}
+        <div class="field"><label>Or clone from GitHub</label>
+          <div class="clone-row"><input id="cloneRepo" list="cloneRepos" placeholder="owner/repository or git URL" autocomplete="off"><input id="cloneName" placeholder="folder (optional)"><button type="button" class="btn primary" id="cloneBtn">${icon("download")}Clone</button></div>
+          <datalist id="cloneRepos"></datalist><div class="help" id="cloneHelp">Loading your repositories…</div></div>
         <div class="field"><label>Browse</label><div class="browser" id="browser"></div></div>${nav(null, "Next: describe the request")}`;
       const input = $("#repoInput", body);
       input.addEventListener("change", () => { data.repo = input.value.trim().replace(/^"|"$/g, ""); loadRepoInfo(); });
       $$("[data-recent]", body).forEach((b) => (b.onclick = () => { data.repo = b.dataset.recent; input.value = data.repo; loadRepoInfo(); drawBrowser(data.repo); }));
       loadRepoInfo();
       drawBrowser(data.repo || "");
+      loadClonable();
+      $("#cloneBtn", body).onclick = cloneSelected;
+      $("#cloneRepo", body).addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); cloneSelected(); } });
       $("#wNext", body).onclick = () => { data.repo = input.value.trim().replace(/^"|"$/g, ""); if (!data.repo) { toast("warning", "Choose a repository folder"); return; } if (repoInfo && !repoInfo.is_git) { toast("error", "Not a git repository", "Run git init and make an initial commit first."); return; } go(1); };
     } else if (step === 1) {
       const tpl = (S.templates || []).find((x) => x.id === data.template) || {};

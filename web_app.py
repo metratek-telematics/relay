@@ -580,6 +580,23 @@ def gh_status():
     return jsonify({**github.auth_info(), **{"watcher": manager.github_watcher, **manager.github_status}})
 
 
+@app.get("/api/github/repos")
+def gh_repos():
+    try:
+        return jsonify({"repos": github.accessible_repos(force=request.args.get("force") == "1"), "root": str(github.clone_root())})
+    except RuntimeError as e:
+        return jsonify({"error": str(e), "repos": [], "root": str(github.clone_root())}), 502
+
+
+@app.post("/api/github/clone")
+def gh_clone():
+    b = body()
+    try:
+        return jsonify(github.clone_repo(b.get("repo"), b.get("name")))
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 502
+
+
 @app.get("/api/github/sources")
 def gh_sources_get():
     return jsonify(github.load_sources())
