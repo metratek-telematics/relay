@@ -5,6 +5,7 @@ import json
 import re
 import shutil
 import subprocess
+import tempfile
 import unicodedata
 from pathlib import Path
 
@@ -341,7 +342,9 @@ def branch_exists(repo, name: str) -> bool:
 
 
 def valid_branch_name(name: str) -> bool:
-    return bool(name) and quiet(["git", "check-ref-format", "--branch", name]).returncode == 0
+    # Run from a neutral directory: inside a broken or foreign checkout git fails
+    # before it looks at the name, which would reject every branch.
+    return bool(name) and quiet(["git", "check-ref-format", "--branch", name], cwd=tempfile.gettempdir()).returncode == 0
 
 
 def suggest_branch(cfg: dict, name: str = "", requirements: str = "", template: str = "feature",
