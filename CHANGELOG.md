@@ -21,6 +21,13 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `feat/berth-status-page` or `fix/123-login-timeout`, with filler like "please make" dropped, accents folded and a
   `-2` suffix only on a collision. The New task wizard shows the suggestion and lets you edit it. Settings → Git can
   switch back to `<branch prefix>/…`.
+- **Repositories page.** A new rail entry (`#/repos`) lists every git repository in `RELAY_REPOS` with its branch,
+  ahead/behind from the last fetch, uncommitted changes, last commit and its Relay tasks and worktrees, with Fetch,
+  fast-forward-only Pull, New task here, Open on GitHub, Copy path and Clone repository. A Worktrees tab shows every
+  worktree Relay created with its task, disk size, last commit and uncommitted / pushed / merged / missing badges, and
+  removes worktrees, deletes merged branches, or cleans up delivered-and-merged worktrees in bulk after a preview. It
+  refuses to touch a worktree whose task is still running. A Branch graph tab draws the default branch with task
+  branches forking off and merged ones joining back.
 
 - **Ubuntu support.** `run.sh` sets up a virtual environment and starts Relay, and
   `deploy/relay.service` runs it as a systemd user service with your own logins.

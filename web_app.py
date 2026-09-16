@@ -16,7 +16,7 @@ from flask import Flask, Response, jsonify, request, send_from_directory
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
-from orchestrator import agents, config as C, github, gitops, handoff  # noqa: E402
+from orchestrator import agents, config as C, github, gitops, handoff, repos  # noqa: E402
 from orchestrator.manager import Manager  # noqa: E402
 from orchestrator.util import IN_DOCKER, IS_WINDOWS, RUNTIME_DIR, quiet, read_text  # noqa: E402
 
@@ -656,6 +656,82 @@ def gh_sources_delete(sid):
 def gh_poll():
     manager.start_github_watcher()
     return jsonify({"ok": True})
+
+
+# ----------------------------------------------------------------------------- repositories + worktrees
+def task_busy(t):
+    return t.get("status") in repos.BUSY or t.get("id") in manager.runners
+
+
+def repo_arg(raw):
+    # Task repositories chosen outside the repositories folder stay reachable, but
+    # only the exact paths Relay already recorded, never anything the client names.
+    return repos.resolve_repo(raw, [t["repo"] for t in manager.tasks if t.get("repo")])
+
+
+@app.get("/api/repos")
+def repos_list():
+    return jsonify(repos.list_repos(manager.tasks))
+
+
+@app.post("/api/repos/<action>")
+def repos_action(action):
+    b = body()
+    path = repo_arg(b.get("path"))
+    try:
+        if action == "fetch":
+            return jsonify(repos.fetch(path, manager.tasks))
+        if action == "pull":
+            return jsonify(repos.pull(path, manager.tasks))
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 502
+    return jsonify({"error": f"Unknown action {action}"}), 404
+
+
+@app.get("/api/repos/graph")
+def repos_graph():
+    return jsonify(repos.branch_graph(repo_arg(request.args.get("path")), manager.tasks))
+
+
+@app.get("/api/worktrees")
+def worktrees_list():
+    return jsonify(repos.list_worktrees(manager.tasks, task_busy))
+
+
+@app.get("/api/worktrees/size")
+def worktrees_size():
+    p = repos.resolve_worktree(request.args.get("path"))
+    return jsonify({"path": str(p), "size": repos.disk_size(p) if p.is_dir() else None})
+
+
+@app.post("/api/worktrees/remove")
+def worktrees_remove():
+    b = body()
+    try:
+        return jsonify(repos.remove_worktree(repos.resolve_worktree(b.get("path")), manager.tasks, task_busy, bool(b.get("discard"))))
+    except PermissionError as e:
+        return jsonify({"error": str(e)}), 409
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.post("/api/worktrees/delete-branch")
+def worktrees_delete_branch():
+    b = body()
+    try:
+        return jsonify(repos.delete_branch(repo_arg(b.get("repo")), b.get("branch"), manager.tasks, task_busy))
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.get("/api/worktrees/cleanup")
+def worktrees_cleanup_preview():
+    return jsonify({"candidates": repos.cleanup_candidates(manager.tasks, task_busy)})
+
+
+@app.post("/api/worktrees/cleanup")
+def worktrees_cleanup():
+    return jsonify(repos.cleanup(body().get("paths") or [], manager.tasks, task_busy))
 
 
 # ----------------------------------------------------------------------------- errors

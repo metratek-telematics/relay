@@ -7,6 +7,7 @@ import { mountTask } from "./views/task.js";
 import { mountSettings } from "./views/settings.js";
 import { mountAgents } from "./views/agents.js";
 import { mountGithub } from "./views/github.js";
+import { mountRepos } from "./views/repos.js";
 import { openNewTask } from "./views/newtask.js";
 import { TABS } from "./views/inspector.js";
 
@@ -123,6 +124,7 @@ function parseRoute() {
   if (!parts.length) return { view: "dashboard", id: null, tab: null, section: null };
   if (parts[0] === "task" && parts[1]) return { view: "task", id: decodeURIComponent(parts[1]), tab: parts[2] || null, section: null };
   if (parts[0] === "settings") return { view: "settings", id: null, tab: null, section: parts[1] || "workflow" };
+  if (parts[0] === "repos") return { view: "repos", id: null, tab: null, section: parts[1] || "list" };
   if (["agents", "github", "tasks", "dashboard"].includes(parts[0])) return { view: parts[0] === "dashboard" ? "dashboard" : parts[0], id: null, tab: null, section: null };
   return { view: "dashboard", id: null, tab: null, section: null };
 }
@@ -139,6 +141,7 @@ function route() {
   else if (r.view === "settings") view = mountSettings(main, r.section);
   else if (r.view === "agents") view = mountAgents(main);
   else if (r.view === "github") view = mountGithub(main);
+  else if (r.view === "repos") view = mountRepos(main, r.section);
   else if (r.view === "tasks") view = mountTasksHome();
   else view = mountDashboard(main);
   renderSidebar();
@@ -336,6 +339,8 @@ function paletteItems() {
     { group: "Navigate", label: "Dashboard", icon: "home", onClick: () => navigate("#/") },
     { group: "Navigate", label: "Agents", icon: "bot", onClick: () => navigate("#/agents") },
     { group: "Navigate", label: "GitHub inbox", icon: "github", onClick: () => navigate("#/github") },
+    { group: "Navigate", label: "Repositories", icon: "folder", keywords: "branches clone git", onClick: () => navigate("#/repos") },
+    { group: "Navigate", label: "Worktrees", icon: "layers", keywords: "clean up repositories", onClick: () => navigate("#/repos/worktrees") },
     { group: "Navigate", label: "Settings", icon: "settings", onClick: () => navigate("#/settings") },
   ];
   if (t) {

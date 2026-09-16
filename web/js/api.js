@@ -69,6 +69,16 @@ export const api = {
   ghDeleteSource: (id) => del(`/api/github/sources/${encodeURIComponent(id)}`),
   ghPoll: () => post("/api/github/poll"),
   notificationsRead: () => post("/api/notifications/read"),
+  repos: () => get("/api/repos"),
+  repoFetch: (path) => post("/api/repos/fetch", { path }),
+  repoPull: (path) => post("/api/repos/pull", { path }),
+  repoGraph: (path) => get(`/api/repos/graph?path=${encodeURIComponent(path)}`),
+  worktrees: () => get("/api/worktrees"),
+  worktreeSize: (path) => get(`/api/worktrees/size?path=${encodeURIComponent(path)}`),
+  removeWorktree: (path, discard) => post("/api/worktrees/remove", { path, discard }),
+  deleteBranch: (repo, branch) => post("/api/worktrees/delete-branch", { repo, branch }),
+  cleanupPreview: () => get("/api/worktrees/cleanup"),
+  cleanup: (paths) => post("/api/worktrees/cleanup", { paths }),
 };
 
 // ---------------------------------------------------------------------------- SSE
