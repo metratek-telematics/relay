@@ -121,6 +121,7 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Duplicate axis labels.** The Finished per day chart labelled two gridlines "1" when at most one task finished a day.
 - **Stale pages after a deploy.** An open browser kept running the previous JavaScript after Relay restarted, so fixed
   buttons still showed old errors. The page now notices the server restart and offers a Reload.
 - **Open folder failed on a server install.** In Docker, the task menu and the Overview tab's Worktree, VS Code and
