@@ -49,6 +49,8 @@ export const api = {
   deleteTask: (id, worktree) => del(`/api/tasks/${encodeURIComponent(id)}${worktree ? "?worktree=1" : ""}`),
   action: (id, action, body = {}) => post(`/api/tasks/${encodeURIComponent(id)}/${action}`, body),
   messages: (id, after = 0, limit = 0) => get(`/api/tasks/${encodeURIComponent(id)}/messages?after=${after}&limit=${limit}`),
+  handoff: (id) => get(`/api/tasks/${encodeURIComponent(id)}/handoff`),
+  branchName: (p) => get(`/api/branch-name?${new URLSearchParams(p)}`),
   files: (id) => get(`/api/tasks/${encodeURIComponent(id)}/files`),
   diff: (id, path) => get(`/api/tasks/${encodeURIComponent(id)}/diff${path ? `?path=${encodeURIComponent(path)}` : ""}`),
   artifact: (id, kind, tail) => get(`/api/tasks/${encodeURIComponent(id)}/artifact/${kind}${tail ? `?tail=${tail}` : ""}`),

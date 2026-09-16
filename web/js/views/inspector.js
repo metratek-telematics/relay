@@ -4,7 +4,7 @@ import { S, agentLabel, agentInitial, ROLE_LABEL, roleAgent, roleModel, roleEffo
 import { api } from "../api.js";
 
 export const TABS = [
-  ["overview", "Overview", "layers"], ["timeline", "Timeline", "activity"], ["changes", "Changes", "branch"],
+  ["overview", "Overview", "layers"], ["result", "Try it", "play"], ["timeline", "Timeline", "activity"], ["changes", "Changes", "branch"],
   ["checks", "Checks", "shield"], ["review", "Review", "eye"], ["repository", "Repository", "folder"],
   ["logs", "Logs", "terminal"], ["sessions", "Sessions", "cpu"],
 ];
@@ -37,6 +37,7 @@ export function mountInspector(container, getTask) {
     try {
       switch (state.tab) {
         case "overview": return renderOverview(t);
+        case "result": return renderResult(t);
         case "timeline": return renderTimeline(t);
         case "changes": return renderChanges(t);
         case "checks": return renderArtifact(t, "verification", "No verification has run yet.", true);
@@ -250,6 +251,30 @@ export function mountInspector(container, getTask) {
   }
 
   // ---------------------------------------------------------------- sessions
+  // ---------------------------------------------------------------- try it
+  async function renderResult(t) {
+    body.innerHTML = '<div class="empty small">Loading…</div>';
+    const h = await api.handoff(t.id);
+    if (state.tab !== "result") return;
+    if (!h.ready) { body.innerHTML = `<div class="empty small">${icon("clock", "lg")}<p>${esc(h.reason)}</p></div>`; return; }
+    const cmds = (s) => s.commands.join("\n");
+    body.innerHTML = `<div class="stack handoff" style="gap:14px">
+      <div class="card"><div class="card-body stack" style="gap:8px">
+        <div class="row between wrap"><span class="row">${icon("branch")}<code class="mono">${esc(h.branch)}</code><button class="btn xs ghost" data-copy="${esc(h.branch)}" title="Copy branch name">${icon("copy", "sm")}</button></span>
+          ${h.pr_url ? `<a class="btn sm" href="${esc(h.pr_url)}" target="_blank" rel="noopener">${icon("external")}PR #${esc(h.pr_number)}</a>` : `<span class="badge ${h.pushed ? "green" : ""}">${h.pushed ? "pushed" : "on this machine only"}</span>`}</div>
+        ${h.diffstat ? `<div class="muted">${esc(h.diffstat)} vs <code>${esc(h.base)}</code></div>` : ""}
+        <div class="row wrap muted" style="gap:6px">${icon("folder", "sm")}<code class="mono truncate" title="${esc(h.worktree)}">${esc(h.worktree)}</code><button class="btn xs ghost" data-copy="${esc(h.worktree)}" title="Copy worktree path">${icon("copy", "sm")}</button>${h.worktree_exists ? "" : '<span class="badge amber">worktree removed</span>'}</div>
+      </div></div>
+      ${h.sections.map((s, i) => `<section class="ho-step">
+        <div class="row between"><h3><span class="ho-n">${i + 1}</span>${esc(s.title)}</h3><button class="btn xs" data-copy-sec="${i}">${icon("copy", "sm")}Copy</button></div>
+        <p class="muted">${esc(s.text).replace(/`([^`]+)`/g, "<code>$1</code>")}</p>
+        <pre class="ho-cmds">${s.commands.map((c) => `<span class="ho-line"><span>${esc(c)}</span><button class="btn xs ghost" data-copy="${esc(c)}" title="Copy this line">${icon("copy", "sm")}</button></span>`).join("")}</pre>
+      </section>`).join("")}
+    </div>`;
+    $$("[data-copy]", body).forEach((b) => (b.onclick = () => copyText(b.dataset.copy)));
+    $$("[data-copy-sec]", body).forEach((b) => (b.onclick = () => copyText(cmds(h.sections[Number(b.dataset.copySec)]))));
+  }
+
   function renderSessions(t) {
     const sess = t.sessions || {};
     const m = t.metrics || {};
@@ -282,6 +307,7 @@ export function mountInspector(container, getTask) {
       if (reason === "event" && state.tab === "timeline") return render();
       if (reason === "artifact" && ["checks", "review", "overview"].includes(state.tab)) return render();
       if (reason === "task" && ["overview", "sessions"].includes(state.tab)) return render();
+      if (reason === "task" && state.tab === "result" && getTask()?.status === "done") return render();
       if (reason === "task" && state.tab === "changes" && !state.diffPath) return render();
       if (reason === "force") return render();
     },

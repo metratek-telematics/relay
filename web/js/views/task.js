@@ -21,9 +21,10 @@ export function mountTask(main, id) {
         <div class="convo-head"><span class="row" style="gap:10px">Team conversation<button class="files-chip" id="filesChip" hidden></button></span><div class="convo-toolbar">
           <button class="btn xs ${S.ui.showTools ? "" : "ghost"}" id="toggleTools" title="Show tool calls">${icon("terminal")}Tools</button>
           <button class="btn xs ${S.ui.showThinking ? "" : "ghost"}" id="toggleThinking" title="Show agent reasoning">${icon("brain")}Reasoning</button>
+          <button class="btn xs ${S.ui.showGit ? "" : "ghost"}" id="toggleGit" title="Show the orchestrator's git and GitHub commands">${icon("branch")}Git</button>
         </div></div>
         <div class="convo-wrap">
-          <div class="convo ${S.ui.showTools ? "" : "hide-tools"} ${S.ui.showThinking ? "" : "hide-thinking"}" id="convo"></div>
+          <div class="convo ${S.ui.showTools ? "" : "hide-tools"} ${S.ui.showThinking ? "" : "hide-thinking"} ${S.ui.showGit ? "" : "hide-git"}" id="convo"></div>
           <button class="btn sm primary jump-latest" id="jumpLatest" hidden>${icon("chevronDown")}Jump to latest</button>
         </div>
         <div class="composer" id="composer"></div>
@@ -38,6 +39,8 @@ export function mountTask(main, id) {
   if (S.route.tab && TABS.some(([k]) => k === S.route.tab)) insp.setTab(S.route.tab);
 
   $("#toggleTools", main).onclick = () => { S.ui.showTools = !S.ui.showTools; $("#convo", main).classList.toggle("hide-tools", !S.ui.showTools); $("#toggleTools", main).classList.toggle("ghost", !S.ui.showTools); };
+  $("#toggleGit", main).onclick = () => { S.ui.showGit = !S.ui.showGit; $("#convo", main).classList.toggle("hide-git", !S.ui.showGit); $("#toggleGit", main).classList.toggle("ghost", !S.ui.showGit); };
+  main.addEventListener("click", (e) => { const b = e.target.closest("[data-open-tab]"); if (b) { if (!S.ui.inspector) $("#inspToggle", main).click(); insp.setTab(b.dataset.openTab); } });
   $("#toggleThinking", main).onclick = () => { S.ui.showThinking = !S.ui.showThinking; $("#convo", main).classList.toggle("hide-thinking", !S.ui.showThinking); $("#toggleThinking", main).classList.toggle("ghost", !S.ui.showThinking); };
 
   // ---------------------------------------------------------------- header
@@ -58,6 +61,7 @@ export function mountTask(main, id) {
       ${active ? `<button class="btn sm danger" data-act="stop">${icon("stop")}Stop</button>` : ""}
       ${["failed", "stopped", "interrupted"].includes(t.status) ? `<button class="btn sm primary" data-act="retry" title="${t.checkpoint ? "Resume from checkpoint using the same agent sessions" : "Start again"}">${icon("retry")}${t.checkpoint ? "Resume" : "Retry"}</button>` : ""}
       ${["queued", "draft"].includes(t.status) ? `<button class="btn sm primary" data-act="start" title="Start this task now, alongside anything already running">${icon("play")}Start now</button>` : ""}
+      ${t.branch ? `<button class="btn sm ${t.status === "done" ? "primary" : ""}" data-open-tab="result" title="Commands to see, run, accept or clean up the result">${icon("play")}Try it</button>` : ""}
       ${t.pr_url ? `<a class="btn sm" href="${esc(t.pr_url)}" target="_blank" rel="noopener">${icon("external")}Open PR</a>` : ""}
       <button class="btn sm icon" id="moreBtn" title="More">${icon("more")}</button>
       <button class="btn sm icon ghost" id="inspToggle" title="Toggle inspector">${icon("panel")}</button>`;

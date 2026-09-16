@@ -14,7 +14,7 @@ export const S = {
   queue: {},
   notifications: [],
   ui: {
-    filter: "all", search: "", showTools: true, showThinking: false, inspector: true, inspectorTab: "overview",
+    filter: "all", search: "", showTools: true, showThinking: false, showGit: false, inspector: true, inspectorTab: "overview",
     theme: "system", density: "comfortable",
   },
 };

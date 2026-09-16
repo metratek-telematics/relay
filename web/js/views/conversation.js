@@ -184,7 +184,7 @@ export function renderMessage(m, t, prevInfo) {
   if (k === "command") {
     const st = m.status || "running";
     const stHtml = st === "running" ? `${icon("spinner", "spin")} running` : st === "error" ? `${icon("x")} exit ${m.rc ?? "?"}${m.duration ? ` · ${fmtDur(m.duration)}` : ""}` : `${icon("check")}${m.duration ? ` ${fmtDur(m.duration)}` : ""}`;
-    return `<div class="m m-cmd m-tool" ${idAttr}>
+    return `<div class="m m-cmd m-tool ${m.role === "git" || m.role === "github" ? "m-git" : ""}" ${idAttr}>
       <div class="tool-row shell ${esc(st)}" data-toggle="tool">
         <span class="tic">${icon("terminal")}</span>
         <span class="truncate"><span class="tname">${esc(ROLE_LABEL[m.role] || m.role)}</span><span class="tsum">$ ${esc(m.content || m.title || "")}</span></span>
@@ -277,7 +277,7 @@ export function renderMessage(m, t, prevInfo) {
   }
   if (k === "complete") {
     return `<div class="m m-complete" ${idAttr}><div class="ccard"><strong>${icon("check")}Delivered</strong><div class="md" style="margin-top:6px">${md(m.content || "")}</div>
-      <div class="row wrap">${m.pr_url ? `<a class="btn sm" href="${esc(m.pr_url)}" target="_blank" rel="noopener">${icon("external")}Open pull request</a>` : ""}${m.branch ? `<span class="badge outline">${icon("branch", "sm")}${esc(m.branch)}</span>` : ""}</div></div></div>`;
+      <div class="row wrap"><button class="btn sm primary" data-open-tab="result">${icon("play")}Try it</button>${m.pr_url ? `<a class="btn sm" href="${esc(m.pr_url)}" target="_blank" rel="noopener">${icon("external")}Open pull request</a>` : ""}${m.branch ? `<span class="badge outline">${icon("branch", "sm")}${esc(m.branch)}</span>` : ""}</div></div></div>`;
   }
   if (k === "file_edit") {
     return `<div class="m m-sys" ${idAttr}>${icon("edit", "sm")} You edited <code>${esc(m.content)}</code> in the worktree</div>`;

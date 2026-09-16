@@ -215,7 +215,8 @@ export function mountSettings(main, section) {
       bindAuto();
     } else if (cur === "git") {
       body.innerHTML = `<div class="card"><div class="card-head"><h3>Git</h3></div><div class="card-body">
-        <div class="grid2"><div class="field"><label>Branch prefix</label><input data-cfg="branch_prefix" value="${esc(c.branch_prefix)}"></div><div class="field"><label>Commit message prefix</label><input data-cfg="commit_message_prefix" value="${esc(c.commit_message_prefix)}"></div></div>
+        <div class="grid2"><div class="field"><label>Branch names</label><select data-cfg="branch_naming"><option value="type" ${(c.branch_naming || "type") === "type" ? "selected" : ""}>By task type: feat/berth-status-page, fix/123-login-timeout</option><option value="prefix" ${c.branch_naming === "prefix" ? "selected" : ""}>With the branch prefix: ${esc(c.branch_prefix || "agent")}/berth-status-page</option></select><div class="help">Suggested from the task name; you can edit it in the New task wizard.</div></div><div class="field"><label>Branch prefix</label><input data-cfg="branch_prefix" value="${esc(c.branch_prefix)}"></div></div>
+        <div class="grid2"><div class="field"><label>Commit message prefix</label><input data-cfg="commit_message_prefix" value="${esc(c.commit_message_prefix)}"></div></div>
         <div class="field inline"><label>Carry uncommitted changes from the source checkout into the worktree</label><span class="switch ${c.snapshot_working_tree ? "on" : ""}" data-sw-cfg="snapshot_working_tree"></span></div>
         <div class="field inline"><label>Copy untracked files too (up to ${esc(c.max_untracked_copy_mb)} MB)</label><span class="switch ${c.copy_untracked_files ? "on" : ""}" data-sw-cfg="copy_untracked_files"></span></div>
         <div class="field inline"><label>Keep worktrees after delivery</label><span class="switch ${c.keep_worktrees ? "on" : ""}" data-sw-cfg="keep_worktrees"></span></div>
