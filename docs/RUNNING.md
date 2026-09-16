@@ -142,8 +142,17 @@ inside a Linux container.
 
 - **Codex runs unsandboxed inside the container.** Its own sandbox relies on kernel features Docker blocks, and the
   container already isolates it. Override with `RELAY_CFG_codex_sandbox` if your host allows it.
-- **Opening folders or VS Code** from the UI is unavailable, since the container has no desktop. The UI shows the
-  path instead.
+- **Environment setup.** Before agents start, Relay runs the repository's own install (`npm ci`, `pnpm install
+  --frozen-lockfile` or `yarn install --frozen-lockfile`) in the task worktree, with a shared package cache in
+  `.cache/npm`. Private registries need their credentials mounted, for example add
+  `- ${HOST_HOME}/.npmrc:/home/relay/.npmrc:ro` in `docker-compose.override.yml`. A failed install becomes a blocked
+  check. A task can set its own `setup_command`; Settings → Verification → Environment turns setup off.
+- **A browser for agents.** The image includes headless Chromium and `relay-screenshot <url> <out.png> [--width]
+  [--height] [--theme light|dark] [--full]`, so the worker can look at the UI it builds.
+- **Browser VS Code.** `docker compose --profile ide up -d` starts code-server on `127.0.0.1:8768`. Put it behind your
+  reverse proxy's login: route `/code` (with the prefix stripped) and `/absproxy` (unchanged, for previews) to it.
+  Set its URL in Settings → Verification → Browser VS Code URL to get Open in VS Code on tasks and repositories and a
+  Preview step in Try it. Without it, Open in VS Code is unavailable since the container has no desktop.
 - **Token refresh.** The CLIs refresh tokens into the mounted login folders. Avoid signing in again on the host while
   a task runs in the container.
 - **Extra toolchains.** Verification commands run inside the container. The image includes Node, Python and Git. For

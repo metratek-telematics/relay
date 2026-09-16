@@ -130,6 +130,7 @@ class Manager:
             "allow_agent_questions": bool(wf_in.get("allow_agent_questions", cfg.get("allow_agent_questions", True))),
             "verification_commands": [c for c in (wf_in.get("verification_commands") or []) if str(c).strip()],
             "auto_detect_verification": bool(wf_in.get("auto_detect_verification", cfg.get("auto_detect_verification", True))),
+            "setup_command": str(wf_in.get("setup_command") or "").strip(),
         }
         return wf
 

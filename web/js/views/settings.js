@@ -217,6 +217,13 @@ export function mountSettings(main, section) {
       <div class="card" style="margin-top:14px"><div class="card-head"><h3>Design gate</h3><span class="badge ${c.design_gate !== false ? "green" : ""}">${c.design_gate !== false ? "enforced" : "off"}</span></div><div class="card-body">
         <div class="field inline"><label>Block delivery when agents add hard-coded colours outside token files, fonts outside the design system, gradient text or a forbidden term</label><span class="switch ${c.design_gate !== false ? "on" : ""}" data-sw-cfg="design_gate"></span></div>
         <div class="field"><label>Forbidden terms (one per line)</label><textarea data-cfg="design_forbidden_terms" data-list="1" rows="3" placeholder="a brand or client name that must never appear">${esc((c.design_forbidden_terms || []).join("\n"))}</textarea><div class="help">Checked in every added line of code, tests and docs, case-insensitive, with words joined by any separator. Stored in Relay's settings only, never written to a repository. A repository can add its own rules in <code>.relay/design-checks.json</code> (token files, fonts).</div></div>
+      
+      </div></div>
+      <div class="card" style="margin-top:14px"><div class="card-head"><h3>Environment</h3></div><div class="card-body">
+        <div class="field inline"><label>Install dependencies before agents start (npm ci, pnpm, yarn from the repository's lockfile)</label><span class="switch ${c.env_prepare !== false ? "on" : ""}" data-sw-cfg="env_prepare"></span></div>
+        <div class="grid2"><div class="field"><label>Setup timeout (minutes)</label><input type="number" min="1" data-cfg="env_prepare_timeout_minutes" value="${esc(c.env_prepare_timeout_minutes || 20)}"></div>
+        <div class="field"><label>Browser VS Code URL</label><input data-cfg="ide_url" value="${esc(c.ide_url || "")}" placeholder="https://relay.example.com/code"><div class="help">code-server base URL. Enables Open in VS Code on tasks and repositories, and preview links in Try it.</div></div></div>
+        <div class="help">Registry credentials come from the files mounted into Relay (for example <code>~/.npmrc</code>). A failed install is recorded as a blocked check; agents never install dependencies themselves.</div>
       </div></div>`;
       bindAuto();
     } else if (cur === "git") {

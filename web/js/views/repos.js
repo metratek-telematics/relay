@@ -135,6 +135,7 @@ export function mountRepos(main, section) {
       menu(btn, [
         { label: "Branch graph", icon: "branch", onClick: () => { ui.graphRepo = r.path; store("relay.graphRepo", r.path); navigate("#/repos/graph"); } },
         { label: "Open on GitHub", icon: "github", disabled: !r.github, onClick: () => window.open(`https://github.com/${r.github}`, "_blank", "noopener") },
+        ...(S.config.ide_url ? [{ label: "Open in VS Code", icon: "code", onClick: () => window.open(`${S.config.ide_url.replace(/\/$/, "")}/?folder=${encodeURIComponent(r.path)}`, "_blank", "noopener") }] : []),
         { label: "Copy path", icon: "copy", onClick: () => copyText(r.path) },
       ]);
       return;

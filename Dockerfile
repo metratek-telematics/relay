@@ -33,6 +33,17 @@ RUN npm install -g \
       "@google/gemini-cli@${GEMINI_VERSION}" \
  && npm cache clean --force
 
+# A headless browser so agents can look at the UI they build (relay-screenshot) and
+# check it in both themes, instead of shipping a redesign nobody has seen.
+ARG PLAYWRIGHT_VERSION=1.63.0
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
+    NODE_PATH=/usr/local/lib/node_modules
+RUN npm install -g "playwright-core@${PLAYWRIGHT_VERSION}" \
+ && npx -y "playwright@${PLAYWRIGHT_VERSION}" install --with-deps chromium-headless-shell \
+ && chmod -R a+rX /opt/ms-playwright \
+ && npm cache clean --force \
+ && rm -rf /var/lib/apt/lists/*
+
 # The node image ships a "node" user at 1000:1000. Reuse or re-number it so the
 # container user matches the host user that owns the mounted files.
 RUN set -eux; \
@@ -50,7 +61,9 @@ RUN python3 -m venv /opt/venv \
  && /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
 
 COPY --chown=${UID}:${GID} . .
-RUN chmod +x /app/docker/entrypoint.sh /app/run.sh
+RUN chmod +x /app/docker/entrypoint.sh /app/run.sh \
+ && printf '#!/bin/sh\nexec node /app/tools/screenshot.cjs "$@"\n' > /usr/local/bin/relay-screenshot \
+ && chmod 755 /usr/local/bin/relay-screenshot
 
 ENV PATH=/opt/venv/bin:$PATH \
     HOME=/home/relay \

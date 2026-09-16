@@ -98,6 +98,7 @@ export function mountInspector(container, getTask) {
         <div class="card"><div class="card-head"><h3>Signals</h3></div><div class="card-body stack">
           <div class="row between"><span>Verification</span>${v ? `<span class="badge ${v.ok ? "green" : "red"}">${v.ok ? "passing" : "failing"}</span>` : '<span class="badge">not run</span>'}</div>
           ${(t.blocked_checks || []).length ? `<div><div class="row between"><span>Checks that could not run</span><span class="badge amber">${t.blocked_checks.length}</span></div>${blockedHtml(t.blocked_checks)}</div>` : ""}
+          ${t.environment && t.environment.command ? `<div class="row between"><span>Environment</span><span class="badge ${t.environment.ok ? "green" : t.environment.skipped ? "" : "amber"}" title="${esc(t.environment.command)}">${t.environment.ok ? `ready · ${fmtDur(t.environment.duration)}` : t.environment.skipped ? "already prepared" : "setup failed"}</span></div>` : ""}
           <div class="row between"><span>Independent review</span>${r ? `<span class="badge ${r.verdict === "PASS" ? "green" : "red"}">${esc(r.verdict)} · round ${r.round}</span>` : '<span class="badge">—</span>'}</div>
           <div class="row between"><span>Diff</span>${t.diffstat ? `<span class="diffstat">${t.diffstat.files} files <span class="a">+${t.diffstat.insertions}</span> <span class="d">−${t.diffstat.deletions}</span></span>` : '<span class="muted">—</span>'}</div>
           <div class="row between"><span>Branch</span><span class="mono truncate" style="max-width:240px">${esc(t.branch || "—")}</span></div>
@@ -442,11 +443,11 @@ export function mountInspector(container, getTask) {
         <div class="row between wrap"><span class="row" style="min-width:0">${icon("branch")}<code class="mono truncate" title="${esc(h.branch)}">${esc(h.branch)}</code><button class="btn xs ghost" data-copy="${esc(h.branch)}" title="Copy branch name">${icon("copy", "sm")}</button></span>
           ${h.pr_url ? `<a class="btn sm" href="${esc(h.pr_url)}" target="_blank" rel="noopener">${icon("external")}PR #${esc(h.pr_number)}</a>` : `<span class="badge ${h.pushed ? "green" : ""}">${h.pushed ? "pushed" : "on this machine only"}</span>`}</div>
         ${h.diffstat ? `<div class="muted">${esc(h.diffstat)} vs <code>${esc(h.base)}</code></div>` : ""}
-        <div class="row wrap muted" style="gap:6px">${icon("folder", "sm")}<code class="mono truncate" title="${esc(h.worktree)}">${esc(h.worktree)}</code><button class="btn xs ghost" data-copy="${esc(h.worktree)}" title="Copy worktree path">${icon("copy", "sm")}</button>${h.worktree_exists ? "" : '<span class="badge amber">worktree removed</span>'}</div>
+        <div class="row wrap muted" style="gap:6px">${icon("folder", "sm")}<code class="mono truncate" title="${esc(h.worktree)}">${esc(h.worktree)}</code><button class="btn xs ghost" data-copy="${esc(h.worktree)}" title="Copy worktree path">${icon("copy", "sm")}</button>${h.ide ? `<a class="btn xs" href="${esc(h.ide)}" target="_blank" rel="noopener">${icon("code", "sm")}Open in VS Code</a>` : ""}${h.worktree_exists ? "" : '<span class="badge amber">worktree removed</span>'}</div>
       </div></div>
       ${h.sections.map((s, i) => `<section class="ho-step">
         <div class="row between"><h3><span class="ho-n ${s.merged ? "ok" : ""}">${s.merged ? icon("check", "sm") : i + 1}</span>${esc(s.title)}</h3>${s.commands.length ? `<button class="btn xs" data-copy-sec="${i}">${icon("copy", "sm")}Copy</button>` : '<span class="badge purple">merged</span>'}</div>
-        <p class="muted">${esc(s.text).replace(/`([^`]+)`/g, "<code>$1</code>")}</p>
+        <p class="muted">${esc(s.text).replace(/`([^`]+)`/g, "<code>$1</code>")}</p>${s.link ? `<p><a class="btn sm" href="${esc(s.link)}" target="_blank" rel="noopener">${icon("external")}${esc(s.link_label || "Open")}</a></p>` : ""}
         ${s.commands.length ? `<pre class="ho-cmds">${s.commands.map((c) => `<span class="ho-line"><span>${esc(c)}</span><button class="btn xs ghost" data-copy="${esc(c)}" title="Copy this line">${icon("copy", "sm")}</button></span>`).join("")}</pre>` : ""}
       </section>`).join("")}
     </div>`;
