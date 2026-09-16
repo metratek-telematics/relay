@@ -25,7 +25,9 @@ A good work package names:
 
 Split work by independently verifiable concern when doing so creates a clear dependency boundary or reduces scope. Do not split merely to satisfy a package count, and keep tiny changes together.
 
-Typical sequence for a cross-cutting page change: data and behaviour → UI → tests. Verification is not a work package: the orchestrator runs it, and the reviewer checks the result.
+Typical sequence for a cross-cutting page change: data and behaviour → UI → tests and docs. When the UI package is large (a page redesign), tests and documentation are their own following package. Verification is not a work package: the orchestrator runs it, and the reviewer checks the result.
+
+The plan lists worker packages only. Your own inspection, decisions and gates are not packages.
 
 Keep each instruction short. Name the concern, the files and the expected result; the context packet already carries the repository context, so do not restate it. An instruction that needs forty lines is really several packages.
 

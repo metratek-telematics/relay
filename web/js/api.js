@@ -1,5 +1,5 @@
 // HTTP + Server-Sent Events client for the local backend.
-export const conn = { online: false, stream: false, lastError: null, listeners: new Set() };
+export const conn = { online: false, stream: false, signedOut: false, lastError: null, listeners: new Set() };
 
 function notifyConn() { for (const fn of conn.listeners) { try { fn(conn); } catch {} } }
 
@@ -112,6 +112,12 @@ export function onConnection(fn) { conn.listeners.add(fn); return () => conn.lis
 let bootSeen = null, reloadOffered = false;
 setInterval(async () => {
   try {
+    // Behind a login proxy an expired session answers with a redirect to the sign-in page, which a normal
+    // fetch follows cross-origin and reports as a network failure. Ask without following it instead.
+    const raw = await fetch("/api/ping", { cache: "no-store", redirect: "manual" });
+    const signedOut = raw.type === "opaqueredirect" || raw.status === 401;
+    if (signedOut !== conn.signedOut) { conn.signedOut = signedOut; notifyConn(); }
+    if (signedOut) return;
     const r = await get("/api/ping");
     if (!r.boot) return;
     if (bootSeen === null) { bootSeen = r.boot; return; }

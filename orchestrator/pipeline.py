@@ -375,6 +375,9 @@ class Pipeline:
             self.state = {"phase": "kickoff", "turn": 0, "review_round": 0, "awaiting": "supervisor"}
             self.sessions = {}
             self.r.status("running", "Preparing isolated worktree")
+            if int(t.get("runs") or 1) > 1:
+                self.r.msg(role="orchestrator", agent=None, kind="notice", turn=0,
+                           content=f"Run {t['runs']} · retried from scratch. Everything above belongs to earlier runs.")
             self.r.timeline("system", "Task started", t["name"])
             self.wt, self.branch = gitops.create_worktree(self.r, t, self.cfg, self.run_dir)
             self.r.timeline("git", "Worktree ready", f"{self.branch} → {self.wt}")
