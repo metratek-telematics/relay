@@ -183,6 +183,22 @@ export function renderMessage(m, t, prevInfo) {
       <div class="tool-detail" hidden>${rawDetail}</div>
     </div>`;
   }
+  if (k === "connector") {
+    // A call an agent made through relay-connect, performed and recorded by Relay.
+    const st = m.status || "ok";
+    const took = m.duration ? (m.duration < 1 ? `${Math.round(m.duration * 1000)} ms` : fmtDur(m.duration)) : "";
+    const stHtml = st === "refused" ? `<span class="badge amber">refused</span>` : st === "error" ? `${icon("x")} failed${took ? ` · ${took}` : ""}` : `${icon("check")}${took ? ` ${took}` : ""}`;
+    const env = m.environment ? `<span class="badge ${m.environment === "prod" ? "red" : m.environment === "staging" ? "amber" : "green"}">${esc(m.environment)}</span>` : "";
+    return `<div class="m m-tool m-connector ${cont ? "cont" : ""}" ${idAttr}>
+      <div class="m-head">${whoAv(m)}<strong>${whoName(m)}</strong><time>${time}</time></div>
+      <div class="tool-row connector ${esc(st)}" data-toggle="tool" title="${esc(m.summary || "")}">
+        <span class="tic">${icon("zap")}</span>
+        <span class="truncate"><span class="tname">${esc(m.connector)}</span><span class="tsum">${esc(m.operation || "")}${m.summary && st !== "refused" ? ` · ${esc(m.summary)}` : ""}</span></span>
+        <span class="tst">${env}${stHtml}</span>
+      </div>
+      <div class="tool-detail" hidden><div class="td-lbl">Connector call · ${esc(m.ctype || "")}</div><pre>relay-connect · ${esc(m.connector)} · ${esc(m.operation || "")}</pre><div class="td-lbl">Result</div><pre>${esc(m.output || "(empty)")}</pre></div>
+    </div>`;
+  }
   if (k === "command") {
     const st = m.status || "running";
     const stHtml = st === "running" ? `${icon("spinner", "spin")} running` : st === "interrupted" ? `${icon("x")} interrupted by a restart` : st === "error" ? `${icon("x")} exit ${m.rc ?? "?"}${m.duration ? ` · ${fmtDur(m.duration)}` : ""}` : `${icon("check")}${m.duration ? ` ${fmtDur(m.duration)}` : ""}`;

@@ -18,7 +18,7 @@ import traceback
 from pathlib import Path
 
 from . import config as C
-from . import commitguard, designcheck, environment, gitops, github, judge, lessons, protocol, repo_env
+from . import commitguard, connectors, designcheck, environment, gitops, github, judge, lessons, protocol, repo_env
 from .runner import Interrupted, Stopped, TurnTimeout
 from .util import APP_DIR, new_id, now, quiet, read_text, truncate, write_text
 
@@ -430,6 +430,9 @@ class Pipeline:
             state = "installed" if info.get("ok") else ("already present" if info.get("skipped") else "FAILED, see blocked checks")
             lines.append(f"- Dependencies: Relay ran `{info['command']}` before you started ({state}). Do not install dependencies another way.")
         described = repo_env.describe(getattr(self, "repo_env", None) or repo_env.empty())
+        if described:
+            lines.append(described)
+        described = connectors.describe(getattr(self, "connector_names", None) or [], self.run_dir / "screenshots")
         if described:
             lines.append(described)
         if self.wt and environment.venv_bin(self.wt):
@@ -1402,10 +1405,31 @@ class Pipeline:
             if a and a not in C.AGENTS:
                 raise RuntimeError(f"Unknown agent '{a}' for the {r} role.")
 
+    # ------------------------------------------------------------ connectors
+    def connect_start(self):
+        """Scope the task's connectors and hand agents a token that only works while this run lasts."""
+        names = connectors.names_for_task(self.task)
+        self.connector_names = names
+        if not names:
+            return
+        token = connectors.issue_token(self.tid, names)
+        self.r.set_agent_env({"RELAY_CONNECT_URL": connectors.relay_url(), "RELAY_CONNECT_TOKEN": token,
+                              "RELAY_CONNECT_BIN": str(connectors.BIN_DIR)})
+        repo_mask = repo_env.masker(getattr(self, "repo_env", None) or repo_env.empty())
+        conn_mask = connectors.masker([c for c in connectors.load_all() if c["name"] in names], [token])
+        self.r.set_masker(lambda s: conn_mask(repo_mask(s)))
+        self.m.set_meta(self.tid, connectors_active=names)
+        self.r.timeline("system", "Connectors available", ", ".join(names))
+
+    def connect_stop(self):
+        connectors.revoke_task(self.tid)
+        self.r.set_agent_env({})
+
     def run(self):
         self.validate_team()
         self.prepare()
         try:
+            self.connect_start()
             if self.state.get("phase") == "kickoff":
                 self.kickoff()
             if self.state.get("phase") == "dialogue":
@@ -1415,6 +1439,7 @@ class Pipeline:
             if self.state.get("phase") == "deliver":
                 self.deliver()
         finally:
+            self.connect_stop()
             self.stop_services()
 
 

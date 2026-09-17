@@ -64,8 +64,11 @@ COPY --chown=${UID}:${GID} . .
 RUN chmod +x /app/docker/entrypoint.sh /app/run.sh \
  && printf '#!/bin/sh\nexec node /app/tools/screenshot.cjs "$@"\n' > /usr/local/bin/relay-screenshot \
  && chmod 755 /usr/local/bin/relay-screenshot \
+ && chmod 755 /app/tools/bin/relay-connect \
+ && ln -sf /app/tools/bin/relay-connect /usr/local/bin/relay-connect \
  && printf '# Relay: agent shell tools run as login shells, which reset PATH here; keep the task PATH (worktree .venv, agents).\nif [ -n "${RELAY_PATH:-}" ]; then PATH="$RELAY_PATH"; export PATH; fi\n' > /etc/profile.d/relay-path.sh \
  && chmod 644 /etc/profile.d/relay-path.sh
+# relay-connect: agents reach the environments behind the code through Relay (see orchestrator/connectors.py).
 
 ENV PATH=/opt/venv/bin:$PATH \
     HOME=/home/relay \

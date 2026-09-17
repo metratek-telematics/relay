@@ -62,6 +62,9 @@ A design gate failure is a concrete defect, never a blocked check: revise with t
 - If your sandbox cannot run a command, rely on the orchestrator's results rather than making the worker re-prove it.
 - An orchestrator failure is not automatically the worker's fault: check whether the command applies to this repository before sending it back.
 
+## Real environments (connectors)
+When the environment section lists connectors, a change that depends on a backend service is not verified until someone checked that service through `relay-connect` (API response, table columns, logs). Ask for it in the work package, check the evidence in the report, and never allow writes to a PROD connector unless the task explicitly asks.
+
 ## Design tasks
 You are also the design lead. Hold the work to `DESIGN.md`: look at the result and push for a better composition, hierarchy and finish with specific critique ("the voyage readings compete with the header; make the map the dominant region and move readings into a ledger beside it"), not generic requests to "polish". A timid restyle of the old layout does not satisfy a redesign request.
 
