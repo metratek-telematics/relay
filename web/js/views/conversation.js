@@ -261,7 +261,7 @@ export function renderMessage(m, t, prevInfo) {
     const findings = (m.findings || []).length ? `<ul class="findings">${m.findings.map((f) => `<li class="${esc(f.severity || "blocking")}"><code>${esc(f.file || "")}</code> ${esc(f.problem || "")}${f.fix ? `<div class="fix">Fix: ${esc(f.fix)}</div>` : ""}</li>`).join("")}</ul>` : "";
     return `<div class="m m-handoff" ${idAttr}>
       <div class="hcard ${pass ? "done" : "error"}">
-        <div class="hcard-head"><span class="flow">${whoAv(m, "sm")}</span><span class="ttl">Independent review · ${pass ? "approved" : "blocked"}</span><span class="badge ${pass ? "green" : "red"}">${esc(m.verdict || "")}</span><time>${time}</time></div>
+        <div class="hcard-head"><span class="flow">${whoAv(m, "sm")}</span><span class="ttl">${m.subject === "design" ? "Design review" : "Independent review"} · ${pass ? "approved" : "blocked"}</span><span class="badge ${pass ? "green" : "red"}">${esc(m.verdict || "")}</span><time>${time}</time></div>
         ${m.summary ? `<div class="hcard-body" style="padding-bottom:0"><div class="summary">${esc(m.summary)}</div></div>` : ""}
         <div class="hcard-body md">${findings || md(m.content || "")}</div>
       </div>
