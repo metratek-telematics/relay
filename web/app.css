@@ -995,3 +995,33 @@ html.nav-collapsed .nav-user .org-setup-pill, html[data-view="work"] .nav-user .
   .nav-project .org-proj-name, .nav-project .org-proj-btn > .ic, .nav-user .org-setup-pill { display: none; }
   .nav-foot { flex-direction: column; }
 }
+
+/* ---------------------------------------------------------------- visual QA fixes */
+.org-person span.org-av, .org-av { display: inline-grid; place-items: center; }
+.org-person span.org-av > span { display: block; }
+.ring-score b { color: var(--text); }
+.tpl-role { color: var(--text-2); }
+.feed-row time { color: var(--text-2); }
+.live-dot, .live-dot::after, .dot.ok, .dot.on { background: var(--ok-fill); }
+.dot.warn { background: var(--warn-fill); }
+.dot.alarm, .dot.off { background: var(--alarm-fill); }
+.st-done .st-dot, .st-done .ol-dot, .ol-sub.done .ol-sub-dot { background: var(--ok-fill); border-color: var(--ok-fill); }
+.pk-bar i, .sw.ok, .trend-svg .tr-ok { background: var(--ok-fill); }
+.trend-svg .tr-ok { fill: color-mix(in srgb, var(--ok-fill) 80%, transparent); }
+.agent-card::before, .wcard.is-live { border-left-color: var(--ok-fill); }
+.agent-card::before { background: var(--ok-fill); }
+.team-member.on { box-shadow: 0 0 0 2px var(--panel), 0 0 0 3.5px var(--ok-fill); }
+.th-role.on .th-ring { border-color: var(--ok-fill); }
+.ring-score.tone-ok .sr-val { stroke: var(--ok-fill); }
+.ring-score.tone-warn .sr-val { stroke: var(--warn-fill); }
+.ring-score.tone-alarm .sr-val { stroke: var(--alarm-fill); }
+.metric.is-attn::before { background: var(--warn-fill); }
+.nav-foot { flex-wrap: wrap; row-gap: 6px; }
+.nav-foot .nav-user:not(:empty) + .conn { flex-basis: 100%; }
+.nav-user { flex: 1; min-width: 0; }
+.nav-user .org-user-btn { margin-left: auto; }
+html.nav-collapsed .nav-user .org-user-btn, html[data-view="work"] .nav-user .org-user-btn { margin: 0 auto; }
+.org-filters .grow { flex: 1 1 280px; min-width: min(100%, 240px); }
+.org-filters .grow input { width: 100%; }
+.card-head select, .org-main select:not(.input):not([class*="select"]) { height: 30px; border: 1px solid var(--border); border-radius: var(--r); background: var(--panel); color: var(--text); padding: 0 8px; font-size: var(--fs-xs); }
+.org-step.done .org-step-n, .org-step.next .org-step-n { color: var(--on-accent); }

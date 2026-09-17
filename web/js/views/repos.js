@@ -174,6 +174,7 @@ export function mountRepos(main, section) {
       <div class="modal-actions"><button class="btn" data-close>Cancel</button><button class="btn primary" id="clGo">${icon("download")}Clone</button></div>`);
     const help = $("#clHelp", m.body);
     api.ghRepos().then((r) => {
+      if (r.error && !r.repos.length) throw new Error(r.error);
       $("#clList", m.body).innerHTML = r.repos.map((x) => `<option value="${esc(x.repo)}">${esc([x.private ? "private" : "public", x.description].filter(Boolean).join(" · "))}</option>`).join("");
       help.textContent = `${r.repos.length} repositories available from GitHub.`;
     }).catch((e) => { help.textContent = `Could not list GitHub repositories (${e.message}). You can still type owner/repository or a git URL.`; });

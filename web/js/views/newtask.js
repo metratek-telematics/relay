@@ -143,6 +143,7 @@ export function openNewTask(prefill = {}) {
     const list = $("#cloneRepos", body), help = $("#cloneHelp", body); if (!list) return;
     try {
       const r = await api.ghRepos();
+      if (r.error && !r.repos.length) throw new Error(r.error);
       list.innerHTML = r.repos.map((x) => `<option value="${esc(x.repo)}">${esc([x.private ? "private" : "public", x.description].filter(Boolean).join(" · "))}</option>`).join("");
       help.textContent = `${r.repos.length} repositories available. Clones go to ${r.root}; an existing clone is fetched and reused.`;
     } catch (e) { help.textContent = `Could not list GitHub repositories (${e.message}). You can still type owner/repository or a git URL.`; }

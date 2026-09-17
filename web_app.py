@@ -873,7 +873,8 @@ def gh_repos():
     try:
         return jsonify({"repos": github.accessible_repos(force=request.args.get("force") == "1"), "root": str(github.clone_root())})
     except RuntimeError as e:
-        return jsonify({"error": str(e), "repos": [], "root": str(github.clone_root())}), 502
+        # An expected state (gh missing or signed out), not a server fault: the dialog explains it.
+        return jsonify({"error": str(e), "repos": [], "root": str(github.clone_root())})
 
 
 @app.post("/api/github/clone")

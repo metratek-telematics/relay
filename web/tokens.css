@@ -29,7 +29,7 @@
   --surface-container-highest: 40 18% 84%;
   --on-surface: 214 44% 14%;
   --on-surface-variant: 214 16% 36%;
-  --on-surface-muted: 214 11% 45%;
+  --on-surface-muted: 214 12% 40%;
   --outline-variant: 40 20% 85%;
   --outline: 40 13% 72%;
   /* brand */
@@ -44,6 +44,13 @@
   --state-alarm: 4 76% 46%;
   --state-info: 212 72% 42%;
   --state-review: 262 38% 50%;
+  /* the same states as text: darker on light surfaces so small labels on tints keep AA contrast */
+  --state-ok-ink: 150 62% 24%;
+  --state-warn-ink: 28 90% 29%;
+  --state-alarm-ink: 4 76% 38%;
+  --state-info-ink: 212 76% 34%;
+  --state-review-ink: 262 44% 42%;
+  --primary-ink: 190 86% 22%;
   /* code surfaces stay dark in both themes */
   --code-surface: 206 34% 11%;
   --code-ink: 196 22% 86%;
@@ -74,7 +81,7 @@ html[data-theme="dark"] {
   --surface-container-highest: 204 20% 21%;
   --on-surface: 190 24% 92%;
   --on-surface-variant: 195 14% 72%;
-  --on-surface-muted: 196 10% 58%;
+  --on-surface-muted: 196 11% 62%;
   --outline-variant: 202 16% 21%;
   --outline: 200 12% 32%;
   --primary: 186 62% 52%;
@@ -87,6 +94,12 @@ html[data-theme="dark"] {
   --state-alarm: 6 84% 68%;
   --state-info: 205 78% 64%;
   --state-review: 262 62% 76%;
+  --state-ok-ink: 152 60% 60%;
+  --state-warn-ink: 38 94% 66%;
+  --state-alarm-ink: 6 90% 74%;
+  --state-info-ink: 205 84% 72%;
+  --state-review-ink: 262 70% 82%;
+  --primary-ink: 186 66% 62%;
   --code-surface: 206 40% 6%;
   --code-ink: 196 22% 86%;
   --agent-codex: 226 78% 74%;
@@ -119,15 +132,15 @@ html[data-theme="dark"] {
   --codex: hsl(var(--agent-codex));
   --claude: hsl(var(--agent-claude));
   --gemini: hsl(var(--agent-gemini));
-  --green: hsl(var(--state-ok));
+  --green: hsl(var(--state-ok-ink));
   --green-soft: hsl(var(--state-ok) / .13);
-  --amber: hsl(var(--state-warn));
+  --amber: hsl(var(--state-warn-ink));
   --amber-soft: hsl(var(--state-warn) / .14);
-  --red: hsl(var(--state-alarm));
+  --red: hsl(var(--state-alarm-ink));
   --red-soft: hsl(var(--state-alarm) / .12);
-  --blue: hsl(var(--state-info));
+  --blue: hsl(var(--state-info-ink));
   --blue-soft: hsl(var(--state-info) / .12);
-  --purple: hsl(var(--state-review));
+  --purple: hsl(var(--state-review-ink));
   --purple-soft: hsl(var(--state-review) / .13);
   --code-bg: hsl(var(--code-surface));
   --code-fg: hsl(var(--code-ink));
@@ -136,6 +149,9 @@ html[data-theme="dark"] {
   --shadow-3: var(--shadow-xl);
   --on-accent: hsl(var(--on-primary));
   --brass: hsl(var(--accent-brand));
+  --accent-ink: hsl(var(--primary-ink));
+  /* fills that should stay bright (dots, bars, rings) use the base state colours */
+  --ok-fill: hsl(var(--state-ok)); --warn-fill: hsl(var(--state-warn)); --alarm-fill: hsl(var(--state-alarm)); --info-fill: hsl(var(--state-info));
 }
 html[data-theme="dark"] { --panel: hsl(var(--surface-container)); --panel-2: hsl(var(--surface-container-high)); --panel-3: hsl(var(--surface-container-highest)); }
 
