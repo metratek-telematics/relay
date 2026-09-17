@@ -390,7 +390,7 @@ def plan_capacity(roles: dict, state_of, settings: dict) -> dict:
     if blocked:
         resets = [b.get("resets_at") for b in blocked]
         until = None if any(r is None for r in resets) else max(resets)
-        return {"ok": False, "wait_until": until, "reason": "; ".join(b["reason"] for b in blocked), "blocked": blocked}
+        return {"ok": False, "wait_until": until, "reason": "; ".join(dict.fromkeys(b["reason"] for b in blocked)), "blocked": blocked}
     return {"ok": True, "roles": new_roles, "switches": switches}
 
 
