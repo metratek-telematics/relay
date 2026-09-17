@@ -6,8 +6,10 @@ import { workflowEditor } from "./newtask.js";
 import { NOTIFY_EVENTS, chime, permission, requestPermission, showDesktop } from "../notify.js";
 import { openShortcuts, keysFor } from "../shortcuts.js";
 import { mountConnectors } from "./connectors.js";
+import { mountTools } from "./tools.js";
+import { mountTokens } from "./tokens.js";
 
-const SECTIONS = [["workflow", "Workflow", "layers"], ["autopilot", "Autopilot", "clock"], ["agents", "Agents", "bot"], ["budget", "Usage & budget", "gauge"], ["verification", "Verification", "shield"], ["git", "Git & GitHub", "github"], ["connectors", "Connectors", "zap"], ["appearance", "Appearance", "sun"], ["notifications", "Notifications", "bell"], ["prompts", "Saved prompts", "message"], ["rules", "Rules", "docs"], ["about", "About", "info"], ["workspace", "Workspace & access", "user"]];
+const SECTIONS = [["workflow", "Workflow", "layers"], ["autopilot", "Autopilot", "clock"], ["agents", "Agents", "bot"], ["budget", "Usage & budget", "gauge"], ["verification", "Verification", "shield"], ["git", "Git & GitHub", "github"], ["connectors", "Connectors", "zap"], ["tools", "Tools", "package"], ["tokens", "Token efficiency", "gauge"], ["appearance", "Appearance", "sun"], ["notifications", "Notifications", "bell"], ["prompts", "Saved prompts", "message"], ["rules", "Rules", "docs"], ["about", "About", "info"], ["workspace", "Workspace & access", "user"]];
 
 // Scorecards, retrospectives and lessons (orchestrator/learning.py).
 function learningCard(c) {
@@ -317,6 +319,10 @@ export function mountSettings(main, section) {
       renderPrompts(c);
     } else if (cur === "connectors") {
       mountConnectors(body);
+    } else if (cur === "tools") {
+      mountTools(body);
+    } else if (cur === "tokens") {
+      mountTokens(body);
     } else if (cur === "rules") {
       body.innerHTML = `<div class="card"><div class="card-head"><h3>Engineering rules</h3><span class="muted" style="font-size:12px">Injected into agent prompts by role</span></div><div class="card-body"><div class="row wrap" id="ruleList"></div><div id="ruleEd" style="margin-top:12px"></div></div></div>`;
       api.rules().then((rows) => {

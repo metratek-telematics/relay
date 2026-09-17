@@ -463,6 +463,15 @@ def queue_eta(queued: list, running: list, history: list, parallel: int, start_t
 
 
 # ============================================================================ inbox
+def _pending_tool_requests() -> int:
+    """Agents' tool requests waiting for the owner (orchestrator/toolbox.py) also count as Needs you."""
+    try:
+        from . import toolbox
+        return len(toolbox.requests("pending"))
+    except Exception:
+        return 0
+
+
 def inbox_items(tasks: list, settings: dict | None = None) -> list[dict]:
     """Everything that waits for the owner, oldest first."""
     by_id = {t["id"]: t for t in tasks}
@@ -1012,7 +1021,7 @@ class Autopilot:
             "state": state, "label": lbl, "until": until, "until_text": datetime.fromtimestamp(until).strftime("%a %H:%M") if until else "",
             "paused": bool(s.get("paused")), "queue_running": bool(m.scheduler), "max_parallel": m.max_parallel,
             "running": len(running), "parked": len(parked), "queued": len(queued), "waiting_dependencies": len(waiting_dep),
-            "needs_you": len(inbox_items(rows, s)), "quiet_hours": quiet_now(local_now(s, ts), s),
+            "needs_you": len(inbox_items(rows, s)) + _pending_tool_requests(), "quiet_hours": quiet_now(local_now(s, ts), s),
             "window_closes": close.timestamp() if close else None,
             "limit_wait": self.limit_wait,
             "today_cost_usd": spend_since(rows, day_start_ts(s, ts))["cost_usd"], "daily_cap_usd": float(s.get("daily_cost_cap_usd") or 0),

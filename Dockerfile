@@ -19,7 +19,7 @@ ARG GEMINI_VERSION=latest
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      python3 python3-venv ca-certificates curl git openssh-client bash procps tini gnupg bzip2 \
+      python3 python3-venv ca-certificates curl git openssh-client bash procps tini gnupg bzip2 ripgrep jq \
  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
@@ -82,8 +82,9 @@ RUN chmod +x /app/docker/entrypoint.sh /app/run.sh \
  && chmod 755 /usr/local/bin/relay-screenshot \
  && printf '#!/bin/sh\nexec /opt/venv/bin/python /app/tools/relay_stack.py "$@"\n' > /usr/local/bin/relay-stack \
  && chmod 755 /usr/local/bin/relay-stack \
- && chmod 755 /app/tools/bin/relay-connect \
+ && chmod 755 /app/tools/bin/relay-connect /app/tools/bin/relay-tools \
  && ln -sf /app/tools/bin/relay-connect /usr/local/bin/relay-connect \
+ && ln -sf /app/tools/bin/relay-tools /usr/local/bin/relay-tools \
  && printf '# Relay: agent shell tools run as login shells, which reset PATH here; keep the task PATH (worktree .venv, agents).\nif [ -n "${RELAY_PATH:-}" ]; then PATH="$RELAY_PATH"; export PATH; fi\n' > /etc/profile.d/relay-path.sh \
  && chmod 644 /etc/profile.d/relay-path.sh
 # relay-connect: agents reach the environments behind the code through Relay (see orchestrator/connectors.py).

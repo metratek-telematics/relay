@@ -1,0 +1,45 @@
+/* Settings → Tools (views/tools.js) and Settings → Token efficiency (views/tokens.js). */
+.tb-list, .tb-reqs { display: grid; gap: 10px; }
+.tb-item { border: 1px solid var(--border); border-radius: var(--r); background: var(--bg); padding: 12px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; align-items: start; }
+.tb-main { min-width: 0; display: grid; gap: 4px; }
+.tb-desc { font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.tb-meta { font-size: var(--fs-xs); color: var(--text-3); min-width: 0; }
+.tb-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: flex-end; }
+.tb-enable { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--text-2); margin-right: 4px; }
+.tb-res, .tb-log { grid-column: 1 / -1; min-width: 0; }
+.tb-log { margin: 0; max-height: 200px; overflow: auto; font-family: var(--mono); font-size: var(--fs-xs); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-2); background: var(--panel-2); border-radius: var(--r-sm); padding: 8px; }
+.tb-req { border: 1px solid var(--border); border-left: 3px solid var(--amber); border-radius: var(--r-sm); padding: 10px; background: var(--bg); display: grid; gap: 6px; min-width: 0; }
+.tb-why { font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.tb-proposal { font-size: var(--fs-xs); color: var(--text-2); background: var(--panel-2); border-radius: var(--r-sm); padding: 6px 8px; overflow-wrap: anywhere; }
+.tb-decided { margin-top: 12px; display: grid; gap: 2px; }
+.tb-catalog { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr)); gap: 10px; }
+.tb-cat { border: 1px solid var(--border); border-radius: var(--r); padding: 10px 12px; background: var(--bg); display: grid; gap: 6px; align-content: start; min-width: 0; }
+.tb-cat .tb-meta a { display: inline-flex; align-items: center; gap: 2px; }
+.tb-builtins { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: 4px 16px; }
+.tb-builtin { display: grid; grid-template-columns: 96px minmax(0, auto) minmax(0, 1fr); gap: 8px; align-items: center; padding: 4px 0; font-size: var(--fs-sm); min-width: 0; }
+.tb-builtin .badge { justify-self: start; }
+.tb-pair input[data-pv] { font-family: var(--mono); }
+
+.tk-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.tk-kpi { border: 1px solid var(--border); border-radius: var(--r); padding: 10px 12px; background: var(--bg); min-width: 0; }
+.tk-kpi .lbl { font-size: var(--fs-xs); color: var(--text-3); }
+.tk-kpi .val { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; color: var(--text); }
+.tk-kpi .sub { font-size: var(--fs-xs); color: var(--text-2); }
+.tk-bars { display: grid; gap: 6px; }
+.tk-bar { display: grid; grid-template-columns: minmax(90px, 200px) minmax(0, 1fr) 56px; gap: 10px; align-items: center; font-size: var(--fs-sm); min-width: 0; padding: 2px 0; }
+.tk-bar:hover .tk-fill { background: var(--accent-2); }
+.tk-bar-label { color: var(--text-2); }
+.tk-track { height: 10px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
+.tk-fill { display: block; height: 100%; background: var(--accent); border-radius: 0 4px 4px 0; }
+.tk-bar-val { text-align: right; font-variant-numeric: tabular-nums; color: var(--text); }
+.tk-table-wrap { overflow-x: auto; width: 0; min-width: 100%; } /* the table scrolls inside its card instead of widening the page */
+.tk-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+.tk-table th { text-align: left; font-weight: 600; color: var(--text-3); font-size: var(--fs-xs); padding: 4px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.tk-table td { padding: 5px 8px; border-bottom: 1px solid var(--border); }
+.tk-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tk-name { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 700px) {
+  .tb-item { grid-template-columns: minmax(0, 1fr); }
+  .tb-actions { justify-content: flex-start; }
+  .tk-bar { grid-template-columns: minmax(70px, 110px) minmax(0, 1fr) 48px; }
+}

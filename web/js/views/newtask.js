@@ -3,6 +3,7 @@ import { $, $$, esc, icon, modal, toast, basename } from "../ui.js";
 import { S, agentLabel, agentInitial, navigate, defaultModelLabel } from "../state.js";
 import { api } from "../api.js";
 import { connectorPicker } from "./connectors.js";
+import { mountTaskTools } from "./tools.js";
 import { mountTeamAdvice, mountRiskCheck } from "./advice.js";
 
 export function workflowEditor(host, wf, { agents, presets, showAdvanced = true, onChange }) {
@@ -96,6 +97,7 @@ export function openNewTask(prefill = {}) {
     depends_on: edit?.depends_on ? [...edit.depends_on] : parent && parent.status !== "done" ? [parent.id] : [],
     retry: edit?.retry_policy?.infra ?? "", cost_cap: edit?.cost_cap_usd || "",
     connectors: edit?.connectors || parent?.connectors || null, // null: the repository's default connectors
+    tools: edit?.tools || parent?.tools || null, // null: global and repository tools (Settings → Tools)
     // Learning: who chose the team (default · recommended · manual). A hand-picked team is never replaced by autopilot's auto-pick.
     teamSource: edit || parent ? "manual" : "default",
   };
@@ -326,9 +328,12 @@ export function openNewTask(prefill = {}) {
         ${autopilotOptions(data, edit)}
         <details class="field conn-task" id="connBox" style="margin-top:14px"><summary class="field-label">Advanced · connectors <span class="muted" id="connSum">loading…</span></summary>
           <div id="connPick" style="margin-top:8px"></div><div class="help">Real environments the agents may check through Relay. The default is the repository's connectors, never production.</div></details>
+        <details class="field conn-task" id="toolBox" style="margin-top:10px"><summary class="field-label">Advanced · tools <span class="muted" id="toolSum">loading…</span></summary>
+          <div id="toolPick" style="margin-top:8px"></div><div class="help">MCP servers and command-line tools the agents get. The default is every tool enabled for all tasks plus this repository's.</div></details>
         ${!edit ? `<div class="field inline" style="margin-top:14px"><label>Queue immediately (and start the queue if idle)</label><span class="switch ${data.queue ? "on" : ""}" id="qSwitch"></span></div>` : ""}
         <div class="modal-actions"><button type="button" class="btn" id="wBack">Back</button><span style="flex:1"></span><button type="button" class="btn primary" id="wCreate">${icon(edit ? "save" : "sparkles")}${edit ? "Save" : data.queue ? "Create & queue" : "Create draft"}</button></div>`;
       $("#wBack", body).onclick = () => go(3);
+      mountTaskTools($("#toolPick", body), $("#toolSum", body), data);
       if ($("#riskCheck", body)) mountRiskCheck($("#riskCheck", body), adviceDraft, { onChange: (patch) => {
         if (patch.workflow) { if (JSON.stringify(patch.workflow.roles) !== JSON.stringify(data.workflow.roles)) data.teamSource = "manual"; data.workflow = patch.workflow; }
         if (patch.requirements !== undefined) data.requirements = patch.requirements;
@@ -364,6 +369,7 @@ export function openNewTask(prefill = {}) {
             team_locked: data.teamSource !== "default", team_source: data.teamSource === "default" ? undefined : data.teamSource };
           if (String(data.retry).trim() !== "") payload.retry_policy = { infra: Math.max(0, Number(data.retry) || 0) };
           if (data.connectors) payload.connectors = data.connectors; // untouched: the repository's defaults apply when the task starts
+          if (data.tools) payload.tools = data.tools;
           if (edit) { await api.updateTask(edit.id, payload); toast("success", "Task updated"); m.close(); return; }
           const t = await api.createTask(payload);
           m.close();

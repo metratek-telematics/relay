@@ -8,6 +8,24 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Toolbox: tools for every agent.** Settings → Tools manages MCP servers (a local command or a remote URL with
+  secret headers) and command-line tools, with a vetted catalog installed on one click into Relay's tools folder
+  (filesystem, fetch, git, memory, sequential thinking, time, Playwright, Context7, GitHub remote, PostgreSQL, ast-grep)
+  and a Test button that lists a server's tools. Tools are enabled for all tasks, per repository (Repositories →
+  Environment) or per task (New task → Advanced). Relay writes each turn's servers into the CLI's own format in the
+  task's run folder (Claude `--mcp-config`, Codex `-c mcp_servers.*`, Gemini system settings file, Qwen and Amp
+  `--mcp-config`, Copilot `--additional-mcp-config`, OpenCode and Kilo config content, Goose extensions); secrets
+  reach the CLI only through its environment and are masked in logs, and personal CLI configuration is never
+  touched. CLIs without MCP are told the command-line equivalent. Agents ask for tools with `relay-tools request`
+  or a `tool_request` envelope field; a policy approves catalog tools, anything in development projects, or asks
+  the owner in Needs you. Approved tools are announced on the agent's next turn; every call is counted per tool.
+- **Token efficiency.** Every turn records its prompt by section, cache hits and context size; Settings → Token
+  efficiency shows where tokens go by section, role, agent, day and task. Claude agents run without the owner's
+  personal plugins, skills and connectors; kickoff prompts put the stable rules first; live sessions are not sent
+  what they already have; failing checks send the lines that explain the failure; the reviewer gets a targeted
+  diff; long sessions are compacted into a fresh one from a Relay handoff; Codex runs with low verbosity. See
+  docs/TOKEN_EFFICIENCY.md for the measured effect (−16% cost on a small A/B task, −64% to −95% on repeated
+  supervisor and re-review prompts).
 - **Learning engine** (`orchestrator/learning_engine.py`, Learning page, `/api/learning`). Every finished run is recorded
   in an append-only outcome dataset (`DATA_DIR/learning/outcomes.jsonl`): repositories, task type, request size, team
   (agent, model, effort per role), prompt and rule version hashes, lessons injected, cost, judge events, verification
