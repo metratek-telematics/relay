@@ -202,6 +202,9 @@ class KiloAdapter(_OpenCodeBase):
         env = super().env(cfg)
         env.setdefault("KILO_TELEMETRY_LEVEL", "off")
         env.setdefault("KILO_DISABLE_SESSION_INGEST", "1")
+        # Without a cap, `kilo run` retries an unreachable provider forever with no output
+        # (its offline watcher sees the internet is up and restores the request every few s).
+        env.setdefault("KILO_SESSION_RETRY_LIMIT", "6")
         return env
 
 
