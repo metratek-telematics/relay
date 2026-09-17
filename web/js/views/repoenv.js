@@ -2,6 +2,7 @@
 import { $, $$, esc, icon, toast, modal } from "../ui.js";
 import { api } from "../api.js";
 import { mountRepoConnectors } from "./connectors.js";
+import { stackApi, openStackEditor, dockerNote } from "./stacks.js";
 
 const MASK = "●●●●";
 const secretName = (n) => /PASS|SECRET|TOKEN|KEY|PWD|CREDENTIAL|AUTH|COOKIE|TOTP|PRIVATE/i.test(n || "");
@@ -43,6 +44,10 @@ export async function openRepoEnv(repo, { onSaved } = {}) {
       <div class="field"><label>Setup command <span class="muted">(replaces the detected install)</span></label><input id="reSetup" value="${esc(env.setup)}" placeholder="leave empty to detect: npm ci, .venv + requirements + pytest, …" spellcheck="false"></div>
       <div class="field"><label>Start services before the team works</label><input id="reUp" value="${esc(env.services_up)}" placeholder="docker compose up -d db" spellcheck="false"></div>
       <div class="field"><label>Stop services when the task ends</label><input id="reDown" value="${esc(env.services_down)}" placeholder="docker compose down" spellcheck="false"></div></div>
+    <div class="renv-sec"><div class="row between"><h3>Integration stack</h3><span class="row" style="gap:6px"><button class="btn xs" id="reStackEdit">${icon("edit", "sm")}Edit</button><button class="btn xs" id="reStackNew">${icon("plus", "sm")}New stack</button></span></div>
+      <p class="hint">Services this repository runs with (other repositories, databases, simulators), built from each task's branches and started together, with end-to-end checks that prove they work together.</p>
+      <div id="reStackDocker"></div>
+      <div class="field"><label>Stack for tasks in this repository</label><select id="reStack"><option value="">None</option></select></div></div>
     <div class="renv-sec"><div class="row between"><h3>Checks that prove the work</h3><button class="btn xs" id="reAddCheck">${icon("plus", "sm")}Add check</button></div>
       <p class="hint">Relay runs these itself after each work package. Required checks block delivery; optional ones are reported. Leave empty to detect them.</p>
       <div id="reChecks" class="stack" style="gap:6px">${env.checks.map(checkRow).join("")}</div></div>
@@ -58,6 +63,20 @@ export async function openRepoEnv(repo, { onSaved } = {}) {
   const add = (id, html) => { $(id, m.body).insertAdjacentHTML("beforeend", html); bindDel(); bindSecret(); };
   bindDel(); bindSecret();
   mountRepoConnectors($("#reConnectors", m.body), repo);
+  const loadStacks = async (select) => {
+    try {
+      const r = await stackApi.list();
+      const cur = select ?? $("#reStack", m.body).value ?? env.stack;
+      $("#reStack", m.body).innerHTML = `<option value="">None</option>` + r.stacks.map((s) => `<option value="${esc(s.id)}" ${s.id === cur ? "selected" : ""}>${esc(s.name)} · ${s.services.length} service${s.services.length === 1 ? "" : "s"}, ${s.checks.length} check${s.checks.length === 1 ? "" : "s"}</option>`).join("");
+      $("#reStackDocker", m.body).innerHTML = r.docker && !r.docker.available ? dockerNote(r.docker) : "";
+      $("#reStackEdit", m.body).disabled = !$("#reStack", m.body).value;
+      m._stacks = r.stacks;
+    } catch (e) { toast("error", "Could not load stacks", e.message); }
+  };
+  loadStacks(env.stack || "");
+  $("#reStack", m.body).onchange = () => { $("#reStackEdit", m.body).disabled = !$("#reStack", m.body).value; };
+  $("#reStackNew", m.body).onclick = () => openStackEditor(null, { repoPath: repo.path, onSaved: (s) => loadStacks(s ? s.id : "") });
+  $("#reStackEdit", m.body).onclick = () => { const s = (m._stacks || []).find((x) => x.id === $("#reStack", m.body).value); if (s) openStackEditor(s, { repoPath: repo.path, onSaved: (x) => loadStacks(x ? x.id : "") }); };
   // Suggestions from the repository's manifests, e.g. "Detected: pyodbc needs unixodbc unixodbc-dev — add?"
   const renderDetected = () => {
     const have = new Set(pkgList($("#rePkgs", m.body).value));
@@ -105,7 +124,7 @@ export async function openRepoEnv(repo, { onSaved } = {}) {
         .filter((f) => f.path),
       write_dotenv: $("#reDotenv", m.body).checked,
       system_packages: pkgList($("#rePkgs", m.body).value),
-      setup: $("#reSetup", m.body).value, services_up: $("#reUp", m.body).value, services_down: $("#reDown", m.body).value,
+      stack: $("#reStack", m.body).value, setup: $("#reSetup", m.body).value, services_up: $("#reUp", m.body).value, services_down: $("#reDown", m.body).value,
       checks: $$(".renv-check", m.body).map((r) => ({ command: $("[data-cc]", r).value.trim(), required: $("[data-cr]", r).checked })).filter((c) => c.command),
     };
     const btn = $("#reSave", m.body);

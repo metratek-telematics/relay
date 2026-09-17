@@ -55,7 +55,7 @@ def _path(repo) -> Path:
 
 def empty() -> dict:
     return {"vars": [], "files": [], "write_dotenv": True, "setup": "", "services_up": "", "services_down": "", "checks": [],
-            "system_packages": []}
+            "system_packages": [], "stack": ""}
 
 
 def load(repo) -> dict:
@@ -102,7 +102,7 @@ def save(repo, incoming: dict) -> dict:
             content = old_files[rel]["content"]
         out["files"].append({"path": rel, "content": str(content or ""), "secret": bool(f.get("secret", True))})
     out["write_dotenv"] = bool(incoming.get("write_dotenv", True))
-    for k in ("setup", "services_up", "services_down"):
+    for k in ("setup", "services_up", "services_down", "stack"):
         out[k] = str(incoming.get(k) or "").strip()
     from . import syspkgs
     out["system_packages"] = syspkgs.parse(incoming.get("system_packages"))  # raises ValueError on a bad name

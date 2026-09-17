@@ -71,15 +71,19 @@ services:
       #   - ${HOST_HOME}/.npmrc:/home/relay/.npmrc:ro
       - ${RELAY_CACHE:-./.cache}/npm:/home/relay/.npm
 
-      # ---- Optional: logs and docker connectors (Settings -> Connectors) read container logs and
-      # state through the Docker socket. Not mounted by default. Mounting it gives Relay the Docker
-      # API of this host: ":ro" only stops the socket file being replaced, not API writes, so Relay
-      # itself limits every connector to the containers it lists and only restarts when allowed.
-      # Agents run inside this container as the same user, so they could open the socket directly
-      # and bypass those limits: only mount it on a host where that is acceptable.
-      # Relay's user also needs the socket's group:
-      #   - /var/run/docker.sock:/var/run/docker.sock:ro
-      # and, at the service level:
+      # ---- Optional: the host's Docker socket. Two features use it:
+      #   * logs and docker connectors (Settings -> Connectors) read container logs and state; Relay
+      #     limits every connector to the containers it lists and only restarts when allowed;
+      #   * integration stacks (Repositories -> Environment -> Integration stack) build and run each
+      #     task's services together. Relay labels what it creates (relay.instance, relay.task) and only
+      #     ever removes its own containers, networks and images.
+      # SECURITY: the Docker API is root on the host. ":ro" only stops the socket file being replaced,
+      # not API writes. Agents run inside this container as the same user, so with the socket mounted an
+      # agent (or a prompt injected into one) could control every container on the host and read any host
+      # file. Only mount it on a machine dedicated to Relay, never next to production services, and keep
+      # Relay's UI private.
+      #   - /var/run/docker.sock:/var/run/docker.sock
+      # Relay's user also needs the socket's group, at the service level:
       # group_add: ["${DOCKER_GID:-999}"]   # getent group docker | cut -d: -f3
       # ---- System packages (Repositories → Environment → System packages, e.g. unixodbc for
       # pyodbc). Relay installs them with apt-get inside this container before a task's setup,

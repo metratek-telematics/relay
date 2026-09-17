@@ -18,7 +18,7 @@ import traceback
 from pathlib import Path
 
 from . import config as C
-from . import commitguard, connectors, designcheck, environment, gitops, github, judge, lessons, multirepo, protocol, repo_env
+from . import commitguard, connectors, designcheck, environment, gitops, github, judge, lessons, multirepo, protocol, repo_env, stacks
 from .runner import Interrupted, Stopped, TurnTimeout
 from .util import APP_DIR, new_id, now, quiet, read_text, truncate, write_text
 
@@ -119,6 +119,7 @@ class Pipeline(multirepo.MultiRepo):
         self.max_review_rounds = max(self.max_review_rounds, int(self.state.get("max_review_rounds") or 0))
         self._auto_choice = False
         self.lessons_text = ""
+        self.stack = None  # integration stack definition (orchestrator/stacks.py)
         self.related = []  # the task's other repositories (orchestrator/multirepo.py)
 
     # ------------------------------------------------------------ small helpers
@@ -437,6 +438,8 @@ class Pipeline(multirepo.MultiRepo):
         described = connectors.describe(getattr(self, "connector_names", None) or [], self.run_dir / "screenshots")
         if described:
             lines.append(described)
+        if self.stack:
+            lines.append(stacks.describe({**self.task, "id": self.tid}, self.stack))
         if self.wt and environment.venv_bin(self.wt):
             lines.append("- Python: Relay created `.venv` in the worktree with the requirements and pytest, and it is first on PATH, "
                          "so `python`, `pip` and `python -m pytest` already use it. Do not create another environment.")
@@ -506,9 +509,10 @@ class Pipeline(multirepo.MultiRepo):
         return cache[key]
 
     def run_verification(self):
-        if not self.verify_cmds and not self.design_gate and not any(r.get("verify_commands") for r in self.related):
+        n_stack = len((self.stack or {}).get("checks") or [])
+        if not self.verify_cmds and not self.design_gate and not n_stack and not any(r.get("verify_commands") for r in self.related):
             return ""
-        self.r.status("verifying", f"Running {len(self.verify_cmds) + (1 if self.design_gate else 0)} verification check(s)")
+        self.r.status("verifying", f"Running {len(self.verify_cmds) + (1 if self.design_gate else 0) + n_stack} verification check(s)")
         # Checks such as a production build may rewrite tracked files (version stamps, generated maps).
         # Remember what was already changed so anything the checks alone touched is put back afterwards.
         before = {line[3:] for line in quiet(["git", "status", "--porcelain"], cwd=self.wt).stdout.splitlines() if line.strip()}
@@ -555,6 +559,11 @@ class Pipeline(multirepo.MultiRepo):
             # A passing command only needs its verdict; a failure needs output the agents can act on.
             body = "" if (res["ok"] and quiet_pass) else "\n" + truncate(res["output"], fail_chars, tail=True)
             parts.append(head + body)
+        if self.stack:
+            # End-to-end checks against the task's integration stack; no baseline: the stack is built from this branch.
+            stack_items, stack_parts = stacks.pipeline_verify(self)
+            items += stack_items
+            parts += stack_parts
         if self.design_gate and self.base:
             item, text = self.run_design_gate()
             items.append(item)
@@ -620,6 +629,7 @@ class Pipeline(multirepo.MultiRepo):
             self.ensure_system_packages()  # a recreated container loses what apt installed; dpkg makes this a no-op otherwise
         if resumable and self.repo_env.get("services_up") and self.state.get("phase") != "delivered":
             self.start_services()
+        stacks.pipeline_prepare(self)
         self.base = t.get("base_commit") or gitops.base_commit(self.wt, t.get("repo"))
         repo_full = t.get("github_repo") or github.remote_repo_name(t.get("repo"))
         self.m.set_meta(self.tid, worktree=str(self.wt), branch=self.branch, run_dir=str(self.run_dir), github_repo=repo_full, base_commit=self.base)
@@ -1477,6 +1487,7 @@ class Pipeline(multirepo.MultiRepo):
         finally:
             self.connect_stop()
             self.stop_services()
+            stacks.pipeline_teardown(self)
 
 
 def orchestrate(task, runner, manager):

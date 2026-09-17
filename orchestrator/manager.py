@@ -9,7 +9,7 @@ import time
 import traceback
 from pathlib import Path
 
-from . import agents, config as C, github, gitops, judge, multirepo
+from . import agents, config as C, github, gitops, judge, multirepo, stacks
 from .autopilot import Autopilot
 from .learning import Learning
 from .pipeline import TurnBudget, orchestrate
@@ -175,6 +175,8 @@ class Manager:
             "verification_commands": [c for c in (wf_in.get("verification_commands") or []) if str(c).strip()],
             "auto_detect_verification": bool(wf_in.get("auto_detect_verification", cfg.get("auto_detect_verification", True))),
             "setup_command": str(wf_in.get("setup_command") or "").strip(),
+            # Integration stack id for this task ("none" disables it); empty uses the repository's stack.
+            "stack": str(wf_in.get("stack") or "").strip(),
         }
         return wf
 
@@ -336,6 +338,7 @@ class Manager:
                     break
                 time.sleep(0.25)
 
+        stacks.teardown_quietly(tid, reason="task deleted")
         if delete_worktree:
             # Every repository of a multi-repository task has its own worktree.
             for w in multirepo.task_worktrees(t):
@@ -589,6 +592,7 @@ class Manager:
             t = self.store.get(tid)
             if t and t.get("status") in ACTIVE | WAITING | {"queued"}:
                 self.store.update(tid, immediate=True, status="stopped", detail="Stopped", finished_at=now(), pending=None)
+                threading.Thread(target=stacks.teardown_quietly, args=(tid, "task stopped"), daemon=True).start()
                 self.emit_task(tid)
                 self.notify("info", "Task stopped", t.get("name", ""), tid, kind="stopped")
                 self.learning.task_ended(tid, retro_turn=False)
