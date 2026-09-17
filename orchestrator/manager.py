@@ -152,7 +152,7 @@ class Manager:
         if parent and not self.store.get(parent):
             raise ValueError("The task this follows up no longer exists.")
         tid = new_task_id()
-        name = (payload.get("name") or "").strip() or (requirements.splitlines()[0][:60] if requirements else f"Issue #{issue}")
+        name = (payload.get("name") or "").strip() or (gitops.auto_task_name(requirements) or requirements[:60] if requirements else f"Issue #{issue}")
         branch = self.branch_for(payload, repo, name, requirements, issue)
         t = {
             "id": tid, "name": name, "repo": repo, "requirements": requirements, "issue": issue,
@@ -612,6 +612,9 @@ class Manager:
                 return {"applied": "resumed"}
             except (ValueError, KeyError) as e:
                 return {"applied": "next_boundary", "note": str(e)}
+        if not r and t.get("status") in TERMINAL:
+            # A finished task has no next turn: nothing would ever read this (seen: a question left unanswered after delivery).
+            return {"applied": "finished", "note": "This task has finished, so no agent will read it. Start a follow-up task to act on it."}
         return {"applied": "next_boundary"}
 
     def edit_acceptance(self, tid, ops: dict):

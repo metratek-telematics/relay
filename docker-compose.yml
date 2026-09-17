@@ -71,6 +71,16 @@ services:
       #   - ${HOST_HOME}/.npmrc:/home/relay/.npmrc:ro
       - ${RELAY_CACHE:-./.cache}/npm:/home/relay/.npm
 
+      # ---- System packages (Repositories → Environment → System packages, e.g. unixodbc for
+      # pyodbc). Relay installs them with apt-get inside this container before a task's setup,
+      # which needs the container to run as root (user: "0:0"); as a non-root user Relay records
+      # a blocked check telling you to add them to the image instead. Installed packages live in
+      # the container and are reinstalled after it is recreated; to make that fast, keep apt's
+      # downloads and package lists on the host (the base image deletes downloaded .debs unless
+      # /etc/apt/apt.conf.d/docker-clean is removed):
+      #   - ${RELAY_CACHE:-./.cache}/apt-archives:/var/cache/apt/archives
+      #   - ${RELAY_CACHE:-./.cache}/apt-lists:/var/lib/apt/lists
+
     # Agents run shells, test suites and dev servers. Give them room.
     shm_size: "1gb"
     stop_grace_period: 30s
