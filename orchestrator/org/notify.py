@@ -301,8 +301,8 @@ def telegram_payload(msg, chat_id: str) -> dict:
         text += f"\n\n<blockquote>{H.escape(clamp_text(pend['question'], 700))}</blockquote>"
     rows = []
     if t.get("id") and pend.get("id") and msg["event"] == "approval":
-        rows.append([{"text": "✅ Approve", "callback_data": "rl:" + _action_key(t["id"], pend["id"], "approve")},
-                     {"text": "↩️ Request changes", "callback_data": "rl:" + _action_key(t["id"], pend["id"], "reject")}])
+        rows.append([{"text": "Approve", "callback_data": "rl:" + _action_key(t["id"], pend["id"], "approve")},
+                     {"text": "Request changes", "callback_data": "rl:" + _action_key(t["id"], pend["id"], "reject")}])
     elif t.get("id") and pend.get("id") and pend.get("options"):
         for o in pend["options"][:4]:
             rows.append([{"text": clamp_text(o, 60), "callback_data": "rl:" + _action_key(t["id"], pend["id"], "answer", o)}])

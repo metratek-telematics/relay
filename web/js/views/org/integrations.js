@@ -1,6 +1,7 @@
 // Integrations (admins): Relay's public address, team Slack/Discord, the Telegram bot, SMTP, Web Push, signed webhooks, delivery policy and log.
 import { $, $$, esc, icon, toast, confirm, timeAgo } from "../../ui.js";
 import { ORG, loadMe, orgApi, can, xicon, copyButton, bindCopy, readOnlyNote } from "./org.js";
+import { request } from "../../api.js";
 
 const MASK = "••••••••";
 const EVENTS = [["needs_input", "Needs input"], ["approval", "Approval"], ["delivered", "Delivered"], ["failed", "Failure"], ["digest", "Digest"], ["budget", "Budget"]];
@@ -40,8 +41,8 @@ export function mountIntegrations(body) {
         <div class="card org-channel"><div class="org-channel-head"><span class="org-ch-ic">${xicon("telegram")}</span><strong>Telegram bot</strong>${state(tg.has_bot_token, "connected", "not set")}</div>
           <div class="field"><label>Bot token (from @BotFather)</label><input data-k="telegram.bot_token" value="${esc(sec(tg.bot_token, tg.has_bot_token))}" placeholder="123456:ABC…" autocomplete="off"></div>
           <div class="field"><label>API base</label><input data-k="telegram.api_base" value="${esc(tg.api_base || "")}" placeholder="https://api.telegram.org"></div>
-          <div class="help">Buttons (Approve, Request changes, answer options) need Telegram to reach Relay: point the bot's webhook at <code class="org-inline-code">${esc(hook)}</code> with the secret below, and let that path through your sign-in proxy. Relay checks the secret on every call.</div>
-          ${tg.has_webhook_secret ? `<div class="row wrap" style="gap:6px">${copyButton(hook, "Copy webhook URL")}<span class="muted" style="font-size:12px">secret is set · setWebhook with secret_token</span></div>` : ""}
+          <div class="help">Buttons (Approve, Request changes, answer options) need Telegram to reach Relay: register the webhook (Relay's public URL must be https) and let <code class="org-inline-code">/api/org/integrations/telegram/webhook</code> through your sign-in proxy. Relay checks Telegram's secret token on every call.</div>
+          <div class="row wrap" style="gap:6px"><button class="btn xs" id="tgRegister" ${tg.has_bot_token ? "" : "disabled"}>${xicon("webhook")}Register webhook with Telegram</button>${copyButton(hook, "Copy webhook URL")}</div>
           <div class="row" style="gap:6px"><input class="input" id="tgChat" placeholder="chat id for the test" style="flex:1"><button class="btn xs" data-test="telegram">${icon("send")}Send test</button></div></div>
         <div class="card org-channel"><div class="org-channel-head"><span class="org-ch-ic">${xicon("mail")}</span><strong>Email (SMTP)</strong>${state(!!sm.host, "configured", "not set")}</div>
           <div class="grid2"><div class="field"><label>Host</label><input data-k="smtp.host" value="${esc(sm.host || "")}" placeholder="smtp.example.com"></div><div class="field"><label>Port</label><input data-k="smtp.port" type="number" value="${esc(sm.port || 587)}"></div></div>
@@ -104,6 +105,11 @@ export function mountIntegrations(body) {
     $("#dlRefresh", body).onclick = async () => { deliveries = (await orgApi.deliveries()).deliveries || []; draw(); };
     $("#whAdd", body).onclick = () => { const list = $("#whList", body); if (!list.querySelector("[data-wh]")) list.innerHTML = ""; list.insertAdjacentHTML("beforeend", webhookRow({ enabled: true })); bind(); };
     $$("[data-w-del]", body).forEach((b) => (b.onclick = async () => { if (await confirm("Remove this webhook?", "Save to apply.", { danger: true, okLabel: "Remove" })) { b.closest("[data-wh]").remove(); mark(); } }));
+    $("#tgRegister", body) && ($("#tgRegister", body).onclick = async () => {
+      if (dirty && !(await save(true))) return;
+      try { const r = await request("/api/org/integrations/telegram/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); toast("success", "Telegram webhook registered", r.url); }
+      catch (e) { toast("error", "Could not register the webhook", e.message); }
+    });
     $("#wpKeys", body) && ($("#wpKeys", body).onclick = async () => { try { await orgApi.vapidKeys(); data = await orgApi.settings(); toast("success", "Web Push keys ready", "People can now enable push under Notifications."); draw(); } catch (e) { toast("error", "Could not create keys", e.message); } });
     const test = async (btn, payload) => {
       if (dirty && !(await save(true))) return;

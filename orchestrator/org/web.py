@@ -16,6 +16,7 @@ from __future__ import annotations
 import functools
 import json
 import re
+import secrets
 import threading
 import time
 from datetime import datetime
@@ -194,6 +195,8 @@ def describe(method: str, path: str) -> tuple[str, dict]:
     if not parts:
         return "unknown", {}
     typ = TYPE_NAMES.get(parts[0], parts[0])
+    if typ == "settings" and len(parts) == 1:
+        return "settings.update", {"type": "settings"}
     obj = {"type": typ}
     verb = ACTION_WORDS.get(method, method.lower())
     if len(parts) >= 2:
@@ -214,6 +217,10 @@ def describe(method: str, path: str) -> tuple[str, dict]:
     else:
         if parts[0] == "run":
             verb = "start"
+    if obj.get("type") == "project" and obj.get("id"):
+        pr = projects.get(obj["id"])
+        if pr:
+            obj.update({"name": pr["name"], "project": pr["id"]})
     if obj.get("type") == "task" and obj.get("id"):
         t = STATE["manager"].store.get(obj["id"]) if STATE["manager"] else None
         if t:
@@ -230,7 +237,7 @@ def _audit_request(resp):
     if m in ("GET", "HEAD", "OPTIONS"):
         return
     path = request.path
-    if not path.startswith("/api/") or path.startswith("/api/connect") or path == "/api/org/me/push/ping":
+    if not path.startswith("/api/") or path == "/api/connect" or path.startswith("/api/connect/"):
         return
     if path == "/api/notifications/read" and resp.status_code < 400:
         return  # marking notifications read is not a change worth auditing
@@ -248,8 +255,18 @@ def _audit_request(resp):
             except Exception:
                 pass
     before = g.get("org_before")
-    if isinstance(before, dict) and isinstance(after, dict) and obj.get("id") and obj["id"] in before and path.count("/") > 3:
-        before, after = before.get(obj["id"]), after.get(obj["id"]) if obj["id"] in after else None
+    if resp.status_code < 400 and not obj.get("id") and obj.get("type") not in ("task", "settings", "profile"):
+        try:
+            out = json.loads(resp.get_data(as_text=True))
+            out = out.get("token") if isinstance(out.get("token"), dict) else out
+            if isinstance(out, dict):
+                obj["id"] = out.get("id") or out.get("username") or out.get("name")
+                if out.get("name") and out.get("name") != obj["id"]:
+                    obj["name"] = out["name"]
+        except Exception:
+            pass
+    if not obj.get("id") and isinstance(body, dict) and obj.get("type") in ("connector", "stack", "user"):
+        obj["id"] = body.get("id") or body.get("name") or body.get("username")
     outcome = "ok" if resp.status_code < 400 else ("denied" if resp.status_code in (401, 403) else "error")
     detail = ""
     if resp.status_code >= 400:
@@ -290,7 +307,7 @@ def install(app, manager, broadcast):
     @app.before_request
     def _org_guard():
         path = request.path
-        if not path.startswith("/api/") or path in PUBLIC_API or path.startswith("/api/connect"):
+        if not path.startswith("/api/") or path in PUBLIC_API or path == "/api/connect" or path.startswith("/api/connect/"):
             return None
         u = resolve()
         if request.method not in ("GET", "HEAD", "OPTIONS"):
@@ -298,6 +315,12 @@ def install(app, manager, broadcast):
         authz = request.headers.get("Authorization") or ""
         if re.match(r"^\s*Bearer\s+rly_", authz, re.I) and not path.startswith("/api/v1/"):
             return _json_response({"error": "Access tokens work on /api/v1 only."}, 401)
+        if request.method not in ("GET", "HEAD", "OPTIONS") and g.get("org_via") != "token" and _cross_site():
+            audit.record(u or {"username": "anonymous"}, describe(request.method, path)[0], describe(request.method, path)[1],
+                         request={"method": request.method, "path": path, "ip": client_ip(), "origin": request.headers.get("Origin")},
+                         status=403, outcome="denied", via=g.get("org_via") or "anonymous", detail="Cross-site request refused")
+            g.org_audited = True
+            return _json_response({"error": "Cross-site requests cannot change Relay."}, 403)
         if not u:
             if g.get("org_untrusted_headers"):
                 _untrusted_once()
@@ -318,7 +341,10 @@ def install(app, manager, broadcast):
                 prefs["density"] = g.org_body["ui_density"]
             if prefs:
                 identity.save_prefs(u["username"], prefs)
-            return _json_response(_config_for(u, C.public_view(manager.cfg())))
+            audit.record(u, "profile.preferences", {"type": "profile", "id": u["username"]}, request={"method": "POST", "path": path, "ip": client_ip(), "body": g.org_body},
+                         status=200, via=g.get("org_via") or "", detail="Appearance saved as a personal preference (no global settings changed)")
+            g.org_audited = True
+            return _json_response(_config_for(identity.get(u["username"]) or u, C.public_view(manager.cfg())))
         role_needed, label = rbac.rule_for(request.method, path)
         scopes = (g.org_token or {}).get("scopes") if g.get("org_via") == "token" else None
         ok, reason = rbac.allowed(u, role_needed, request.method, path, task_lookup=manager.store.get, token_scopes=scopes)
@@ -350,6 +376,18 @@ def install(app, manager, broadcast):
         except Exception as e:
             app.logger.warning("project scoping failed on %s: %s", path, e)
         return resp
+
+
+def _cross_site() -> bool:
+    """A browser request from another site riding on the sign-in cookie (CSRF). Tokens are exempt: they are not ambient."""
+    if (request.headers.get("Sec-Fetch-Site") or "").lower() == "cross-site":
+        return True
+    origin = request.headers.get("Origin")
+    if not origin or origin == "null":
+        return origin == "null"
+    from urllib.parse import urlparse
+    host = (request.headers.get("X-Forwarded-Host") or request.host or "").split(",")[0].strip().lower()
+    return (urlparse(origin).netloc or "").lower() != host
 
 
 _untrusted = {"at": 0}
@@ -841,7 +879,8 @@ def org_settings_auth():
 def org_settings_integrations():
     b = request.get_json(silent=True) or {}
     for w in b.get("webhooks") or []:
-        w.setdefault("id", "wh_" + str(int(time.time() * 1000))[-8:])
+        if not w.get("id"):
+            w["id"] = "wh_" + secrets.token_hex(4)
         if w.get("url") and not re.match(r"^https?://", w["url"]):
             return jsonify({"error": "Webhook addresses start with http:// or https://"}), 400
     if b.get("public_url") and not re.match(r"^https?://", b["public_url"]):
@@ -895,6 +934,26 @@ def org_integration_test():
         return jsonify({"error": "Configure this channel first (and give a chat id or address to test Telegram or email)."}), 400
     did = STATE["dispatcher"].enqueue(ch, target, _test_message(current_user()), current_user()["username"])
     return jsonify(STATE["dispatcher"].wait(did, timeout=25))
+
+
+@bp.post("/api/org/integrations/telegram/register")
+def org_telegram_register():
+    """Point the bot's webhook at this Relay (setWebhook with the secret token), so buttons in Telegram reach it."""
+    data = OS.load()
+    tg = data["integrations"]["telegram"]
+    base = (data["integrations"].get("public_url") or "").rstrip("/")
+    if not tg.get("bot_token"):
+        return jsonify({"error": "Add the bot token first."}), 400
+    if not base.startswith("https://"):
+        return jsonify({"error": "Telegram only calls https addresses: set Relay's public URL (https://…) first."}), 400
+    notify._link_secret()
+    tg = OS.load()["integrations"]["telegram"]
+    api = (tg.get("api_base") or "https://api.telegram.org").rstrip("/")
+    payload = {"url": f"{base}/api/org/integrations/telegram/webhook", "secret_token": tg["webhook_secret"], "allowed_updates": ["message", "callback_query"]}
+    status, text, _ = STATE["dispatcher"].http(f"{api}/bot{tg['bot_token']}/setWebhook", json.dumps(payload).encode(), {"Content-Type": "application/json"})
+    if status and 200 <= status < 300:
+        return jsonify({"ok": True, "url": payload["url"]})
+    return jsonify({"error": f"Telegram answered {status}: {mask(text)[:200]}"}), 502
 
 
 @bp.get("/api/org/deliveries")

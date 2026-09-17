@@ -59,7 +59,7 @@
 
 /* ---- page layout */
 .org-layout { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 24px; align-items: start; }
-.org-main { display: grid; gap: 18px; min-width: 0; max-width: 1180px; }
+.org-main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; min-width: 0; max-width: 1180px; }
 .org-nav-group { font-size: 10.5px; font-weight: 750; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); padding: 12px 10px 4px; }
 .org-nav-group:first-child { padding-top: 0; }
 @media (max-width: 1200px) { .org-layout { grid-template-columns: 1fr; } .org-nav { position: static; display: flex; flex-wrap: wrap; gap: 4px; } .org-nav-group { display: none; } }
@@ -259,3 +259,17 @@
 
 /* ---- role-aware chrome: people without the member role see what they can do */
 html[data-role="viewer"] #newTaskBtn, html[data-role="viewer"] #runBtn, html[data-role="viewer"] #stopQueueBtn, html[data-role="viewer"] .task-quick { display: none !important; }
+
+/* ---- layout guards */
+.org-api > *, .org-main > *, .org-grid-2 > * { min-width: 0; }
+@media (max-width: 700px) {
+  .org-nav { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 -16px; padding: 0 16px 4px; }
+  .org-nav::-webkit-scrollbar { display: none; }
+  .org-nav a { flex: 0 0 auto; white-space: nowrap; }
+}
+.org-api .stack, .org-main .stack { grid-template-columns: minmax(0, 1fr); }
+.org-api .stack > *, .org-endpoint .card-body > * { min-width: 0; }
+.org-code { max-width: 100%; }
+/* people without the member role: hide task-changing controls the dashboard draws too */
+html[data-role="viewer"] .page-actions .btn.primary, html[data-role="viewer"] [data-act] { display: none !important; }
+.org-api-intro, .org-endpoint .card-body { grid-template-columns: minmax(0, 1fr); }
