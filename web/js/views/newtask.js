@@ -83,13 +83,16 @@ export function openNewTask(prefill = {}) {
     template: edit?.template || parent?.template || "feature", priority: edit?.priority || parent?.priority || "normal", tags: (edit?.tags || parent?.tags || []).join(", "),
     workflow: edit ? JSON.parse(JSON.stringify(edit.workflow)) : parent?.workflow ? JSON.parse(JSON.stringify(parent.workflow)) : defaultWorkflow(), queue: true,
     branch: parent ? (parent.branch || parent.branch_name || "") : "", branchEdited: !!parent,
+    // Related repositories of a multi-repository task: {repo, name, reason, component, github, checked, source}.
+    related: ((edit || parent)?.repos || []).filter((r) => r.role !== "primary").map((r) => ({ repo: r.repo, name: basename(r.repo), reason: r.reason || "", component: r.component || "", github: r.github_repo || "", checked: true, source: "task" })),
+    relatedFor: (edit || parent)?.repos?.length ? (edit || parent).repo : "",
   };
-  let step = edit || parent ? 1 : 0;
+  let step = edit || parent ? 2 : 0;
   const parentNote = parent ? `<div class="followup-note">${icon("retry", "sm")}<div><strong>Follows up <a href="#/task/${encodeURIComponent(parent.id)}">${esc(parent.name)}</a></strong>
     <span>Builds on <code>${esc(data.branch)}</code> where it left off, with the same team.</span>
     ${parent.summary ? `<blockquote>${esc(parent.summary.length > 360 ? parent.summary.slice(0, 360) + "…" : parent.summary)}</blockquote>` : ""}</div></div>` : "";
   let repoInfo = null;
-  const steps = ["Repository", "Request", "Team & workflow", "Review"];
+  const steps = ["Repository", "Related repos", "Request", "Team & workflow", "Review"];
   const m = modal(`<div class="wizard"><div class="wiz-steps" id="wizSteps"></div><div class="wiz-body" id="wizBody"></div></div>`, { wide: true });
   const stepsEl = $("#wizSteps", m.body), body = $("#wizBody", m.body);
 
@@ -140,6 +143,81 @@ export function openNewTask(prefill = {}) {
     finally { btn.disabled = false; btn.innerHTML = `${icon("download")}Clone`; }
   }
 
+  // ------------------------------------------------------------ related repositories (multi-repository tasks)
+  const checkedRelated = () => data.related.filter((r) => r.checked && r.repo);
+  async function drawRelated() {
+    body.innerHTML = `<h2>Related repositories</h2>
+      <p class="hint">A feature often needs more than one repository: the UI and the service behind it, the API and its database functions. Each ticked repository gets a worktree on the same branch, its own environment and checks, and its own pull request. The team can also ask to add one while planning.</p>
+      <div id="relList" class="rel-list"><div class="muted">Looking at the system map…</div></div>
+      <div class="field"><label>Add another repository</label>
+        <div class="clone-row"><select id="relLocal"><option value="">Loading local repositories…</option></select><button type="button" class="btn" id="relAdd">${icon("plus")}Add</button></div>
+        <div class="clone-row" style="margin-top:6px"><input id="relClone" placeholder="or clone owner/repository" autocomplete="off"><button type="button" class="btn" id="relCloneBtn">${icon("download")}Clone and add</button></div>
+        <div class="help">Suggestions come from dependencies in the <a href="#/repos/system" data-close>system map</a>; approved ones are ticked.</div></div>
+      ${nav("Back", "Next: describe the request")}`;
+    $$("[data-close]", body).forEach((b) => b.addEventListener("click", m.close));
+    $("#wBack", body).onclick = () => go(0);
+    $("#wNext", body).onclick = async () => {
+      const btn = $("#wNext", body);
+      const missing = data.related.filter((r) => r.checked && !r.repo && r.github);
+      if (missing.length) {
+        btn.disabled = true; btn.innerHTML = `${icon("spinner", "spin")}Cloning ${missing.length}…`;
+        for (const r of missing) {
+          try { const res = await api.ghClone(r.github); r.repo = res.path; }
+          catch (e) { toast("error", `Could not clone ${r.github}`, e.message); r.checked = false; }
+        }
+      }
+      go(2);
+    };
+    const list = $("#relList", body);
+    const paint = () => {
+      list.innerHTML = data.related.length ? data.related.map((r, i) => `<label class="rel-row ${r.checked ? "on" : ""}">
+          <input type="checkbox" data-rel="${i}" ${r.checked ? "checked" : ""}>
+          <span class="min0 stack" style="gap:2px"><span class="row wrap" style="gap:6px"><strong>${esc(r.name)}</strong>${r.kind ? `<span class="badge">${esc(r.kind)}</span>` : ""}
+            ${r.status === "approved" ? '<span class="badge green">approved dependency</span>' : r.status === "proposed" ? '<span class="badge amber">proposed by scan</span>' : r.source === "task" ? '<span class="badge outline">on this task</span>' : '<span class="badge outline">added by you</span>'}
+            ${!r.repo ? '<span class="badge amber">cloned when you continue</span>' : ""}</span>
+            ${r.reason ? `<span class="muted rel-reason">${esc(r.reason)}</span>` : ""}
+            <span class="mono muted truncate" title="${esc(r.repo || r.github)}">${esc(r.repo || r.github)}</span></span></label>`).join("")
+        : `<div class="empty small">${icon("globe")}<p>No related repositories known for ${esc(basename(data.repo))}. Scan your repositories in the system map, or add one below.</p></div>`;
+      $$("[data-rel]", list).forEach((c) => (c.onchange = () => { data.related[Number(c.dataset.rel)].checked = c.checked; paint(); }));
+    };
+    if (data.relatedFor !== data.repo) {
+      // A different primary repository: start again from the map's suggestions for it, keeping what you added by hand.
+      data.related = data.related.filter((r) => r.source === "manual" && r.repo !== data.repo);
+      data.relatedFor = data.repo;
+      try {
+        const r = await api.systemRelated(data.repo);
+        for (const s of r.suggestions || []) {
+          if (s.path === data.repo || data.related.some((x) => (s.path && x.repo === s.path) || (s.component && x.component === s.component))) continue;
+          data.related.push({ repo: s.cloned ? s.path : "", name: s.name, reason: s.reason, component: s.component, github: s.repo, kind: s.kind, status: s.status, checked: !!s.checked, source: "map" });
+        }
+      } catch {}
+    }
+    if (step !== 1) return;
+    paint();
+    const sel = $("#relLocal", body);
+    try {
+      const r = await api.repos();
+      const taken = new Set([data.repo, ...data.related.map((x) => x.repo)]);
+      sel.innerHTML = `<option value="">Choose a local repository</option>` + r.repos.filter((x) => !taken.has(x.path)).map((x) => `<option value="${esc(x.path)}">${esc(x.name)}${x.github ? ` · ${esc(x.github)}` : ""}</option>`).join("");
+    } catch { sel.innerHTML = '<option value="">Could not list repositories</option>'; }
+    $("#relAdd", body).onclick = () => {
+      if (!sel.value) return;
+      if (!data.related.some((x) => x.repo === sel.value)) data.related.push({ repo: sel.value, name: basename(sel.value), reason: "", checked: true, source: "manual" });
+      sel.querySelector(`option[value="${CSS.escape(sel.value)}"]`)?.remove(); sel.value = "";
+      paint();
+    };
+    $("#relCloneBtn", body).onclick = async () => {
+      const spec = $("#relClone", body).value.trim(); if (!spec) return;
+      const btn = $("#relCloneBtn", body); btn.disabled = true; btn.innerHTML = `${icon("spinner", "spin")}Cloning…`;
+      try {
+        const res = await api.ghClone(spec);
+        if (res.path !== data.repo && !data.related.some((x) => x.repo === res.path)) data.related.push({ repo: res.path, name: basename(res.path), reason: "", checked: true, source: "manual" });
+        $("#relClone", body).value = ""; paint();
+      } catch (e) { toast("error", "Clone failed", e.message); }
+      finally { btn.disabled = false; btn.innerHTML = `${icon("download")}Clone and add`; }
+    };
+  }
+
   function render() {
     draw();
     // Step bodies are drawn after the modal wired its close buttons, so wire theirs here.
@@ -153,7 +231,7 @@ export function openNewTask(prefill = {}) {
         <div class="field"><label>Or clone from GitHub</label>
           <div class="clone-row"><input id="cloneRepo" list="cloneRepos" placeholder="owner/repository or git URL" autocomplete="off"><input id="cloneName" placeholder="folder (optional)"><button type="button" class="btn primary" id="cloneBtn">${icon("download")}Clone</button></div>
           <datalist id="cloneRepos"></datalist><div class="help" id="cloneHelp">Loading your repositories…</div></div>
-        <div class="field"><label>Browse</label><div class="browser" id="browser"></div></div>${nav(null, "Next: describe the request")}`;
+        <div class="field"><label>Browse</label><div class="browser" id="browser"></div></div>${nav(null, "Next: related repositories")}`;
       const input = $("#repoInput", body);
       input.addEventListener("change", () => { data.repo = input.value.trim().replace(/^"|"$/g, ""); loadRepoInfo(); });
       $$("[data-recent]", body).forEach((b) => (b.onclick = () => { data.repo = b.dataset.recent; input.value = data.repo; loadRepoInfo(); drawBrowser(data.repo); }));
@@ -164,6 +242,8 @@ export function openNewTask(prefill = {}) {
       $("#cloneRepo", body).addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); cloneSelected(); } });
       $("#wNext", body).onclick = () => { data.repo = input.value.trim().replace(/^"|"$/g, ""); if (!data.repo) { toast("warning", "Choose a repository folder"); return; } if (repoInfo && !repoInfo.is_git) { toast("error", "Not a git repository", "Run git init and make an initial commit first."); return; } go(1); };
     } else if (step === 1) {
+      drawRelated();
+    } else if (step === 2) {
       const tpl = (S.templates || []).find((x) => x.id === data.template) || {};
       const prompts = S.config.saved_prompts || [];
       body.innerHTML = `<h2>${parent ? "What should happen next?" : "Describe the request"}</h2><p class="hint">${parent ? "Describe only what should change on top of the delivered work. The team sees the branch as it is now." : "Write it once. The supervisor turns it into a plan, acceptance criteria and work packages."}</p>
@@ -195,17 +275,17 @@ export function openNewTask(prefill = {}) {
         ta.focus();
         if (hole) ta.setSelectionRange(hole.index, hole.index + hole[0].length);
         if (before.requirements.trim() && before.requirements !== p.text) {
-          toast("info", "Requirements replaced", `Filled from “${p.name}”.`, { action: { label: "Undo", onClick: () => { Object.assign(data, before); if (step === 1) render(); } } });
+          toast("info", "Requirements replaced", `Filled from “${p.name}”.`, { action: { label: "Undo", onClick: () => { Object.assign(data, before); if (step === 2) render(); } } });
         }
       }));
       const collect1 = () => { data.requirements = $("#req", body).value; data.name = $("#tname", body).value; data.issue = $("#tissue", body).value; data.priority = $("#tprio", body).value; data.tags = $("#ttags", body).value; };
-      $("#wBack", body).onclick = () => { collect1(); go(0); };
-      $("#wNext", body).onclick = () => { collect1(); if (!data.requirements.trim() && !data.issue.trim()) { toast("warning", "Describe the task or give an issue number"); return; } go(2); };
-    } else if (step === 2) {
+      $("#wBack", body).onclick = () => { collect1(); go(1); };
+      $("#wNext", body).onclick = () => { collect1(); if (!data.requirements.trim() && !data.issue.trim()) { toast("warning", "Describe the task or give an issue number"); return; } go(3); };
+    } else if (step === 3) {
       body.innerHTML = `<h2>Team & workflow</h2><p class="hint">One agent supervises: it plans, delegates, verifies and decides. The other implements. Optionally a third reviews independently before delivery.</p><div id="wfEditor"></div>${nav("Back", "Next: review")}`;
       workflowEditor($("#wfEditor", body), data.workflow, { agents: S.agentMeta, presets: S.presets });
-      $("#wBack", body).onclick = () => go(1);
-      $("#wNext", body).onclick = () => { const r = data.workflow.roles; if (!r.supervisor.agent || !r.worker.agent) { toast("warning", "Pick a supervisor and a worker"); return; } go(3); };
+      $("#wBack", body).onclick = () => go(2);
+      $("#wNext", body).onclick = () => { const r = data.workflow.roles; if (!r.supervisor.agent || !r.worker.agent) { toast("warning", "Pick a supervisor and a worker"); return; } go(4); };
     } else {
       const r = data.workflow.roles;
       const h = S.agents || {};
@@ -213,6 +293,7 @@ export function openNewTask(prefill = {}) {
       body.innerHTML = `<h2>${edit ? "Save changes" : "Ready to launch"}</h2>
         <div class="summary-box">
           <div><b>Repository</b>${esc(data.repo)}</div>
+          ${checkedRelated().length ? `<div><b>Also changes</b>${checkedRelated().map((r) => esc(r.name)).join(", ")} <span class="muted">(same branch in each, one pull request per repository)</span></div>` : ""}
           ${parent ? `<div><b>Follows up</b>${esc(parent.name)}</div>` : ""}
           <div><b>Request</b>${esc((data.requirements || `Issue #${data.issue}`).slice(0, 400))}${data.requirements.length > 400 ? "…" : ""}</div>
           <div><b>Team</b>${["supervisor", "worker", "reviewer"].filter((x) => r[x].agent).map((x) => `${esc(agentLabel(r[x].agent))} (${x}${r[x].model ? `, ${esc(r[x].model)}` : ", CLI default model"}${r[x].effort ? `, ${esc(r[x].effort)} effort` : ""})`).join(" · ")}</div>
@@ -223,7 +304,7 @@ export function openNewTask(prefill = {}) {
         ${!edit ? `<div class="field" style="margin-top:14px"><label>Branch</label><input id="tbranch" class="mono" value="${esc(data.branch)}" placeholder="suggesting…" spellcheck="false"><div class="help">${parent && data.branch === (parent.branch || parent.branch_name) ? `The branch ${esc(parent.name)} delivered; this task adds commits on top of it.` : "Suggested from the task name. Edit it freely; an existing branch is built on."}</div></div>` : ""}
         ${!edit ? `<div class="field inline" style="margin-top:14px"><label>Queue immediately (and start the queue if idle)</label><span class="switch ${data.queue ? "on" : ""}" id="qSwitch"></span></div>` : ""}
         <div class="modal-actions"><button type="button" class="btn" id="wBack">Back</button><span style="flex:1"></span><button type="button" class="btn primary" id="wCreate">${icon(edit ? "save" : "sparkles")}${edit ? "Save" : data.queue ? "Create & queue" : "Create draft"}</button></div>`;
-      $("#wBack", body).onclick = () => go(2);
+      $("#wBack", body).onclick = () => go(3);
       const bInput = $("#tbranch", body);
       if (bInput) {
         bInput.addEventListener("input", () => { data.branch = bInput.value.trim(); data.branchEdited = true; });
@@ -235,7 +316,8 @@ export function openNewTask(prefill = {}) {
         const btn = $("#wCreate", body); btn.disabled = true; btn.innerHTML = `${icon("spinner", "spin")}${edit ? "Saving…" : "Creating…"}`;
         try {
           const payload = { repo: data.repo, name: data.name, requirements: data.requirements, issue: data.issue, template: data.template, priority: data.priority,
-            tags: data.tags.split(",").map((x) => x.trim()).filter(Boolean), workflow: data.workflow, queue: data.queue, branch: edit ? undefined : data.branch, follow_up_of: parent?.id };
+            tags: data.tags.split(",").map((x) => x.trim()).filter(Boolean), workflow: data.workflow, queue: data.queue, branch: edit ? undefined : data.branch, follow_up_of: parent?.id,
+            repos: checkedRelated().map((r) => ({ repo: r.repo, reason: r.reason, component: r.component })) };
           if (edit) { await api.updateTask(edit.id, payload); toast("success", "Task updated"); m.close(); return; }
           const t = await api.createTask(payload);
           m.close();

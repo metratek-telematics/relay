@@ -159,13 +159,14 @@ def copy_ignored_root_files(source, wt, runner=None) -> list[str]:
     return copied
 
 
-def create_worktree(runner, task, cfg, run_dir):
-    repo = Path(task["repo"]).resolve()
+def create_worktree(runner, task, cfg, run_dir, repo=None, wt_path=None):
+    """The task's isolated worktree and branch. `repo`/`wt_path` place a multi-repository task's other repositories."""
+    repo = Path(repo or task["repo"]).resolve()
     if not is_git_repo(repo):
         raise RuntimeError(f"{repo} is not a Git repository. Initialize it with `git init` and make one commit first.")
     # Tasks created before readable names existed keep their original scheme so a retry reattaches.
     branch = task.get("branch_name") or f"{cfg.get('branch_prefix','agent')}/{safe_slug(task['name'], 40)}-{task['id'][-6:]}"
-    wt = WORKTREES_DIR / f"{safe_slug(repo.name)}-{task['id'][-6:]}"
+    wt = Path(wt_path) if wt_path else WORKTREES_DIR / f"{safe_slug(repo.name)}-{task['id'][-6:]}"
     if wt.exists():
         quiet(["git", "worktree", "remove", "--force", str(wt)], cwd=repo, timeout=60)
         shutil.rmtree(wt, ignore_errors=True)

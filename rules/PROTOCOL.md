@@ -35,6 +35,9 @@ Text before the envelope is fine (reasoning, notes, evidence). The envelope is w
   `{"type":"question","to":"user","question":"...","options":["Option A","Option B"]}`
 - Question to the worker:
   `{"type":"question","to":"worker","question":"..."}`
+- Proposal to add a repository the request depends on (the human accepts with one click; Relay clones it and adds a worktree on the task branch):
+  `{"type":"question","to":"user","question":"why it is needed","add_repo":{"repo":"component id or owner/name","reason":"one line"},"options":["Add api to this task","Continue without it"]}`
+- Multi-repository plans add `"work_packages":[{"id":"W1","repo":"api","summary":"...","depends_on":[]}]` and `"system_design":{"summary":"...","api_contracts":[{"provider":"api","consumer":"web","endpoint":"POST /items/{id}/archive","request":"...","response":"..."}],"data_model":[{"component":"db","change":"..."}],"sequence":["..."]}`; instructions add `"package":"W1","repo":"api"`.
 
 ## Envelopes the worker may send
 - Report when a work package is finished or cannot progress further:
@@ -43,7 +46,7 @@ Text before the envelope is fine (reasoning, notes, evidence). The envelope is w
    "blocked_checks":[{"check":"npm test","reason":"private package registry needs credentials this machine does not have","impact":"automated frontend tests could not run","action_required":false}],
    "blockers":[{"reason":"required API schema cannot be accessed","impact":"implementation cannot continue safely","action_required":true}]}
   ```
-  `status` is one of `complete`, `partial`, `blocked`. `blocked_checks` and `blockers` are optional; omit them when empty.
+  `status` is one of `complete`, `partial`, `blocked`. In a multi-repository task add `"package":"W1"` for the package you finished. `blocked_checks` and `blockers` are optional; omit them when empty.
   - `blocked_checks`: a check that could not run for an environment reason. Record it and keep implementing.
   - `blockers`: something that stops the implementation itself.
   - `action_required: true` only when the user alone can clear it (credentials, access, a product decision). The orchestrator then asks the user; otherwise nobody is interrupted.
@@ -63,7 +66,7 @@ Text before the envelope is fine (reasoning, notes, evidence). The envelope is w
 - `ORCHESTRATOR`: verification results, changed files, and control notes such as an interrupted run being resumed.
 
 ## Boundaries for every agent
-- Work only inside the task worktree.
+- Work only inside the task worktree (or worktrees, when the task spans several repositories).
 - Never push, merge, deploy, force-reset, delete branches, or touch production systems. The orchestrator commits and opens the pull request.
 - Do not commit unless the supervisor explicitly asks; leave changes in the working tree.
 - Do not wait for input inside your own tools. If you need something, send a question envelope.

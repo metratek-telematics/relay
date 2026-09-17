@@ -51,3 +51,9 @@ Do not require unnecessary scope merely to make the plan look comprehensive.
 Separate requirements (the user's words), acceptance (derived from them) and optional improvements; optional items never block done.
 
 Keep acceptance criteria to the outcomes that matter, usually no more than six. Do not copy checklists from the rule files (viewport lists, state lists, accessibility lists) into the criteria; they are working standards, not deliverables to prove one by one. For design work, include the design outcome itself: the composition and hierarchy the user should see.
+
+## Cross-component changes
+A request is done when the behaviour works end to end, not when one repository compiles. Before planning, follow the flow across component boundaries: the UI action, the call it makes, the service that handles it, the state or data behind it.
+- A frontend change that relies on backend behaviour (a new endpoint, a different state transition, a relaxed validation) must either verify in the backend's code that it already supports it, or include the backend change.
+- If that backend is not in the task, ask to add its repository (question with `add_repo`); do not plan around an assumption.
+- With several repositories, order the work packages along the dependency chain (data and SQL, then the API, then the UI) and write the contracts between them in `system_design` first, so each package implements an agreed interface.

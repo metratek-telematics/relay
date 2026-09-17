@@ -18,7 +18,7 @@ import traceback
 from pathlib import Path
 
 from . import config as C
-from . import designcheck, environment, gitops, github, judge, lessons, protocol, repo_env
+from . import designcheck, environment, gitops, github, judge, lessons, multirepo, protocol, repo_env
 from .runner import Interrupted, Stopped, TurnTimeout
 from .util import APP_DIR, new_id, now, quiet, read_text, truncate, write_text
 
@@ -76,7 +76,7 @@ def context_refs(refs):
 
 
 # ----------------------------------------------------------------------------- pipeline
-class Pipeline:
+class Pipeline(multirepo.MultiRepo):
     def __init__(self, task, runner, manager):
         self.task = task
         self.r = runner
@@ -103,6 +103,7 @@ class Pipeline:
         self.max_review_rounds = max(self.max_review_rounds, int(self.state.get("max_review_rounds") or 0))
         self._auto_choice = False
         self.lessons_text = ""
+        self.related = []  # the task's other repositories (orchestrator/multirepo.py)
 
     # ------------------------------------------------------------ small helpers
     def save(self):
@@ -139,9 +140,6 @@ class Pipeline:
     def handoff(self, frm, to, title, content, **extra):
         return self.r.msg(role=frm, agent=self.role_agent(frm)[0] if frm in self.roles else None, kind="handoff",
                           to=to, title=title, content=content or "", turn=self.state.get("turn"), **extra)
-
-    def take_guidance(self, role):
-        return self.m.take_guidance(self.tid, role)
 
     def status_for(self, role, turn=None):
         if role == "supervisor":
@@ -182,7 +180,7 @@ class Pipeline:
         while True:
             self.r.wait_if_paused()
             try:
-                res = self.r.run_agent(role, agent, prompt, self.wt, self.cfg, model, sess, self.run_dir, label, turn,
+                res = self.r.run_agent(role, agent, prompt, self.wt, self.agent_cfg(), model, sess, self.run_dir, label, turn,
                                        effort=self.role_effort(role))
             except Interrupted as e:
                 if sess.get("id"):
@@ -248,6 +246,8 @@ class Pipeline:
     # ------------------------------------------------------------ questions
     def ask_human(self, asker_role, env):
         """Block until the human answers. Returns the follow-up prompt for the asker."""
+        if env.get("add_repo"):
+            return self.ask_add_repo(asker_role, env)
         question = env.get("question") or env.get("content") or "(no question text)"
         options = env.get("options") if isinstance(env.get("options"), list) else []
         agent, _ = self.role_agent(asker_role)
@@ -349,6 +349,7 @@ class Pipeline:
         return res
 
     def stop_services(self):
+        self.stop_related_services()
         cmd = (getattr(self, "repo_env", None) or {}).get("services_down")
         if not cmd or not self.wt or not self.state.get("services_started"):
             return
@@ -403,38 +404,40 @@ class Pipeline:
         return {"command": "Design gate", "ok": result["ok"], "rc": 0 if result["ok"] else 1, "skipped": False,
                 "duration": round(time.time() - started, 1)}, text
 
-    def baseline_result(self, cmd, timeout):
+    def baseline_result(self, cmd, timeout, repo=None, base=None, wt=None, key=None):
         """Run a failing command once on the commit the task started from.
 
         A check that already failed before the team touched anything (a flaky suite, a host-specific test)
         must not block delivery or send the supervisor round in circles. Results are cached per command.
         """
         cache = self.state.setdefault("baseline", {})
-        if cmd in cache:
-            return cache[cmd]
-        if not self.base or not self.wt:
+        key = key or cmd
+        if key in cache:
+            return cache[key]
+        base, wt = base or self.base, wt or self.wt
+        if not base or not wt:
             return None
-        repo = self.task.get("repo")
-        path = Path(str(self.wt) + "-baseline")
+        repo = repo or self.task.get("repo")
+        path = Path(str(wt) + "-baseline")
         gitops.remove_worktree(repo, path)
-        add = quiet(["git", "worktree", "add", "--detach", str(path), self.base], cwd=repo, timeout=300)
+        add = quiet(["git", "worktree", "add", "--detach", str(path), base], cwd=repo, timeout=300)
         if add.returncode != 0:
             return None
         try:
             # Share the prepared dependencies; the baseline only needs to run the same check.
-            if (Path(self.wt) / "node_modules").is_dir() and not (path / "node_modules").exists():
-                (path / "node_modules").symlink_to(Path(self.wt) / "node_modules", target_is_directory=True)
+            if (Path(wt) / "node_modules").is_dir() and not (path / "node_modules").exists():
+                (path / "node_modules").symlink_to(Path(wt) / "node_modules", target_is_directory=True)
             gitops.copy_ignored_root_files(repo, path)
             self.r.timeline("verify", "Checking the failure on the starting commit", cmd)
             res = self.r.run_shell(cmd, path, "verify", timeout=timeout, title=f"Baseline · {cmd}")
-            cache[cmd] = {"ok": res["ok"], "rc": res.get("rc")}
+            cache[key] = {"ok": res["ok"], "rc": res.get("rc")}
         finally:
             gitops.remove_worktree(repo, path)
         self.save()
-        return cache[cmd]
+        return cache[key]
 
     def run_verification(self):
-        if not self.verify_cmds and not self.design_gate:
+        if not self.verify_cmds and not self.design_gate and not any(r.get("verify_commands") for r in self.related):
             return ""
         self.r.status("verifying", f"Running {len(self.verify_cmds) + (1 if self.design_gate else 0)} verification check(s)")
         # Checks such as a production build may rewrite tracked files (version stamps, generated maps).
@@ -484,6 +487,11 @@ class Pipeline:
         if touched:
             quiet(["git", "checkout", "--", *touched], cwd=self.wt)
             self.r.timeline("verify", "Restored files the checks rewrote", ", ".join(touched[:10]))
+        if self.related:
+            # Each other repository of a multi-repository task runs its own checks in its own worktree.
+            more_items, more_parts = self.verify_related(timeout, quiet_pass, fail_chars)
+            items += more_items
+            parts += more_parts
         vt = "\n\n".join(parts)
         all_ok = all(i["ok"] for i in items)
         self.artifact("verification", "VERIFICATION.md", vt)
@@ -536,6 +544,7 @@ class Pipeline:
         repo_full = t.get("github_repo") or github.remote_repo_name(t.get("repo"))
         self.m.set_meta(self.tid, worktree=str(self.wt), branch=self.branch, run_dir=str(self.run_dir), github_repo=repo_full, base_commit=self.base)
         self.repo_full = repo_full
+        self.attach_related(fresh=not resumable)
 
         if t.get("issue"):
             try:
@@ -574,6 +583,7 @@ class Pipeline:
         prompt = protocol.supervisor_kickoff(self.task, self.wt, self.branch, self.issue_text, self.refs_text, guidance, self.verify_cmds, self.cfg,
                                              self.env_text())
         prompt = protocol.with_lessons(prompt, self.lessons_text)
+        prompt = protocol.with_block(prompt, self.context_text("supervisor"))
         res, env = self.supervisor_turn(prompt, f"{_label(sup_agent)} is inspecting the repository and planning", turn=0)
         if env.get("type") != "plan":
             if env.get("type") in ("instruction", "decision") and env.get("instruction"):
@@ -594,8 +604,14 @@ class Pipeline:
                 criteria = judge.normalize_acceptance(env.get("acceptance"))
         plan = {"summary": env.get("summary", ""), "plan": env.get("plan", ""), **protocol.normalize_packet(env)}
         plan["acceptance"] = judge.criterion_texts(criteria) or plan["acceptance"]
+        plan["system_design"] = multirepo.normalize_design(env.get("system_design"))
+        plan["work_packages"] = multirepo.normalize_packages(env.get("work_packages"))
         self.state["plan"] = plan
-        self.artifact("plan", "PLAN.md", plan["plan"] + "\n\n## Context packet\n\n```\n" + protocol.packet_block({**plan, "criteria": criteria}) + "\n```\n")
+        if plan["system_design"]:
+            self.m.set_meta(self.tid, system_design=plan["system_design"])
+            self.artifact("design", "SYSTEM_DESIGN.md", multirepo.design_md(plan["system_design"]))
+        self.artifact("plan", "PLAN.md", plan["plan"] + "\n\n## Context packet\n\n```\n" + protocol.packet_block({**plan, "criteria": criteria}) + "\n```\n"
+                      + ("\n" + multirepo.design_block(plan["system_design"], plan["work_packages"]) + "\n" if plan["work_packages"] or plan["system_design"] else ""))
         self.m.set_meta(self.tid, plan=plan)
         # Criteria the human added before the run started are kept next to the supervisor's.
         user_rows = [c for c in self.criteria() if c.get("source") == "user"]
@@ -611,7 +627,7 @@ class Pipeline:
                    unknowns=plan["unknowns"], turn=0)
         self.r.timeline("supervisor", "Plan agreed", plan["summary"] or f"{len(plan['acceptance'])} acceptance criteria")
         self.state.update({"phase": "dialogue", "turn": 1, "awaiting": "worker",
-                           "instruction": env.get("instruction") or "Implement the plan.", "instruction_kind": "instruction",
+                           "instruction": self.package_prefix(env) + (env.get("instruction") or "Implement the plan."), "instruction_kind": "instruction",
                            "instruction_summary": env.get("summary", "")})
         self.save()
 
@@ -637,12 +653,14 @@ class Pipeline:
                                                      self.state.get("instruction", ""), guidance, self.cfg,
                                                      self.gate_command(), self.env_text())
                     prompt = protocol.with_lessons(prompt, self.lessons_text)
+                    prompt = protocol.with_block(prompt, self.context_text("worker"))
                 else:
                     prompt = protocol.worker_followup(_label(sup_agent), turn, self.state.get("instruction", ""), guidance, kind)
                 if self.state.get("resumed"):
                     prompt = protocol.resume_note({k: v for k, v in self.state.items() if k in ("phase", "turn", "awaiting", "instruction_summary")}) + "\n\n" + prompt
                     self.state["resumed"] = False
                 res, env = self.worker_turn(prompt, f"Work package #{turn}", turn)
+                self.note_package_report(env)
                 report = {"status": env.get("status", "complete"), "summary": env.get("summary", ""),
                           "report": env.get("report") or env.get("_text", ""), "files": env.get("files") or [],
                           "blocked_checks": protocol.blocked_checks(env), "blockers": protocol.blockers(env)}
@@ -668,8 +686,8 @@ class Pipeline:
                 continue
 
             # supervisor evaluates the report
-            changed = gitops.changed_files(self.wt, self.base)
-            ds = gitops.diff_stat(self.wt, self.base)
+            changed = self.all_changed_files()
+            ds = self.all_diffstat()
             self.m.set_meta(self.tid, diffstat=ds, changed_count=len(changed))
             guidance = self.take_guidance("supervisor")
             remaining = max(0, self.turn_limit() - turn)
@@ -725,6 +743,7 @@ class Pipeline:
         if typ in ("instruction", "question") or (typ == "decision" and env.get("decision") == "revise"):
             kind = "revise" if typ == "decision" else ("question" if typ == "question" else "instruction")
             text = env.get("instruction") or env.get("question") or env.get("summary") or env.get("_text", "")
+            text = self.package_prefix(env) + text
             if kind == "revise":
                 judged = self.judge_revise(env, turn)
                 if not judged.get("_judged"):
@@ -740,7 +759,7 @@ class Pipeline:
             self.state["verify_triage"] = 0
             self.state["gate_nudges"] = 0
             self.state["revise_nudges"] = 0
-            self.state["fp_before"] = judge.worktree_fingerprint(self.wt, self.base) if kind == "revise" else ""
+            self.state["fp_before"] = self.fingerprint() if kind == "revise" else ""
             self.state.update({"turn": turn + 1, "awaiting": "worker", "instruction": text, "instruction_kind": kind,
                                "instruction_summary": env.get("summary", ""), "phase": "dialogue"})
             self.save()
@@ -949,7 +968,7 @@ class Pipeline:
     def check_revision_changed(self):
         """A revision after which the worktree is byte-for-byte unchanged goes to the human instead of another round."""
         before = self.state.pop("fp_before", "")
-        if not before or judge.worktree_fingerprint(self.wt, self.base) != before:
+        if not before or self.fingerprint() != before:
             self.save()
             return
         turn = self.state.get("turn")
@@ -1087,12 +1106,13 @@ class Pipeline:
             if ((self.verify_cmds and self.verify_mode != "off") or self.design_gate) and not vt:
                 vt = self.run_verification()
                 self.state["last_verification"] = vt
-            diff = gitops.full_diff(self.wt, int(self.cfg.get("budget_diff_chars") or 50000), self.base)
+            diff = self.all_diff(int(self.cfg.get("budget_diff_chars") or 50000))
             sess = self.sessions.get("reviewer") or {}
             if int(sess.get("turns", 0)) == 0 or sess.get("agent") != rev_agent:
                 prompt = protocol.reviewer_kickoff(self.task, self.wt, self.branch, {**(self.state.get("plan") or {}), "criteria": self.criteria()},
                                                    self.state.get("pr_summary", ""), vt, diff, rnd, self.cfg,
                                                    self.state.get("blocked_checks") or [], judge.acceptance_block(self.criteria()) if self.criteria() else "")
+                prompt = protocol.with_block(prompt, self.context_text("reviewer"))
             else:
                 prompt = protocol.reviewer_followup(rnd, vt, diff, self.state.get("pr_summary", ""),
                                                     judge.acceptance_block(self.criteria()) if self.criteria() else "",
@@ -1216,6 +1236,7 @@ class Pipeline:
         if current != self.branch:
             raise RuntimeError(f"The worktree is on '{current or 'a detached HEAD'}', not the task branch '{self.branch}', so Relay did not "
                                f"commit. Switch it back (git switch {self.branch}, keeping the changes) and resume the task.")
+        self.guard_related_branches()
         cleanup_refs(self.wt)
         cfg = self.cfg
         prefix = (cfg.get("commit_message_prefix") or "agent:").strip()
@@ -1244,6 +1265,7 @@ class Pipeline:
                     self.r.timeline("github", "Draft pull request opened", pr.get("url") or "")
                     self.m.notify("success", "Pull request opened", pr.get("url") or title, self.tid, kind="pr_opened")
 
+        self.deliver_related(pr, title, prefix)
         report = self.final_report_md(pr, committed)
         self.artifact("report", "REPORT.md", report)
         self.state["phase"] = "done"
@@ -1260,6 +1282,8 @@ class Pipeline:
                  + (f", reviewed independently by {_label(roles.get('reviewer',{}).get('agent'))}" if roles.get('reviewer', {}).get('agent') else ""),
                  f"**Work packages:** {self.state.get('turn', 0)}",
                  f"**Branch:** `{self.branch}`"]
+        if self.related:
+            lines.append("**Repositories:** " + ", ".join([f"{Path(self.task.get('repo') or '').name} (primary)"] + [r["name"] for r in self.related]))
         v = t.get("verification") or {}
         if v.get("items"):
             lines.append("**Verification:** " + ", ".join(f"`{i['command']}` {'✓' if i['ok'] else '✗'}" for i in v["items"]))
@@ -1306,6 +1330,7 @@ class Pipeline:
 |---|---:|---:|---:|---:|---:|
 {chr(10).join(rows)}
 
+{self.related_report_md()}
 {self.details_md()}
 """
 

@@ -163,6 +163,7 @@ export function mountIssues(main) {
         <div class="field"><label>Type</label><div class="templ" id="icTpl"></div></div>
         <div class="field"><label for="icPrio">Priority</label><select id="icPrio">${["urgent", "high", "normal", "low"].map((p) => `<option ${p === st.priority ? "selected" : ""}>${p}</option>`).join("")}</select></div>
       </div>
+      <label class="iss-check"><input type="checkbox" id="icRelated" checked> Include related repositories (approved dependencies in the system map)</label>
       <div class="field"><div class="field-label">Team</div><div id="icTeam"></div></div>
       <details class="iss-gh"><summary>On GitHub</summary>
         <label class="iss-check"><input type="checkbox" id="icComment" ${st.comment ? "checked" : ""}> Comment “Relay picked this up: &lt;task&gt;” on each issue</label>
@@ -219,7 +220,7 @@ export function mountIssues(main) {
         const res = await api.createIssueTasks({
           issues: st.order.map((x) => ({ repo: x.repo, number: x.number })), mode: st.mode, stop_on_failure: $("#icStop", b).checked,
           template: st.template, priority: $("#icPrio", b).value, workflow: st.workflow,
-          comment: $("#icComment", b).checked, label: $("#icLabel", b).value.trim(),
+          comment: $("#icComment", b).checked, label: $("#icLabel", b).value.trim(), related_repos: $("#icRelated", b).checked,
         });
         const made = res.created.length;
         if (made) {

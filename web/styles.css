@@ -1328,3 +1328,55 @@ path.ch-agent.gemini, .sw.ch-agent.gemini { fill: var(--gemini); background: var
 .model-row .star { font-size: 15px; color: var(--text-3); }
 .model-row .star.on { color: var(--amber); }
 @media (max-width: 640px) { .model-row { grid-template-columns: auto minmax(0, 1fr) auto; } .model-row .mr-meta { grid-column: 2 / -1; grid-row: 2; } }
+
+/* ---------------------------------------------------------------- system map (web/js/views/systemmap.js) */
+.sysmap-head { align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.sysmap-head p { margin: 2px 0 0; font-size: var(--fs-sm); }
+.sysmap-graph { overflow-x: auto; padding: 6px 12px 4px; }
+.sysmap-graph svg { display: block; max-width: none; }
+.sm-node { cursor: pointer; }
+.sm-node rect { fill: var(--panel); stroke: var(--border-strong); stroke-width: 1; }
+.sm-node:hover rect:first-child, .sm-node:focus rect:first-child { stroke: var(--accent); }
+.sm-node .sm-kind-bar { fill: var(--text-3); stroke: none; }
+.sm-node.kind-frontend .sm-kind-bar { fill: var(--blue); }
+.sm-node.kind-api .sm-kind-bar { fill: var(--purple); }
+.sm-node.kind-worker .sm-kind-bar { fill: var(--amber); }
+.sm-node.kind-database .sm-kind-bar { fill: var(--green); }
+.sm-node .sm-name { fill: var(--text); font-size: 12.5px; font-weight: 700; font-family: var(--font); }
+.sm-node .sm-kind { fill: var(--text-3); font-size: 11px; font-family: var(--font); }
+.sm-link { fill: none; stroke-width: 1.6; }
+.sm-link.approved { stroke: var(--green); }
+.sm-link.proposed { stroke: var(--amber); stroke-dasharray: 5 4; }
+.sm-arrow.approved { fill: var(--green); }
+.sm-arrow.proposed { fill: var(--amber); }
+.sysmap-legend { display: flex; flex-wrap: wrap; gap: 14px; padding: 0 16px 12px; font-size: var(--fs-xs); }
+.sysmap-legend i { display: inline-block; width: 18px; height: 0; border-top: 2px solid var(--green); vertical-align: middle; margin-right: 5px; }
+.sysmap-legend i.lg-proposed { border-top: 2px dashed var(--amber); }
+.sm-edge { border: 1px solid var(--border); border-radius: var(--r); padding: 10px 12px; background: var(--panel); }
+.sm-edge.proposed { border-left: 3px solid var(--amber); }
+.sm-edge.approved { border-left: 3px solid var(--green); }
+.sm-edge.rejected { opacity: .7; }
+.sm-details { margin-top: 6px; font-size: var(--fs-sm); color: var(--text-2); overflow-wrap: anywhere; }
+.sm-evidence { margin-top: 6px; font-size: var(--fs-xs); }
+.sm-evidence summary { cursor: pointer; color: var(--text-3); }
+.sm-evidence ul { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 3px; }
+.sm-evidence li { display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr); gap: 10px; align-items: baseline; }
+.sm-evidence code { color: var(--text-2); white-space: nowrap; }
+.sysmap-comps { display: grid; }
+.sm-comp { padding: 12px 16px; border-top: 1px solid var(--border); }
+.sm-comp:first-child { border-top: 0; }
+.sm-comp.flash { background: var(--accent-soft); transition: background .3s; }
+.sm-desc { margin-top: 4px; font-size: var(--fs-sm); }
+.sm-facts { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 4px; font-size: var(--fs-xs); min-width: 0; }
+.sm-facts > span { max-width: 100%; }
+.sysmap-rejected > summary { cursor: pointer; list-style: none; }
+.sm-discover { max-height: 46vh; overflow: auto; display: grid; gap: 2px; }
+.sm-disc-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: var(--r-sm); }
+.sm-disc-row:hover { background: var(--hover); }
+/* new-task related repositories and the Try it tab */
+.rel-list { display: grid; gap: 8px; margin-bottom: 14px; }
+.rel-row { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--r); cursor: pointer; background: var(--panel); }
+.rel-row.on { border-color: var(--accent); background: var(--accent-soft); }
+.rel-row input { margin-top: 3px; }
+.rel-reason { font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.ho-repo { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 6px 0 0; font-size: var(--fs); }

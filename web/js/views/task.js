@@ -60,7 +60,7 @@ export function mountTask(main, id) {
     const wf = t.workflow || {};
     const chain = ["supervisor", "worker", "reviewer"].filter((r) => roleAgent(t, r)).map((r) => agentLabel(roleAgent(t, r))).join(" → ");
     $("#wsTitle", main).innerHTML = `
-      <div class="crumbs">${icon("folder")}<span>${esc(basename(t.repo))}</span>${t.branch ? `<span>›</span>${icon("branch")}<span class="mono">${esc(t.branch)}</span>` : ""}</div>
+      <div class="crumbs">${icon("folder")}<span>${esc(basename(t.repo))}</span>${(t.repos || []).length > 1 ? `<span class="badge outline" title="${esc(t.repos.slice(1).map((r) => basename(r.repo)).join(", "))}">+${t.repos.length - 1} repo${t.repos.length > 2 ? "s" : ""}</span>` : ""}${t.branch ? `<span>›</span>${icon("branch")}<span class="mono">${esc(t.branch)}</span>` : ""}</div>
       <h1><span class="truncate">${esc(t.name)}</span><span class="status-pill ${st.attention ? "needs" : ""}" title="${esc(t.detail || "")}"><span class="dot ${live ? "live" : ""}" style="background:${st.tone ? `var(--${st.tone === "accent" ? "accent" : st.tone})` : "var(--text-3)"}"></span><span>${esc(st.label)}</span></span></h1>
       <div class="ws-meta"><span>${icon("bot")}${esc(chain)}</span><span>${icon("clock")}${esc(t.detail || "")}</span>${lineage(t)}${t.github_issue_url ? `<a href="${esc(t.github_issue_url)}" target="_blank" rel="noopener">${icon("github")}Issue #${esc(t.github_issue_number)}</a>` : ""}<span title="${esc(t.created_at)}">created ${timeAgo(t.created_at)}</span></div>`;
     const active = live || t.status === "needs_input" || t.status === "paused";
