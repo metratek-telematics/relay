@@ -7,7 +7,22 @@ import { NOTIFY_EVENTS, chime, permission, requestPermission, showDesktop } from
 import { openShortcuts, keysFor } from "../shortcuts.js";
 import { mountConnectors } from "./connectors.js";
 
-const SECTIONS = [["workflow", "Workflow", "layers"], ["autopilot", "Autopilot", "clock"], ["agents", "Agents", "bot"], ["budget", "Usage & budget", "gauge"], ["verification", "Verification", "shield"], ["git", "Git & GitHub", "github"], ["connectors", "Connectors", "zap"], ["appearance", "Appearance", "sun"], ["notifications", "Notifications", "bell"], ["prompts", "Saved prompts", "message"], ["rules", "Rules", "docs"], ["about", "About", "info"]];
+const SECTIONS = [["workflow", "Team and workflow", "layers"], ["agents", "Agents and models", "bot"], ["verification", "Verification", "shield"], ["prompts", "Saved prompts", "message"], ["rules", "Rules", "docs"], ["autopilot", "Autopilot", "clock"], ["budget", "Usage and budget", "gauge"], ["notifications", "Notifications", "bell"], ["git", "Git and GitHub", "github"], ["appearance", "Appearance", "sun"], ["about", "About", "info"]];
+const GROUPS = [["Team", ["workflow", "agents", "verification", "prompts", "rules"]], ["Automation", ["autopilot", "budget", "notifications"]], ["Integrations", ["git"]], ["You", ["appearance", "about"]]];
+// Words each section answers to, so the search finds "quiet hours" under Autopilot.
+const KEYWORDS = {
+  workflow: "preset supervisor worker reviewer team max turns review rounds approval questions design step learning retrospective lessons scorecard parallel",
+  agents: "codex claude gemini model effort login account subagent timeout sandbox cli arguments",
+  verification: "tests checks commands detect lint build design gate forbidden terms",
+  prompts: "templates saved prompts snippets",
+  rules: "engineering rules design frontend security prompt injection",
+  autopilot: "schedule window quiet hours limits fallback cost cap digest watchdog park retry",
+  budget: "cost pricing tokens usage spend subagent model cheap",
+  notifications: "desktop sound alerts delivered failed questions",
+  git: "github pull request pr draft branch push label intake watch issues commit",
+  appearance: "theme dark light density compact keyboard shortcuts",
+  about: "version data folder archive",
+};
 
 // Scorecards, retrospectives and lessons (orchestrator/learning.py).
 function learningCard(c) {
@@ -32,8 +47,8 @@ function learningCard(c) {
 
 export function mountSettings(main, section) {
   let cur = SECTIONS.some(([k]) => k === section) ? section : "workflow";
-  main.innerHTML = `<div class="page"><div class="page-head"><div><h1>Settings</h1><p>Defaults for new tasks. Existing tasks keep their own workflow.</p></div><div class="page-actions"><span class="muted" id="saveState" style="font-size:12px"></span></div></div>
-    <div class="settings"><nav class="settings-nav" id="sNav"></nav><div class="settings-main" id="sMain"></div></div></div>`;
+  main.innerHTML = `<div class="page settings-page"><header class="page-header"><div class="ph-title"><div class="eyebrow">Settings</div><h1>How Relay works for you</h1><p class="ph-sub">Defaults for new tasks; existing tasks keep their own workflow. Connectors and repositories live in <a href="#/knowledge/connectors">Knowledge</a>.</p></div><div class="ph-actions"><span class="save-state" id="saveState" role="status" aria-live="polite"></span></div></header>
+    <div class="settings"><div class="settings-side"><label class="search-field sm">${icon("search")}<input id="sSearch" type="search" placeholder="Search settings" autocomplete="off" aria-label="Search settings"></label><nav class="settings-nav" id="sNav" aria-label="Settings sections"></nav></div><div class="settings-main" id="sMain"></div></div></div>`;
   const nav = $("#sNav", main), body = $("#sMain", main);
   const saved = (ok = true, msg) => { const s = $("#saveState", main); s.textContent = msg || (ok ? "Saved" : "Save failed"); s.style.color = ok ? "var(--green)" : "var(--red)"; setTimeout(() => { if (s.textContent === "Saved") s.textContent = ""; }, 2000); };
   const save = async (partial) => { try { S.config = await api.saveSettings(partial); saved(true); bus.emit("config"); } catch (e) { saved(false); toast("error", "Could not save", e.message); } };
@@ -51,7 +66,21 @@ export function mountSettings(main, section) {
     $$("[data-sw-cfg]", body).forEach((s) => (s.onclick = () => { s.classList.toggle("on"); save({ [s.dataset.swCfg]: s.classList.contains("on") }); }));
   };
 
-  function drawNav() { nav.innerHTML = SECTIONS.map(([k, l, i]) => `<a href="#/settings/${k}" class="${k === cur ? "active" : ""}">${icon(i)}${l}</a>`).join(""); }
+  let query = "";
+  const matches = (k) => { if (!query) return true; const [, l] = SECTIONS.find(([x]) => x === k); return `${l} ${KEYWORDS[k] || ""}`.toLowerCase().includes(query); };
+  function drawNav() {
+    nav.innerHTML = GROUPS.map(([g, keys]) => {
+      const rows = keys.filter(matches).map((k) => SECTIONS.find(([x]) => x === k)).filter(Boolean);
+      return rows.length ? `<div class="sn-group"><div class="sn-label">${esc(g)}</div>${rows.map(([k, l, i]) => `<a href="#/settings/${k}" class="${k === cur ? "active" : ""}" ${k === cur ? 'aria-current="page"' : ""}>${icon(i)}${esc(l)}</a>`).join("")}</div>` : "";
+    }).join("") || `<p class="muted small sn-none">No setting matches “${esc(query)}”.</p>`;
+  }
+  // Inside the open section, cards that do not mention the search words fold away.
+  function filterBody() {
+    for (const card of $$(".settings-main > .card", main)) card.hidden = !!query && !card.textContent.toLowerCase().includes(query) && !(KEYWORDS[cur] || "").includes(query);
+  }
+  $("#sSearch", main).addEventListener("input", (e) => { query = e.target.value.trim().toLowerCase(); drawNav(); filterBody(); });
+  $("#sSearch", main).addEventListener("keydown", (e) => { if (e.key === "Enter") { const first = $("a", nav); if (first) location.hash = first.getAttribute("href"); } });
+  new MutationObserver(() => query && filterBody()).observe(body, { childList: true });
 
   function render() {
     const c = S.config || {};
@@ -324,7 +353,7 @@ export function mountSettings(main, section) {
       body.innerHTML = `<div class="card"><div class="card-head"><h3>About</h3></div><div class="card-body hint stack">
         <div><strong>Relay ${esc(S.build)}</strong> — a local, Windows-first multi-agent engineering orchestrator. Codex, Claude Code and Gemini CLI collaborate through persistent sessions inside isolated git worktrees.</div>
         <div>Data lives next to the app: <code>state/tasks.json</code> (task metadata), <code>runtime/&lt;task&gt;/</code> (conversation, artifacts, raw logs), <code>worktrees/</code> (isolated checkouts), <code>config.json</code>.</div>
-        <div>Safety boundary: the orchestrator commits, pushes task branches and opens draft PRs. It never merges, force-pushes, or deploys.</div>
+        <div>Safety boundary: the orchestrator commits, pushes task branches and opens draft PRs. It never force-pushes or deploys, and it merges only when you approve a change set in the review cockpit.</div>
         <div class="row wrap"><a class="btn sm" href="/api/state" target="_blank">${icon("code")}Raw state JSON</a><button type="button" class="btn sm" id="clearFinished">${icon("trash")}Archive all finished tasks</button></div>
       </div></div>`;
       $("#clearFinished", body).onclick = async () => {

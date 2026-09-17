@@ -15,16 +15,20 @@ export const TABS = [
   ["logs", "Logs", "terminal"], ["sessions", "Sessions", "cpu"],
 ];
 
-export function mountInspector(container, getTask) {
-  container.innerHTML = `<nav class="tabs" role="tablist">${TABS.map(([k, l, i]) => `<button role="tab" data-tab="${k}">${icon(i, "sm")}${l}<span class="n" data-n="${k}" hidden></span></button>`).join("")}</nav><div class="insp-body" id="inspBody"></div>`;
-  const body = $("#inspBody", container);
-  const state = { tab: S.ui.inspectorTab || "overview", repo: { open: new Set(), file: null, dirty: false, tree: null }, diffPath: null, logFilter: "", logAgent: "all", logAuto: true, changes: null,
+// `opts.tabs` limits the instance to some tabs: the task page mounts one instance per view (details rail, changes, checks, logs).
+export function mountInspector(container, getTask, opts = {}) {
+  const tabs = opts.tabs ? TABS.filter(([k]) => opts.tabs.includes(k)) : TABS;
+  container.innerHTML = `<nav class="tabs" role="tablist" ${tabs.length < 2 ? "hidden" : ""}>${tabs.map(([k, l, i]) => `<button role="tab" data-tab="${k}">${icon(i, "sm")}${l}<span class="n" data-n="${k}" hidden></span></button>`).join("")}</nav><div class="insp-body"></div>`;
+  const body = $(".insp-body", container);
+  const state = { tab: opts.tabs ? (tabs.some(([k]) => k === opts.initial) ? opts.initial : tabs[0]?.[0]) : (S.ui.inspectorTab || "overview"), repo: { open: new Set(), file: null, dirty: false, tree: null }, diffPath: null, logFilter: "", logAgent: "all", logAuto: true, changes: null,
     hist: { id: null, data: null, open: new Set(), diff: null, scroll: 0 }, work: { id: null, data: null, count: -1, at: 0, busy: false } };
   let logTimer = null;
   let stopStackCard = () => {};
 
   const setTab = (tab) => {
-    state.tab = tab; S.ui.inspectorTab = tab;
+    if (!tabs.some(([k]) => k === tab)) return;
+    state.tab = tab; if (!opts.tabs) S.ui.inspectorTab = tab;
+    opts.onTab && opts.onTab(tab);
     $$(".tabs button", container).forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
     body.classList.toggle("flush", tab === "repository");
     render();

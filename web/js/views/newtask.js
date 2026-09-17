@@ -85,14 +85,15 @@ export function openNewTask(prefill = {}) {
     workflow: edit ? JSON.parse(JSON.stringify(edit.workflow)) : parent?.workflow ? JSON.parse(JSON.stringify(parent.workflow)) : defaultWorkflow(), queue: true,
     branch: parent ? (parent.branch || parent.branch_name || "") : "", branchEdited: !!parent,
     // Related repositories of a multi-repository task: {repo, name, reason, component, github, checked, source}.
-    related: ((edit || parent)?.repos || []).filter((r) => r.role !== "primary").map((r) => ({ repo: r.repo, name: basename(r.repo), reason: r.reason || "", component: r.component || "", github: r.github_repo || "", checked: true, source: "task" })),
-    relatedFor: (edit || parent)?.repos?.length ? (edit || parent).repo : "",
+    related: ((edit || parent)?.repos || []).filter((r) => r.role !== "primary").map((r) => ({ repo: r.repo, name: basename(r.repo), reason: r.reason || "", component: r.component || "", github: r.github_repo || "", checked: true, source: "task" }))
+      .concat((prefill.related || []).map((r) => ({ repo: r, name: basename(r), reason: "named in the request", component: "", github: "", checked: true, source: "task" }))),
+    relatedFor: (edit || parent)?.repos?.length ? (edit || parent).repo : (prefill.related || []).length ? prefill.repo : "",
     // Autopilot: run after other tasks, automatic retries of agent crashes, a cost cap.
     depends_on: edit?.depends_on ? [...edit.depends_on] : parent && parent.status !== "done" ? [parent.id] : [],
     retry: edit?.retry_policy?.infra ?? "", cost_cap: edit?.cost_cap_usd || "",
     connectors: edit?.connectors || parent?.connectors || null, // null: the repository's default connectors
   };
-  let step = edit || parent ? 2 : 0;
+  let step = edit || parent ? 2 : (prefill.step && data.repo ? prefill.step : 0);
   const parentNote = parent ? `<div class="followup-note">${icon("retry", "sm")}<div><strong>Follows up <a href="#/task/${encodeURIComponent(parent.id)}">${esc(parent.name)}</a></strong>
     <span>Builds on <code>${esc(data.branch)}</code> where it left off, with the same team.</span>
     ${parent.summary ? `<blockquote>${esc(parent.summary.length > 360 ? parent.summary.slice(0, 360) + "…" : parent.summary)}</blockquote>` : ""}</div></div>` : "";

@@ -1,335 +1,188 @@
-// Relay 14 · application bootstrap, routing, live events, sidebar.
+// Relay 15 · application shell: navigation, routing (with redirects from older URLs), live events, command palette.
 import { api, connectEvents, onConnection, conn } from "./api.js";
-import { $, $$, el, esc, icon, toast, palette, timeAgo, fmtSec, basename, throttle } from "./ui.js";
-import { S, bus, navigate, statusOf, LIVE, byQueue, queuedInOrder, msgStore, agentLabel, agentInitial, roleAgent, ROLE_LABEL } from "./state.js";
-import { mountDashboard } from "./views/dashboard.js";
+import { $, $$, el, esc, icon, toast, palette, timeAgo, throttle, basename, menu } from "./ui.js";
+import { S, bus, navigate, statusOf, LIVE, agentLabel } from "./state.js";
+import { mountMission } from "./views/mission.js";
+import { mountWork } from "./views/work.js";
 import { mountTask } from "./views/task.js";
+import { mountReview } from "./views/review.js";
+import { mountStatus } from "./views/status.js";
+import { mountKnowledge } from "./views/knowledge.js";
 import { mountSettings } from "./views/settings.js";
 import { mountAgents } from "./views/agents.js";
-import { mountGithub } from "./views/github.js";
-import { mountIssues } from "./views/issues.js";
-import { mountRepos } from "./views/repos.js";
-import { mountLessons } from "./views/lessons.js";
-import { mountDigest, mountInbox } from "./views/digest.js";
 import { openNewTask } from "./views/newtask.js";
-import { TABS } from "./views/inspector.js";
 import { deliver, markSeen, renderAttention, permission, requestPermission } from "./notify.js";
 import { GOTO, keysFor, openShortcuts } from "./shortcuts.js";
+import { noteMessage } from "./live.js";
+import { commandItems } from "./commands.js";
 
 const main = $("#main");
+const root = document.documentElement;
 let view = null;
 
 // ---------------------------------------------------------------------------- icons in static html
 $$("[data-icon]").forEach((i) => { i.outerHTML = icon(i.dataset.icon); });
+if (/Mac|iPhone|iPad/.test(navigator.platform || "")) $("#paletteKbd").textContent = "⌘K";
 
 // ---------------------------------------------------------------------------- theme
 function applyTheme(theme, density) {
   S.ui.theme = theme || S.ui.theme || "system";
   S.ui.density = density || S.ui.density || "comfortable";
   const resolved = S.ui.theme === "system" ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : S.ui.theme;
-  document.documentElement.dataset.theme = resolved;
-  document.documentElement.dataset.density = S.ui.density;
+  root.dataset.theme = resolved;
+  root.dataset.density = S.ui.density;
   try { localStorage.setItem("relay.theme", S.ui.theme); localStorage.setItem("relay.density", S.ui.density); } catch {}
   $("#themeBtn").innerHTML = icon(resolved === "dark" ? "sun" : "moon");
+  $("#themeBtn").title = resolved === "dark" ? "Switch to the light theme" : "Switch to the dark theme";
 }
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => applyTheme());
 bus.on("theme", ({ theme, density }) => applyTheme(theme, density));
-$("#themeBtn").onclick = () => { const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark"; applyTheme(next, S.ui.density); api.saveSettings({ ui_theme: next }).catch(() => {}); };
+function toggleTheme() { const next = root.dataset.theme === "dark" ? "light" : "dark"; applyTheme(next, S.ui.density); api.saveSettings({ ui_theme: next }).catch(() => {}); }
+$("#themeBtn").onclick = toggleTheme;
 
-// ---------------------------------------------------------------------------- sidebar: resize + collapse
-const SIDEBAR_MIN = 220, SIDEBAR_MAX = 600, SIDEBAR_DEFAULT = 292;
-const appEl = document.getElementById("app");
-
-function applySidebarWidth(px) {
-  const w = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, Math.round(px)));
-  document.documentElement.style.setProperty("--sidebar", w + "px");
-  try { localStorage.setItem("relay.sidebarW", String(w)); } catch {}
-  return w;
-}
-function setSidebarCollapsed(collapsed) {
-  const narrow = matchMedia("(max-width: 980px)").matches;
-  if (narrow) {
-    // On small screens the list is an overlay drawer rather than a column.
-    appEl.classList.toggle("show-sidebar", !collapsed);
-    appEl.classList.remove("sidebar-collapsed");
-  } else {
-    appEl.classList.toggle("sidebar-collapsed", !!collapsed);
-    appEl.classList.remove("show-sidebar");
-  }
-  try { localStorage.setItem("relay.sidebarCollapsed", collapsed ? "1" : "0"); } catch {}
-  $("#sidebarToggle")?.classList.toggle("active", !collapsed);
-}
-// Close the overlay drawer when you pick a task or click away.
-addEventListener("click", (e) => {
-  if (!appEl.classList.contains("show-sidebar")) return;
-  const inSidebar = e.target.closest("#sidebar");
-  const onToggle = e.target.closest("#sidebarToggle");
-  if (onToggle) return;
-  if (!inSidebar || e.target.closest("[data-task]")) appEl.classList.remove("show-sidebar");
-});
-(function initSidebar() {
-  try {
-    const w = Number(localStorage.getItem("relay.sidebarW"));
-    if (w) applySidebarWidth(w);
-    // On a phone the list is a drawer over the page; opening it on load would hide
-    // the page you asked for, so it starts closed there.
-    setSidebarCollapsed(matchMedia("(max-width: 980px)").matches || localStorage.getItem("relay.sidebarCollapsed") === "1");
-  } catch {}
-  const handle = $("#sidebarResize");
-  if (!handle) return;
-  let startX = 0, startW = 0;
-  const onMove = (e) => applySidebarWidth(startW + (e.clientX - startX));
-  const onUp = () => {
-    handle.classList.remove("dragging");
-    document.body.classList.remove("resizing");
-    removeEventListener("mousemove", onMove);
-    removeEventListener("mouseup", onUp);
-  };
-  handle.addEventListener("mousedown", (e) => {
-    e.preventDefault();
-    startX = e.clientX;
-    startW = $("#sidebar").getBoundingClientRect().width;
-    handle.classList.add("dragging");
-    document.body.classList.add("resizing");
-    addEventListener("mousemove", onMove);
-    addEventListener("mouseup", onUp);
-  });
-  handle.addEventListener("dblclick", () => applySidebarWidth(SIDEBAR_DEFAULT));
-})();
-$("#sidebarToggle").onclick = () => {
-  const narrow = matchMedia("(max-width: 980px)").matches;
-  const shown = narrow ? appEl.classList.contains("show-sidebar") : !appEl.classList.contains("sidebar-collapsed");
-  setSidebarCollapsed(shown);
+// ---------------------------------------------------------------------------- navigation chrome
+$("#navCollapse").onclick = () => {
+  const on = !root.classList.contains("nav-collapsed");
+  root.classList.toggle("nav-collapsed", on);
+  try { localStorage.setItem("relay.navCollapsed", on ? "1" : "0"); } catch {}
 };
-
-// Inspector tab strip: fade when more tabs are off-screen, and keep the active tab visible.
-function wireTabScroll() {
-  const tabs = document.querySelector(".tabs");
-  if (!tabs || tabs.dataset.wired) return;
-  tabs.dataset.wired = "1";
-  let wrap = tabs.parentElement;
-  if (!wrap.classList.contains("tabs-wrap")) {
-    wrap = document.createElement("div");
-    wrap.className = "tabs-wrap";
-    tabs.parentElement.insertBefore(wrap, tabs);
-    wrap.appendChild(tabs);
-  }
-  const update = () => wrap.classList.toggle("can-scroll-right", tabs.scrollWidth - tabs.clientWidth - tabs.scrollLeft > 4);
-  tabs.addEventListener("scroll", update);
-  addEventListener("resize", update);
-  new MutationObserver(() => {
-    update();
-    tabs.querySelector("button.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }).observe(tabs, { attributes: true, subtree: true, attributeFilter: ["class"] });
-  update();
-}
+$("#newTaskBtn").onclick = () => openNewTask();
+$("#tabNew").onclick = () => openNewTask();
+$("#tabMore").onclick = (e) => menu(e.currentTarget, [
+  { label: "Agents", icon: "bot", onClick: () => navigate("#/agents") },
+  { label: "Settings", icon: "settings", onClick: () => navigate("#/settings") },
+  "-",
+  { label: "Search or run a command", icon: "search", onClick: () => openPalette() },
+  { label: "Notifications", icon: "bell", onClick: () => $("#notifBtn").click() },
+  { label: root.dataset.theme === "dark" ? "Light theme" : "Dark theme", icon: root.dataset.theme === "dark" ? "sun" : "moon", onClick: toggleTheme },
+]);
 
 // ---------------------------------------------------------------------------- routing
-function parseRoute() {
-  const h = location.hash.replace(/^#\/?/, "");
-  const parts = h.split("/").filter(Boolean);
-  if (!parts.length) return { view: "dashboard", id: null, tab: null, section: null };
-  if (parts[0] === "task" && parts[1]) return { view: "task", id: decodeURIComponent(parts[1]), tab: parts[2] || null, section: null };
-  if (parts[0] === "settings") return { view: "settings", id: null, tab: null, section: parts[1] || "workflow" };
-  if (parts[0] === "repos") return { view: "repos", id: null, tab: null, section: parts[1] || "list" };
-  if (["agents", "github", "issues", "tasks", "dashboard", "lessons", "digest", "inbox"].includes(parts[0])) return { view: parts[0] === "dashboard" ? "dashboard" : parts[0], id: null, tab: null, section: null };
-  return { view: "dashboard", id: null, tab: null, section: null };
+// Old addresses keep working: each is rewritten to where that content lives now.
+const TASK_VIEW_OF_TAB = { overview: "", result: "changes/try", changes: "changes", history: "changes/commits", repository: "changes/edit",
+  checks: "checks", review: "checks/review", timeline: "checks/timeline", logs: "logs", sessions: "logs/sessions", design: "design" };
+function redirectOf(parts) {
+  const [a, b, c] = parts;
+  if (a === "dashboard" || a === "home" && !b) return "#/";
+  if (a === "inbox") return "#/home/needs";
+  if (a === "digest") { let h = 24; try { h = Number(localStorage.getItem("relay.digestHours")) || 24; } catch {} return `#/home/${h >= 168 ? "7d" : h >= 72 ? "3d" : "24h"}`; }
+  if (a === "tasks") return "#/work";
+  if (a === "issues") return "#/work/issues";
+  if (a === "github") return "#/knowledge/github";
+  if (a === "lessons") return "#/knowledge/lessons";
+  if (a === "repos") return `#/knowledge/${{ list: "repositories", worktrees: "worktrees", graph: "graph", system: "system" }[b] || "repositories"}`;
+  if (a === "settings" && b === "connectors") return "#/knowledge/connectors";
+  if (a === "task" && b && c && c in TASK_VIEW_OF_TAB) return `#/task/${b}${TASK_VIEW_OF_TAB[c] ? `/${TASK_VIEW_OF_TAB[c]}` : ""}`;
+  return null;
 }
+function parseRoute() {
+  const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
+  const to = redirectOf(parts);
+  if (to && to !== location.hash) { history.replaceState(null, "", to); return parseRoute(); }
+  const [a, b, c, d] = parts;
+  if (!a || a === "home") return { view: "home", id: null, tab: b || null, section: null };
+  if (a === "work") return { view: "work", id: null, tab: b || null, section: null };
+  if (a === "task" && b) return { view: "task", id: b, tab: c || null, section: d || null };
+  if (a === "review" && b) return { view: "review", id: b, tab: null, section: null };
+  if (a === "status" && b) return { view: "status", id: b, tab: null, section: null };
+  if (a === "knowledge") return { view: "knowledge", id: null, tab: b || "system", section: null };
+  if (a === "settings") return { view: "settings", id: null, tab: null, section: b || "workflow" };
+  if (a === "agents") return { view: "agents", id: null, tab: null, section: null };
+  return { view: "home", id: null, tab: null, section: null };
+}
+const NAV_OF_VIEW = { home: "home", work: "work", task: "work", review: "work", knowledge: "knowledge", agents: "agents", settings: "settings" };
 function route() {
   const r = parseRoute();
   const same = view && S.route.view === r.view && S.route.id === r.id;
   S.route = r;
+  root.classList.toggle("bare", r.view === "status");
   if (r.id) { markSeen(r.id); renderAttention(); }
-  $$(".rail-btn[data-nav]").forEach((b) => b.classList.toggle("active", b.dataset.nav === (r.view === "task" ? "tasks" : r.view)));
-  document.getElementById("app").classList.toggle("no-sidebar", false);
-  if (same) { view.update && view.update("route"); bus.emit("route"); renderSidebar(); return; }
+  $$("[data-nav]").forEach((b) => { const on = b.dataset.nav === NAV_OF_VIEW[r.view]; b.classList.toggle("active", on); on ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"); });
+  if (same) { view.update && view.update("route"); bus.emit("route"); return; }
   view && view.destroy && view.destroy();
   view = null;
+  main.scrollTop = 0;
   if (r.view === "task") view = mountTask(main, r.id);
+  else if (r.view === "review") view = mountReview(main, r.id);
+  else if (r.view === "status") view = mountStatus(main, r.id);
+  else if (r.view === "work") view = mountWork(main, r.tab);
+  else if (r.view === "knowledge") view = mountKnowledge(main, r.tab);
   else if (r.view === "settings") view = mountSettings(main, r.section);
   else if (r.view === "agents") view = mountAgents(main);
-  else if (r.view === "github") view = mountGithub(main);
-  else if (r.view === "issues") view = mountIssues(main);
-  else if (r.view === "repos") view = mountRepos(main, r.section);
-  else if (r.view === "tasks") view = mountTasksHome();
-  else if (r.view === "lessons") view = mountLessons(main);
-  else if (r.view === "digest") view = mountDigest(main);
-  else if (r.view === "inbox") view = mountInbox(main);
-  else view = mountDashboard(main);
-  renderSidebar();
+  else view = mountMission(main, r.tab);
   bus.emit("route");
-  requestAnimationFrame(wireTabScroll);
 }
 window.addEventListener("hashchange", route);
 
-function mountTasksHome() {
-  const tasks = [...S.tasks.values()].filter((t) => !t.archived).sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
-  if (tasks.length) { navigate(`#/task/${tasks[0].id}`); return { update() {}, destroy() {} }; }
-  main.innerHTML = `<div class="page"><div class="empty">${icon("sparkles", "lg")}<h3>No tasks yet</h3><p>Create your first task. Choose a repository, describe the change once, and let one agent supervise the other until a reviewable branch and draft PR exist.</p><p style="margin-top:14px"><button class="btn primary" id="emptyNew">${icon("plus")}New task</button></p></div></div>`;
-  $("#emptyNew", main).onclick = () => openNewTask();
-  return { update() {}, destroy() {} };
+// ---------------------------------------------------------------------------- nav counts, autopilot, connection
+function renderCounts() {
+  const tasks = [...S.tasks.values()].filter((t) => !t.archived);
+  const live = tasks.filter((t) => LIVE.has(t.status)).length;
+  const needs = S.autopilot?.needs_you ?? tasks.filter((t) => statusOf(t).attention).length;
+  const set = (id, n, title) => { const b = $(id); if (!b) return; b.hidden = !n; b.textContent = n > 99 ? "99+" : String(n); if (title) b.title = title; };
+  set("#navLive", live, `${live} running`);
+  set("#navNeeds", needs, `${needs} need you`);
+  set("#navLessons", S.lessonsPending || 0, `${S.lessonsPending} lessons to review`);
+  $("#tabLive").hidden = !live; $("#tabNeeds").hidden = !needs;
 }
 
-// ---------------------------------------------------------------------------- sidebar
-const groupOf = (t) => {
-  const st = statusOf(t);
-  if (st.attention) return 0;
-  if (LIVE.has(t.status)) return 1;
-  if (t.status === "queued" || t.status === "draft") return 2;
-  return 3;
-};
-const GROUPS = ["Needs attention", "Active", "Queued", "Recent"];
-function matchesFilter(t) {
-  const f = S.ui.filter;
-  if (f === "archived") return !!t.archived;
-  if (t.archived) return false;
-  if (f === "attention") return !!statusOf(t).attention;
-  if (f === "active") return LIVE.has(t.status) || statusOf(t).attention;
-  if (f === "done") return t.status === "done";
-  if (f === "failed") return ["failed", "stopped", "interrupted"].includes(t.status);
-  return true;
-}
-function queuedFirst(a, b) {
-  const qa = a.status === "queued", qb = b.status === "queued";
-  if (qa !== qb) return qa ? -1 : 1;
-  return qa ? byQueue(a, b) : 0;
-}
-function renderSidebar() {
-  const q = S.ui.search.trim().toLowerCase();
-  const all = [...S.tasks.values()];
-  const rows = all.filter(matchesFilter).filter((t) => !q || `${t.name} ${t.repo} ${(t.tags || []).join(" ")} ${t.github_repo || ""}`.toLowerCase().includes(q))
-    .sort((a, b) => groupOf(a) - groupOf(b) || (groupOf(a) === 2 ? queuedFirst(a, b) : 0) || (b.updated_at || "").localeCompare(a.updated_at || ""));
-  // Queued tasks are listed in the order they will run, so reordering them here is what the scheduler follows.
-  const order = queuedInOrder(all);
-  const rank = new Map(order.map((t, i) => [t.id, i]));
-  $("#taskCount").textContent = all.filter((t) => !t.archived).length;
-  const list = $("#taskList");
-  if (!rows.length) { list.innerHTML = `<div class="empty small">${q ? "No tasks match." : S.ui.filter === "all" ? "No tasks yet." : "Nothing here."}</div>`; return; }
-  let lastGroup = -1;
-  list.innerHTML = rows.map((t) => {
-    const g = groupOf(t);
-    const head = g !== lastGroup ? `<div class="tl-group"><span>${GROUPS[g]}</span></div>` : "";
-    lastGroup = g;
-    const st = statusOf(t);
-    const live = LIVE.has(t.status) || t.process?.state === "running";
-    const color = st.tone ? `var(--${st.tone === "accent" ? "accent" : st.tone})` : "var(--text-3)";
-    const roles = ["supervisor", "worker", "reviewer"].map((r) => roleAgent(t, r)).filter(Boolean);
-    const badge = st.attention ? `<span class="badge amber">${t.pending ? (t.pending.kind === "approval" ? "approve" : "question") : st.label}</span>` : (t.pr_number ? `<span class="badge green">PR #${esc(t.pr_number)}</span>` : (t.status === "failed" ? '<span class="badge red">failed</span>' : ""));
-    const canStart = ["queued", "draft", "failed", "stopped", "interrupted"].includes(t.status);
-    const canStop = live || t.status === "needs_input" || t.status === "paused";
-    const pos = rank.get(t.id);
-    const quick = canStop
-      ? `<button class="task-quick stop" data-stop="${esc(t.id)}" title="Stop this task">${icon("stop")}</button>`
-      : pos !== undefined
-        ? `<span class="task-quick-group"><button class="task-quick" data-move="${esc(t.id)}" data-dir="up" title="Run earlier" aria-label="Move up in queue" ${pos === 0 ? "disabled" : ""}>${icon("chevronUp")}</button><button class="task-quick" data-move="${esc(t.id)}" data-dir="down" title="Run later" aria-label="Move down in queue" ${pos === order.length - 1 ? "disabled" : ""}>${icon("chevronDown")}</button><button class="task-quick" data-unqueue="${esc(t.id)}" title="Remove from the queue (keeps it as a draft)" aria-label="Remove from queue">${icon("unqueue")}</button><button class="task-quick" data-start="${esc(t.id)}" title="Start now (runs alongside other tasks)" aria-label="Start now">${icon("play")}</button></span>`
-        : (canStart ? `<button class="task-quick" data-start="${esc(t.id)}" title="Start now (runs alongside other tasks)">${icon("play")}</button>` : "");
-    const queueTag = pos !== undefined ? `<span class="q-pos" title="${t.chain_id ? "Runs after the previous task of its chain ends" : "Position in the queue"}">#${pos + 1}${t.chain_id ? " · chain" : ""}</span>` : "";
-    const waitLine = t.status === "queued" && t.waiting?.text ? `<span class="wait-line" title="${esc(t.waiting.text)}">${icon(t.waiting.kind === "limits" ? "gauge" : t.waiting.kind === "dependency" || t.waiting.kind === "chain" ? "layers" : "clock", "sm")}<span class="truncate">${esc(t.waiting.text)}</span></span>` : "";
-    return head + `<div class="task-row ${S.route.id === t.id ? "active" : ""}">
-      <button class="task-item" data-task="${esc(t.id)}" role="listitem" title="${esc(t.name)}">
-      <span class="st ${live ? "live" : ""}" style="background:${color};color:${color}"></span>
-      <span class="name">${esc(t.name)}</span>
-      ${badge || "<span></span>"}
-      <span class="sub"><span class="wf-mini" title="${esc(roles.map(agentLabel).join(" → "))}">${roles.map((a) => `<i class="av ${esc(a)}">${esc(agentInitial(a)[0])}</i>`).join("")}</span>${queueTag}<span class="truncate">${esc(t.github_repo || basename(t.repo))}</span><span style="margin-left:auto">${live ? esc(st.label.toLowerCase()) : timeAgo(t.updated_at)}</span></span>
-      ${waitLine}
-    </button>${quick}</div>`;
-  }).join("");
-  $$("[data-task]", list).forEach((b) => (b.onclick = () => navigate(`#/task/${b.dataset.task}`)));
-  $$("[data-start]", list).forEach((b) => (b.onclick = async (e) => {
-    e.stopPropagation();
-    b.disabled = true;
-    try { await api.action(b.dataset.start, "start"); toast("success", "Started"); }
-    catch (err) { toast("error", "Could not start", err.message); b.disabled = false; }
-  }));
-  $$("[data-move]", list).forEach((b) => (b.onclick = async (e) => {
-    e.stopPropagation();
-    b.disabled = true;
-    try { const r = await api.moveInQueue(b.dataset.move, b.dataset.dir); if (r.task) upsertTask(r.task); renderSidebar(); }
-    catch (err) { toast("error", "Could not reorder", err.message); b.disabled = false; }
-  }));
-  $$("[data-unqueue]", list).forEach((b) => (b.onclick = async (e) => {
-    e.stopPropagation();
-    b.disabled = true;
-    try { await api.action(b.dataset.unqueue, "unqueue"); toast("info", "Removed from the queue", "It stays as a draft; start or queue it again any time."); }
-    catch (err) { toast("error", "Could not remove from queue", err.message); b.disabled = false; }
-  }));
-  $$("[data-stop]", list).forEach((b) => (b.onclick = async (e) => {
-    e.stopPropagation();
-    b.disabled = true;
-    try { await api.action(b.dataset.stop, "stop"); toast("info", "Stopping"); }
-    catch (err) { toast("error", "Could not stop", err.message); b.disabled = false; }
-  }));
-}
-$("#taskSearch").addEventListener("input", (e) => { S.ui.search = e.target.value; renderSidebar(); });
-$$("#taskFilters .chip").forEach((c) => (c.onclick = () => { S.ui.filter = c.dataset.f; $$("#taskFilters .chip").forEach((x) => x.classList.toggle("active", x === c)); renderSidebar(); }));
-$("#newTaskBtn").onclick = () => openNewTask();
-
-// ---------------------------------------------------------------------------- queue + connection
-function renderQueue() {
-  const q = S.queue || {};
-  $("#queueDot").className = "dot " + (q.running ? "on" : "");
-  $("#queueText").textContent = q.running ? `Queue running · ${q.active || 0} active · ${q.queued || 0} waiting` : `Queue idle · ${q.queued || 0} waiting`;
-  $("#runBtn").hidden = !!q.running;
-  $("#stopQueueBtn").hidden = !q.running;
-  if (document.activeElement !== $("#parallelInput")) $("#parallelInput").value = q.max_parallel || S.config.max_parallel || 1;
-}
-$("#runBtn").onclick = async () => { try { S.queue = await api.queueStart(Number($("#parallelInput").value) || 1); renderQueue(); toast("success", "Queue running", "Queued tasks start now."); } catch (e) { toast("error", "Queue", e.message); } };
-$("#stopQueueBtn").onclick = async () => { try { S.queue = await api.queueStop(); renderQueue(); toast("info", "Queue halted", "Running tasks continue; nothing new starts."); } catch (e) { toast("error", "Queue", e.message); } };
-$("#parallelInput").addEventListener("change", async (e) => { const n = Math.max(1, Number(e.target.value) || 1); await api.saveSettings({ max_parallel: n }); if (S.queue.running) S.queue = await api.queueStart(n); renderQueue(); });
-function renderConn() {
-  const dot = $("#connDot"), txt = $("#connText");
-  if (conn.signedOut) { dot.className = "dot warn"; txt.innerHTML = 'Signed out · <a href="" onclick="location.reload();return false">reload to sign in</a>'; return; }
-  if (!conn.online) { dot.className = "dot off"; txt.textContent = S.config?.ide_url || location.hostname !== "127.0.0.1" ? "Relay server unreachable · retrying" : "Backend offline · keep run.bat open"; return; }
-  if (conn.stream) { dot.className = "dot on"; txt.textContent = `Live · v${S.build || ""}`; }
-  else { dot.className = "dot warn"; txt.textContent = "Reconnecting live stream…"; }
-}
-onConnection(renderConn);
-
-// ---------------------------------------------------------------------------- autopilot status bar
-const AP_TONE = { running: "on", idle: "on", paused: "warn", halted: "", outside_window: "", waiting_limits: "warn", cost_cap: "off" };
+const AP_TONE = { running: "ok", idle: "ok", paused: "warn", halted: "", outside_window: "", waiting_limits: "warn", cost_cap: "alarm" };
 function renderAutopilot() {
-  const a = S.autopilot, bar = $("#apBar");
-  if (!bar || !a) return;
-  const badge = $("#inboxBadge");
-  if (badge) badge.hidden = !a.needs_you;
-  const stats = [a.running ? `${a.running} running` : "", a.parked ? `${a.parked} parked` : "", a.queued ? `${a.queued} queued` : "",
-    a.waiting_dependencies ? `${a.waiting_dependencies} waiting on others` : ""].filter(Boolean).join(" · ");
-  const until = a.until ? ` until ${a.until_text}` : "";
-  const label = a.state === "running" ? "running" : a.state === "idle" ? "idle" : (a.label || a.state).replace(/^Autopilot /, "").replace(/^./, (c) => c.toLowerCase());
-  bar.hidden = false;
-  bar.dataset.state = a.state;
-  bar.innerHTML = `<span class="dot ${AP_TONE[a.state] || ""} ${a.state === "running" && a.running ? "live" : ""}"></span>
-    <span class="ap-label"><b>Autopilot</b> <span>${esc(label)}${a.state === "waiting_limits" || a.state === "running" || a.state === "idle" ? "" : esc(until)}</span></span>
-    ${stats ? `<span class="ap-stats">${esc(stats)}</span>` : ""}
-    ${a.quiet_hours ? `<span class="badge purple" title="Judge decisions take their automatic choice">${icon("moon", "sm")}quiet hours</span>` : ""}
-    ${a.daily_cap_usd ? `<span class="ap-cost" title="Estimated spend today">~$${Number(a.today_cost_usd || 0).toFixed(2)} / $${a.daily_cap_usd}</span>` : ""}
-    <span class="ap-spacer"></span>
-    <a class="ap-link ${a.needs_you ? "attn" : ""}" href="#/inbox">${icon("inbox", "sm")}<span class="lbl">Needs you</span><b>${a.needs_you || 0}</b></a>
-    <a class="ap-link" href="#/digest" title="Digest">${icon("sunrise", "sm")}<span class="lbl">Digest</span></a>
-    ${a.state === "halted" ? `<button class="btn xs" id="apRun">${icon("play")}Run queue</button>` : `<button class="btn xs" id="apToggle" title="${a.paused ? "Resume: queued tasks start and paused runs continue" : "Pause everything: nothing new starts, running tasks stop after their current turn"}">${icon(a.paused ? "play" : "pause")}${a.paused ? "Resume" : "Pause"}</button>`}`;
-  $("#apToggle", bar) && ($("#apToggle", bar).onclick = toggleAutopilot);
-  $("#apRun", bar) && ($("#apRun", bar).onclick = () => $("#runBtn").click());
+  const a = S.autopilot, host = $("#navAutopilot");
+  if (!host) return;
+  renderCounts();
+  if (!a) { host.innerHTML = ""; return; }
+  const label = a.state === "halted" ? "Queue halted" : a.paused ? "Paused" : a.state === "running" ? `${a.running} running` : a.state === "idle" ? "On shift · idle" : (a.label || a.state).replace(/^Autopilot /, "");
+  const tone = a.paused ? "warn" : AP_TONE[a.state] || "";
+  host.innerHTML = `<div class="ap-card" data-state="${esc(a.state)}">
+      <span class="ap-status"><span class="dot ${tone} ${a.state === "running" && a.running ? "live" : ""}" aria-hidden="true"></span><span class="lbl"><span class="ap-name">Autopilot</span><span class="ap-state">${esc(label)}</span></span></span>
+      ${a.state === "halted" ? `<button class="btn xs" id="apRun" type="button" title="Start the queue">${icon("play")}<span class="lbl">Run</span></button>`
+        : `<button class="btn xs ghost icon" id="apToggle" type="button" title="${a.paused ? "Resume: queued tasks start and paused runs continue" : "Pause everything: nothing new starts, running tasks stop after their current turn"}" aria-label="${a.paused ? "Resume autopilot" : "Pause autopilot"}">${icon(a.paused ? "play" : "pause")}</button>`}
+    </div>`;
+  $("#apToggle", host) && ($("#apToggle", host).onclick = toggleAutopilot);
+  $("#apRun", host) && ($("#apRun", host).onclick = runQueue);
 }
-async function toggleAutopilot() {
+export async function toggleAutopilot() {
   const paused = !!S.autopilot?.paused;
   try {
     S.autopilot = await api.autopilotAction(paused ? "resume" : "pause");
-    renderAutopilot();
+    renderAutopilot(); view?.update?.("autopilot", S.autopilot);
     toast(paused ? "success" : "info", paused ? "Autopilot resumed" : "Autopilot paused", paused ? "Queued tasks start again." : "Nothing new starts; running tasks stop after their current turn.");
   } catch (e) { toast("error", "Autopilot", e.message); }
 }
+export async function runQueue() {
+  try { S.queue = await api.queueStart(S.queue?.max_parallel || S.config.max_parallel || 1); S.autopilot = await api.autopilot(); renderAutopilot(); view?.update?.("autopilot", S.autopilot); toast("success", "Queue running", "Queued tasks start now."); }
+  catch (e) { toast("error", "Queue", e.message); }
+}
+export async function haltQueue() {
+  try { S.queue = await api.queueStop(); S.autopilot = await api.autopilot(); renderAutopilot(); view?.update?.("autopilot", S.autopilot); toast("info", "Queue halted", "Running tasks continue; nothing new starts."); }
+  catch (e) { toast("error", "Queue", e.message); }
+}
+bus.on("autopilot:toggle", toggleAutopilot);
+bus.on("queue:run", runQueue);
+bus.on("queue:halt", haltQueue);
 setInterval(async () => { if (!conn.online || !S.ready) return; try { S.autopilot = await api.autopilot(); renderAutopilot(); } catch {} }, 30000);
 
+function renderConn() {
+  const dot = $("#connDot"), txt = $("#connText");
+  if (conn.signedOut) { dot.className = "dot warn"; txt.innerHTML = 'Signed out · <a href="" onclick="location.reload();return false">sign in</a>'; return; }
+  if (!conn.online) { dot.className = "dot alarm"; txt.textContent = "Server unreachable · retrying"; return; }
+  if (conn.stream) { dot.className = "dot ok"; txt.textContent = `Live · v${S.build || ""}`; }
+  else { dot.className = "dot warn"; txt.textContent = "Reconnecting…"; }
+}
+onConnection(renderConn);
+
 // ---------------------------------------------------------------------------- notifications
-function renderLessonsBadge() { const b = $("#lessonsBadge"); if (b) b.hidden = !S.lessonsPending; }
-function renderNotifBadge() { const unread = (S.notifications || []).filter((n) => !n.read).length; const b = $("#notifBadge"); b.hidden = !unread; }
+function renderNotifBadge() { const unread = (S.notifications || []).filter((n) => !n.read).length; $("#notifBadge").hidden = !unread; }
+const LEVEL_TONE = { success: "ok", error: "alarm", warning: "warn", info: "info" };
 $("#notifBtn").onclick = () => {
   const p = $("#notifPanel");
   if (!p.hidden) { p.hidden = true; return; }
   const rows = S.notifications || [];
   const askDesktop = S.config.ui_notifications && permission() === "default";
-  p.innerHTML = `<div class="row between" style="padding:8px 10px 4px"><strong>Notifications</strong><button class="btn xs" id="notifClear">Mark all read</button></div>` +
-    (askDesktop ? `<div class="notif-ask"><span>Get a desktop alert when a task needs you, even with Relay in the background.</span><button class="btn xs primary" id="notifAllow">${icon("bell")}Allow</button></div>` : "") + (rows.length ? rows.slice(0, 40).map((n) => `<div class="notif-row" data-n="${esc(n.task_id || "")}" data-kind="${esc(n.kind || "")}"><span class="toast-ic ${esc(n.level)}" style="background:var(--${n.level === "success" ? "green" : n.level === "error" ? "red" : n.level === "warning" ? "amber" : "blue"}-soft);color:var(--${n.level === "success" ? "green" : n.level === "error" ? "red" : n.level === "warning" ? "amber" : "blue"})">${icon(n.level === "success" ? "check" : n.level === "info" ? "info" : "alert")}</span><div><strong>${esc(n.title)}</strong><span>${esc(n.body || "")}</span><time>${timeAgo(n.time)}</time></div></div>`).join("") : '<div class="empty small">No notifications yet.</div>');
+  p.innerHTML = `<div class="notif-head"><strong>Notifications</strong><button class="btn xs ghost" id="notifClear" type="button">Mark all read</button></div>` +
+    (askDesktop ? `<div class="notif-ask"><span>Get a desktop alert when a task needs you, even with Relay in the background.</span><button class="btn xs primary" id="notifAllow" type="button">${icon("bell")}Allow</button></div>` : "") +
+    (rows.length ? `<div class="notif-list">${rows.slice(0, 40).map((n) => `<button type="button" class="notif-row ${n.read ? "" : "unread"}" data-n="${esc(n.task_id || "")}" data-kind="${esc(n.kind || "")}"><span class="notif-ic tone-${LEVEL_TONE[n.level] || "info"}">${icon(n.level === "success" ? "check" : n.level === "info" ? "info" : "alert", "sm")}</span><span class="notif-copy"><strong>${esc(n.title)}</strong><span>${esc(n.body || "")}</span><time>${timeAgo(n.time)}</time></span></button>`).join("")}</div>` : '<div class="empty small">No notifications yet. Deliveries, questions and failures appear here.</div>');
   p.hidden = false;
   $("#notifAllow", p) && ($("#notifAllow", p).onclick = async () => {
     const res = await requestPermission();
@@ -337,56 +190,60 @@ $("#notifBtn").onclick = () => {
     p.hidden = true;
   });
   $("#notifClear", p).onclick = async () => { await api.notificationsRead(); S.notifications.forEach((n) => (n.read = true)); renderNotifBadge(); p.hidden = true; };
-  $$("[data-n]", p).forEach((r) => (r.onclick = () => { p.hidden = true; if (r.dataset.n) navigate(`#/task/${r.dataset.n}`); else if (r.dataset.kind === "digest") navigate("#/digest"); }));
-  const close = (e) => { if (!p.contains(e.target) && e.target !== $("#notifBtn") && !$("#notifBtn").contains(e.target)) { p.hidden = true; document.removeEventListener("mousedown", close); } };
+  $$("[data-n]", p).forEach((r) => (r.onclick = () => { p.hidden = true; if (r.dataset.n) navigate(`#/task/${r.dataset.n}`); else if (r.dataset.kind === "digest") navigate("#/home/24h"); }));
+  const close = (e) => { if (!p.contains(e.target) && !$("#notifBtn").contains(e.target)) { p.hidden = true; document.removeEventListener("mousedown", close); } };
   setTimeout(() => document.addEventListener("mousedown", close), 0);
 };
 
 // ---------------------------------------------------------------------------- live events
-const sidebarSoon = throttle(renderSidebar, 400);
+const countsSoon = throttle(renderCounts, 500);
 function upsertTask(t) {
   const prev = S.tasks.get(t.id);
   S.tasks.set(t.id, { ...t, process: t.process || prev?.process || { state: "idle" } });
-  return { statusChanged: !prev || prev.status !== t.status, pendingChanged: (prev?.pending?.id || null) !== (t.pending?.id || null) };
+  return { statusChanged: !prev || prev.status !== t.status, pendingChanged: (prev?.pending?.id || null) !== (t.pending?.id || null), created: !prev };
 }
+export { upsertTask };
 function onEvent(ev) {
   const p = ev.payload || {};
   switch (ev.type) {
     case "task": {
       const info = upsertTask(p);
-      sidebarSoon();
+      countsSoon();
       if (S.route.id === p.id) markSeen(p.id);
       if (info.statusChanged || info.pendingChanged) renderAttention();
-      if (view && (S.route.view !== "task" || S.route.id === p.id)) view.update && view.update("task", info);
+      if (view && (S.route.view !== "task" || S.route.id === p.id)) view.update && view.update("task", { ...info, id: p.id });
       if (info.statusChanged && S.route.id !== p.id && statusOf(p).attention && p.pending) {
-        toast("warning", `${p.name}: ${p.pending.kind === "approval" ? "approval needed" : "question for you"}`, p.pending.question || "", { action: { label: "Open", onClick: () => navigate(`#/task/${p.id}`) } });
+        toast("warning", `${p.name}: ${p.pending.kind === "question" ? "question for you" : "approval needed"}`, p.pending.question || "", { action: { label: "Answer", onClick: () => navigate("#/home/needs") } });
       }
       break;
     }
     case "task_deleted":
-      S.tasks.delete(p.id);
-      S.msgs.delete(p.id);
+      S.tasks.delete(p.id); S.msgs.delete(p.id);
       S.notifications = (S.notifications || []).filter((n) => n.task_id !== p.id);
-      renderNotifBadge();
-      renderSidebar();
-      renderAttention();
-      if (S.route.id === p.id) navigate("#/");
-      else if (view && view.update) view.update("task", {});
+      renderNotifBadge(); renderCounts(); renderAttention();
+      if (S.route.id === p.id) navigate("#/work");
+      else view?.update?.("task", { id: p.id, deleted: true });
       break;
     case "message": {
-      const store = msgStore(p.task_id);
-      if (store.loaded) { store.list.push(p); store.byId.set(p.id, p); store.count = p.seq || store.count + 1; if (store.list.length > 6000) store.list.splice(0, store.list.length - 6000); }
-      if (S.route.view === "task" && S.route.id === p.task_id && store.loaded && view) view.update("message", p);
+      const store = S.msgs.get(p.task_id);
+      if (store?.loaded) { store.list.push(p); store.byId.set(p.id, p); store.count = p.seq || store.count + 1; if (store.list.length > 6000) store.list.splice(0, store.list.length - 6000); }
+      const moved = noteMessage(p);
+      if (S.route.id === p.task_id && store?.loaded && view) view.update("message", p);
+      else if (moved && view && S.route.view !== "task") view.update?.("activity", p);
       break;
     }
     case "message_update": {
       const store = S.msgs.get(p.task_id);
-      if (store?.loaded) { const m = store.byId.get(p.id); if (m) { Object.assign(m, p); if (S.route.id === p.task_id && view) view.update("message_update", m); } }
+      let m = p;
+      if (store?.loaded) { const cur = store.byId.get(p.id); if (cur) { Object.assign(cur, p); m = cur; } }
+      const moved = noteMessage({ ...m, task_id: p.task_id });
+      if (S.route.id === p.task_id && store?.loaded && view) view.update("message_update", m);
+      else if (moved && view && S.route.view !== "task") view.update?.("activity", m);
       break;
     }
     case "process": {
       const t = S.tasks.get(p.task_id);
-      if (t) { t.process = p; if (S.route.id === p.task_id && view) view.update("process", p); }
+      if (t) { t.process = p; if (view && (S.route.id === p.task_id || S.route.view !== "task")) view.update?.("process", p); }
       break;
     }
     case "event": {
@@ -396,116 +253,53 @@ function onEvent(ev) {
     }
     case "artifact": if (S.route.id === p.task_id && view) view.update("artifact", p); break;
     case "notify": S.notifications.unshift(p); S.notifications = S.notifications.slice(0, 100); renderNotifBadge(); toast(p.level, p.title, p.body, p.task_id ? { action: { label: "Open", onClick: () => navigate(`#/task/${p.task_id}`) } } : {}); deliver(p); break;
-    case "github": S.github = { ...S.github, ...p }; view && view.update && view.update("github", p); break;
-    case "config": S.config = p; applyTheme(p.ui_theme, p.ui_density); renderQueue(); break;
-    case "queue": S.queue = { ...S.queue, ...p }; renderQueue(); break;
-    case "autopilot": S.autopilot = p; renderAutopilot(); view && view.update && view.update("autopilot", p); break;
-    case "lessons": S.lessonsPending = p.pending || 0; renderLessonsBadge(); view && view.update && view.update("lessons"); break;
-    case "agents": { const j = p.job; if (j) toast(j.state === "done" ? "success" : "error", `${agentLabel(p.agent)} ${j.action === "remove" ? "removal" : j.action} ${j.state === "done" ? "finished" : "failed"}`, j.error || ""); view && view.update && view.update("agents"); break; }
+    case "github": S.github = { ...S.github, ...p }; view?.update?.("github", p); break;
+    case "config": S.config = p; applyTheme(p.ui_theme, p.ui_density); break;
+    case "queue": S.queue = { ...S.queue, ...p }; view?.update?.("queue", p); break;
+    case "autopilot": S.autopilot = p; renderAutopilot(); view?.update?.("autopilot", p); break;
+    case "lessons": S.lessonsPending = p.pending || 0; renderCounts(); view?.update?.("lessons"); break;
+    case "agents": { const j = p.job; if (j) toast(j.state === "done" ? "success" : "error", `${agentLabel(p.agent)} ${j.action === "remove" ? "removal" : j.action} ${j.state === "done" ? "finished" : "failed"}`, j.error || ""); view?.update?.("agents"); break; }
   }
 }
 
-// ---------------------------------------------------------------------------- shortcuts + palette
-function paletteItems() {
-  const t = S.route.id ? S.tasks.get(S.route.id) : null;
-  const items = [
-    { group: "Actions", label: "New task", icon: "plus", hint: keysFor("new"), onClick: () => openNewTask() },
-    { group: "Actions", label: S.queue.running ? "Halt queue" : "Run queue", icon: S.queue.running ? "stop" : "play", onClick: () => (S.queue.running ? $("#stopQueueBtn") : $("#runBtn")).click() },
-    { group: "Actions", label: "Toggle theme", icon: "sun", onClick: () => $("#themeBtn").click() },
-    { group: "Actions", label: "Show or hide the task list", icon: "tasks", hint: keysFor("sidebar"), onClick: () => $("#sidebarToggle").click() },
-    { group: "Navigate", label: "Dashboard", icon: "home", hint: keysFor("goDashboard"), onClick: () => navigate("#/") },
-    { group: "Navigate", label: "Needs you", icon: "inbox", hint: keysFor("goInbox"), keywords: "inbox questions approvals answer", onClick: () => navigate("#/inbox") },
-    { group: "Navigate", label: "Digest", icon: "sunrise", hint: keysFor("goDigest"), keywords: "morning summary report overnight", onClick: () => navigate("#/digest") },
-    { group: "Actions", label: S.autopilot?.paused ? "Resume autopilot" : "Pause autopilot", icon: S.autopilot?.paused ? "play" : "pause", keywords: "pause everything", onClick: () => toggleAutopilot() },
-    { group: "Navigate", label: "Autopilot settings", icon: "clock", keywords: "schedule window quiet hours limits fallback cost cap", onClick: () => navigate("#/settings/autopilot") },
-    { group: "Navigate", label: "Agents", icon: "bot", hint: keysFor("goAgents"), onClick: () => navigate("#/agents") },
-    { group: "Navigate", label: "Issues", icon: "issue", hint: keysFor("goIssues"), keywords: "tickets github board", onClick: () => navigate("#/issues") },
-    { group: "Navigate", label: "GitHub inbox", icon: "github", hint: keysFor("goGithub"), onClick: () => navigate("#/github") },
-    { group: "Navigate", label: "Repositories", icon: "folder", hint: keysFor("goRepos"), keywords: "branches clone git", onClick: () => navigate("#/repos") },
-    { group: "Navigate", label: "Lessons", icon: "brain", hint: keysFor("goLessons"), keywords: "learning retrospective score success", onClick: () => navigate("#/lessons") },
-    { group: "Navigate", label: "Worktrees", icon: "layers", keywords: "clean up repositories", onClick: () => navigate("#/repos/worktrees") },
-    { group: "Navigate", label: "Settings", icon: "settings", hint: keysFor("goSettings"), onClick: () => navigate("#/settings") },
-    { group: "Navigate", label: "Notification settings", icon: "bell", onClick: () => navigate("#/settings/notifications") },
-    { group: "Help", label: "Keyboard shortcuts", icon: "keyboard", hint: keysFor("help"), keywords: "keys hotkeys help", onClick: () => openShortcuts() },
-  ];
-  if (t) {
-    const active = LIVE.has(t.status) || t.status === "needs_input" || t.status === "paused";
-    if (active) items.push({ group: "Current task", label: "Stop task", icon: "stop", onClick: () => $("[data-act='stop']")?.click() }, { group: "Current task", label: t.status === "paused" ? "Resume task" : "Pause task", icon: "pause", onClick: () => ($("[data-act='pause']") || $("[data-act='resume']"))?.click() });
-    if (["failed", "stopped", "interrupted"].includes(t.status)) items.push({ group: "Current task", label: "Retry / resume task", icon: "retry", onClick: () => $("[data-act='retry']")?.click() });
-    if (t.pr_url) items.push({ group: "Current task", label: "Open pull request", icon: "external", onClick: () => window.open(t.pr_url, "_blank") });
-    for (const [k, l] of TABS) items.push({ group: "Inspector", label: `Show ${l}`, icon: "panel", hint: k === "result" ? keysFor("tryIt") : "", onClick: () => openTab(k) });
-    items.push({ group: "Current task", label: "Focus guidance box", icon: "message", hint: keysFor("guidance"), onClick: () => $("#guidance")?.focus() });
-  }
-  for (const x of [...S.tasks.values()].filter((x) => !x.archived).sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || "")).slice(0, 30)) {
-    items.push({ group: "Tasks", label: x.name, keywords: x.repo, icon: "tasks", hint: statusOf(x).label, onClick: () => navigate(`#/task/${x.id}`) });
-  }
-  return items;
-}
-$("#paletteBtn").onclick = () => palette(paletteItems);
+// ---------------------------------------------------------------------------- command palette + keyboard
+function openPalette(initial = "") { palette((q) => commandItems(q, { view }), { initial, placeholder: "Search tasks, jump anywhere, or type “create task: …”" }); }
+bus.on("palette", openPalette);
+$("#paletteBtn").onclick = () => openPalette();
 $("#shortcutsBtn").onclick = () => openShortcuts();
 
-function openTab(tab) {
-  if (S.route.view !== "task") return;
-  // The inspector may be hidden, or replaced by the conversation on a narrow screen.
-  bus.emit("show-inspector");
-  navigate(`#/task/${S.route.id}/${tab}`);
-}
-function stepTask(delta) {
-  const ids = $$("#taskList [data-task]").map((b) => b.dataset.task);
-  if (!ids.length) return;
-  const cur = ids.indexOf(S.route.id);
-  const next = ids[cur < 0 ? (delta > 0 ? 0 : ids.length - 1) : Math.max(0, Math.min(ids.length - 1, cur + delta))];
-  if (next === S.route.id) return;
-  navigate(`#/task/${next}`);
-  requestAnimationFrame(() => $("#taskList .task-row.active")?.scrollIntoView({ block: "nearest" }));
-}
-
-// "g" starts a two-key sequence; a small pill shows it is waiting for the second key.
 let chordUntil = 0;
-const chordPill = el('<div class="chord-pill" hidden><kbd>G</kbd> then <kbd>D</kbd> dashboard · <kbd>T</kbd> tasks · <kbd>A</kbd> agents · <kbd>H</kbd> GitHub · <kbd>I</kbd> issues · <kbd>S</kbd> settings · <kbd>R</kbd> repositories · <kbd>Y</kbd> needs you · <kbd>E</kbd> digest</div>');
+const chordPill = el('<div class="chord-pill" hidden><kbd>G</kbd> then <kbd>H</kbd> Mission Control · <kbd>W</kbd> Work · <kbd>K</kbd> Knowledge · <kbd>A</kbd> Agents · <kbd>S</kbd> Settings · <kbd>Y</kbd> Needs you</div>');
 document.body.appendChild(chordPill);
 const endChord = () => { chordUntil = 0; chordPill.hidden = true; };
+
+function stepTask(delta) {
+  const ids = S.workOrder?.length ? S.workOrder : [...S.tasks.values()].filter((t) => !t.archived).sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || "")).map((t) => t.id);
+  if (!ids.length) return;
+  const cur = ids.indexOf(S.route.id);
+  const next = ids[cur < 0 ? 0 : Math.max(0, Math.min(ids.length - 1, cur + delta))];
+  if (next && next !== S.route.id) navigate(`#/task/${next}`);
+}
 
 document.addEventListener("keydown", (e) => {
   const a = document.activeElement;
   const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(a?.tagName) || a?.isContentEditable;
-  // A dialog or the palette owns the keyboard; they handle Escape themselves.
   const overlay = !!$(".modal-backdrop, .palette-back");
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { if (!overlay) { e.preventDefault(); palette(paletteItems); } return; }
-  if (e.key === "Escape") {
-    endChord();
-    if (overlay) return;
-    $("#notifPanel").hidden = true;
-    if (appEl.classList.contains("show-sidebar")) setSidebarCollapsed(true);
-    return;
-  }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { if (!overlay) { e.preventDefault(); openPalette(); } return; }
+  if (e.key === "Escape") { endChord(); if (overlay) return; $("#notifPanel").hidden = true; return; }
   if (typing || overlay || e.ctrlKey || e.metaKey || e.altKey) return;
   const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-  if (chordUntil) {
-    const target = Date.now() < chordUntil && GOTO[key];
-    endChord();
-    if (target) { e.preventDefault(); navigate(target); }
-    return;
-  }
-  switch (e.key) {
-    case "?": e.preventDefault(); openShortcuts(); return;
-    case "/": e.preventDefault(); setSidebarCollapsed(false); $("#taskSearch").focus(); return;
-    case ".": if (S.route.view === "task" && $("#guidance")) { e.preventDefault(); $("#guidance").focus(); } return;
-    case "[": case "]": {
-      if (S.route.view !== "task") return;
-      const keys = TABS.map(([k]) => k); const cur = keys.indexOf(S.ui.inspectorTab || "overview");
-      openTab(keys[(cur + (e.key === "]" ? 1 : keys.length - 1)) % keys.length]);
-      return;
-    }
-  }
+  if (chordUntil) { const target = Date.now() < chordUntil && GOTO[key]; endChord(); if (target) { e.preventDefault(); navigate(target); } return; }
+  if (e.key === "?") { e.preventDefault(); openShortcuts(); return; }
+  if (e.key === "/") { e.preventDefault(); if (S.route.view === "work" && $("#workSearch")) $("#workSearch").focus(); else openPalette(); return; }
+  if (e.key === "." && S.route.view === "task" && $("#guidance")) { e.preventDefault(); $("#guidance").focus(); return; }
   if (e.shiftKey) return;
   switch (key) {
     case "n": e.preventDefault(); openNewTask(); break;
-    case "b": e.preventDefault(); $("#sidebarToggle").click(); break;
     case "g": e.preventDefault(); chordUntil = Date.now() + 1500; chordPill.hidden = false; setTimeout(() => { if (chordUntil && Date.now() >= chordUntil) endChord(); }, 1600); break;
-    case "j": e.preventDefault(); stepTask(1); break;
-    case "k": e.preventDefault(); stepTask(-1); break;
-    case "t": if (S.route.view === "task") { e.preventDefault(); openTab("result"); } break;
+    case "j": if (S.route.view === "task") { e.preventDefault(); stepTask(1); } break;
+    case "k": if (S.route.view === "task") { e.preventDefault(); stepTask(-1); } break;
+    default: view?.key?.(key, e);
   }
 });
 
@@ -513,29 +307,35 @@ document.addEventListener("keydown", (e) => {
 function paintAgentColors() {
   let tag = document.getElementById("agentColors");
   if (!tag) { tag = document.createElement("style"); tag.id = "agentColors"; document.head.appendChild(tag); }
-  // Every agent avatar shows the product's own logo; the brand colour is only the fallback.
   tag.textContent = Object.entries(S.agentMeta || {}).map(([id, m]) => {
     const sel = `.av.${CSS.escape(id)}`;
     const color = m.color && /^#[0-9a-f]{3,8}$/i.test(m.color) ? `background-color:${m.color};` : "";
-    return m.logo ? `${sel}{${color}background-image:url(${encodeURI(m.logo)});color:transparent;background-position:center;background-size:cover;background-repeat:no-repeat;box-shadow:inset 0 0 0 1px rgba(128,128,128,.22)}` : (color ? `${sel}{${color}}` : "");
+    return m.logo ? `${sel}{${color}background-image:url(${encodeURI(m.logo)});color:transparent;background-position:center;background-size:cover;background-repeat:no-repeat}` : (color ? `${sel}{${color}}` : "");
   }).join("\n");
 }
 
 // ---------------------------------------------------------------------------- bootstrap
 async function bootstrap() {
   let st;
-  try { st = await api.state(); } catch (e) { main.innerHTML = `<div class="page"><div class="empty">${icon("alert", "lg")}<h3>Backend unreachable</h3><p>${esc(e.message)}</p></div></div>`; renderConn(); setTimeout(bootstrap, 3000); return; }
+  try { st = await api.state(); } catch (e) { main.innerHTML = `<div class="page"><div class="empty-state">${icon("alert", "lg")}<h3>Relay's server is unreachable</h3><p>${esc(e.message)}</p><p class="muted">Retrying every few seconds.</p></div></div>`; renderConn(); setTimeout(bootstrap, 3000); return; }
   S.build = st.build; S.config = st.config || {}; S.agents = st.agents || {}; S.agentMeta = st.agent_meta || {};
   paintAgentColors(); S.presets = st.presets || []; S.templates = st.templates || [];
   S.github = st.github || {}; S.queue = st.queue || {}; S.autopilot = st.autopilot || null; S.notifications = st.notifications || []; S.lessonsPending = st.lessons_pending || 0;
   S.tasks = new Map((st.tasks || []).map((t) => [t.id, t]));
   applyTheme(S.config.ui_theme, S.config.ui_density);
-  renderQueue(); renderNotifBadge(); renderLessonsBadge(); renderConn(); renderAttention(); renderAutopilot();
+  renderNotifBadge(); renderConn(); renderAttention(); renderAutopilot();
   if (!S.ready) { S.ready = true; connectEvents(onEvent); route(); }
-  else { renderSidebar(); view && view.update && view.update("task", {}); }
+  else view?.update?.("task", {});
 }
 bootstrap();
-// Coming back to the tab counts as looking at the task that is open.
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && S.route.id) { markSeen(S.route.id); renderAttention(); } });
-// Periodic reconciliation in case an SSE event was missed.
-setInterval(async () => { if (!conn.online) return; try { const rows = await api.tasks(); const seen = new Set(); for (const t of rows) { seen.add(t.id); const prev = S.tasks.get(t.id); if (!prev || prev.updated_at !== t.updated_at || prev.status !== t.status) { const info = upsertTask(t); if (S.route.id === t.id && view) view.update("task", info); } } for (const id of [...S.tasks.keys()]) if (!seen.has(id)) S.tasks.delete(id); renderSidebar(); renderAttention(); } catch {} }, 20000);
+// Periodic reconciliation in case an event was missed.
+setInterval(async () => {
+  if (!conn.online) return;
+  try {
+    const rows = await api.tasks(); const seen = new Set(); let changed = false;
+    for (const t of rows) { seen.add(t.id); const prev = S.tasks.get(t.id); if (!prev || prev.updated_at !== t.updated_at || prev.status !== t.status) { const info = upsertTask(t); changed = true; if (view && (S.route.view !== "task" || S.route.id === t.id)) view.update?.("task", { ...info, id: t.id }); } }
+    for (const id of [...S.tasks.keys()]) if (!seen.has(id)) { S.tasks.delete(id); changed = true; }
+    if (changed) { renderCounts(); renderAttention(); }
+  } catch {}
+}, 20000);
