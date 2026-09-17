@@ -254,7 +254,7 @@ def agent_models(name):
 def agent_account(name):
     if name not in C.AGENTS:
         return jsonify({"error": f"Unknown agent {name}"}), 404
-    return jsonify(agent_info.account(name, manager.cfg()))
+    return jsonify(agent_info.account(name, manager.cfg(), tasks=manager.store.list(), refresh=request.args.get("refresh") == "1"))
 
 
 @app.get("/api/agents/jobs")

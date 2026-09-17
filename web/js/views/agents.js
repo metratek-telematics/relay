@@ -1,5 +1,5 @@
 // Agents page: health, versions, smoke tests, and the agent pack (install, sign in, configure).
-import { $, $$, esc, icon, toast, modal, confirm, copyText, menu } from "../ui.js";
+import { $, $$, esc, icon, toast, modal, confirm, copyText, menu, fmtNum, fmtCost, timeAgo } from "../ui.js";
 import { S, agentLabel, agentInitial, agentIds } from "../state.js";
 import { api } from "../api.js";
 
@@ -69,35 +69,90 @@ function openSignIn(name) {
 const fmtPrice = (v) => (v == null ? "?" : `$${Number(v) < 1 ? Number(v).toFixed(2) : Number(v).toFixed(Number(v) % 1 ? 2 : 0)}`);
 const fmtCtx = (n) => (!n ? "" : n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : `${Math.round(n / 1000)}k`);
 
+function fmtReset(ts) {
+  if (!ts) return "";
+  const s = ts - Date.now() / 1000;
+  if (s <= 0) return "reset due";
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  const when = new Date(ts * 1000).toLocaleString([], d >= 1 ? { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" } : { hour: "2-digit", minute: "2-digit" });
+  return `resets in ${d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`} (${when})`;
+}
+
+function modelBadges(r) {
+  const out = [];
+  if (r.available === false) out.push(`<span class="badge outline" title="${esc(r.note || "")}">not on plan</span>`);
+  else if (r.free) out.push('<span class="badge green">free</span>');
+  else if (r.included) out.push('<span class="badge blue" title="Included in your plan">in plan</span>');
+  if (r.multiplier) out.push(`<span class="badge amber" title="Premium requests per prompt">×${esc(r.multiplier)}</span>`);
+  if (!r.free && r.input != null) out.push(`<span class="price" title="USD per 1M tokens, input / output${r.included ? " (API equivalent)" : ""}">${fmtPrice(r.input)} / ${fmtPrice(r.output)}</span>`);
+  if (r.context) out.push(`<span class="muted">${fmtCtx(r.context)} ctx</span>`);
+  if (r.reasoning) out.push('<span class="muted">reasoning</span>');
+  if (r.cli_default) out.push('<span class="muted">CLI default</span>');
+  if (r.note && r.available !== false) out.push(`<span class="muted">${esc(r.note)}</span>`);
+  return out.join("");
+}
+
+function accountHtml(a, label) {
+  const chips = (items) => items.map((i) => `<span class="acct-item"><span class="muted">${esc(i.label)}</span><strong>${esc(i.value)}</strong></span>`).join("");
+  const parts = [];
+  if ((a.plan || []).length) parts.push(`<div class="acct-row"><span class="acct-h">Account</span>${chips(a.plan)}</div>`);
+  if ((a.windows || []).length) {
+    parts.push(`<div class="acct-row acct-top"><span class="acct-h">Limits</span><div class="quota-list">${a.windows.map((w) => {
+      const pct = w.used == null ? null : Math.max(0, Math.min(100, Number(w.used)));
+      const tone = pct == null ? "" : pct >= 90 ? "red" : pct >= 70 ? "amber" : "green";
+      const bits = [pct == null ? "" : `${+pct.toFixed(1)}% used`, w.detail || "", fmtReset(w.resets_at)].filter(Boolean).join(" · ");
+      return `<div class="quota"><div class="quota-head"><strong>${esc(w.label)}</strong><span class="muted">${esc(bits)}</span></div>
+        ${pct == null ? "" : `<div class="quota-bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100" aria-label="${esc(w.label)}"><span class="${tone}" style="width:${pct}%"></span></div>`}
+        ${w.as_of ? `<span class="muted quota-asof">as of ${esc(timeAgo(w.as_of))}</span>` : ""}</div>`;
+    }).join("")}</div></div>`);
+  }
+  if ((a.usage || []).length) parts.push(`<div class="acct-row"><span class="acct-h">${esc(label)} reports</span>${chips(a.usage)}</div>`);
+  const periods = ((a.relay || {}).periods || []);
+  if (periods.length) {
+    const any = periods.some((p) => p.turns);
+    parts.push(`<div class="acct-row acct-top"><span class="acct-h">Relay usage</span>${any
+      ? `<div class="relay-usage-wrap"><table class="relay-usage"><thead><tr><th></th><th>Tasks</th><th>Turns</th><th>Tokens in</th><th>Tokens out</th><th>Cost</th></tr></thead><tbody>${periods.map((p) =>
+        `<tr><th>${esc(p.label)}</th><td>${p.tasks}</td><td>${p.turns}</td><td>${fmtNum(p.input)}</td><td>${fmtNum(p.output)}</td><td title="${p.estimated ? "Estimated from Relay's pricing table" : "As the CLI reported"}">${fmtCost(p.cost_usd, p.estimated)}</td></tr>`).join("")}</tbody></table></div>`
+      : `<span class="muted">No turns recorded for ${esc(label)} yet.</span>`}</div>`);
+  }
+  const notes = [...(a.notes || []), ...(a.error ? [`Could not read everything: ${a.error}`] : [])];
+  if (notes.length) parts.push(`<div class="acct-notes">${notes.map((n) => `<span class="muted">${esc(n)}</span>`).join("")}</div>`);
+  return parts.join("");
+}
+
 export function openModels(name) {
   const meta = S.agentMeta[name] || {};
+  const label = meta.label || name;
   const cfg = S.config || {};
   let picked = [...((cfg.models || {})[name] || [])];
   let def = ((cfg.agent_defaults || {})[name] || {}).model || "";
-  let rows = [], source = "", freeOnly = false, query = "";
-  const m = modal(`<h2><span class="av sm ${esc(name)}">${esc(agentInitial(name))}</span> ${esc(meta.label || name)}: models &amp; usage</h2>
-    <div id="mAcct" class="acct"><span class="muted">Loading account…</span></div>
+  let res = {}, rows = [], freeOnly = false, query = "";
+  const m = modal(`<h2><span class="av sm ${esc(name)}">${esc(agentInitial(name))}</span> ${esc(label)}: models &amp; usage</h2>
+    <div id="mAcct" class="acct"><span class="muted">Loading plan and usage…</span></div>
     <div class="row" style="gap:8px;margin:12px 0 8px;flex-wrap:wrap">
-      <input id="mQ" placeholder="Search models" style="flex:1;min-width:180px">
-      <label class="row" style="gap:6px"><input type="checkbox" id="mFree"> Free only</label>
-      <button class="btn sm" id="mRefresh">${icon("refresh")}Refresh</button></div>
+      <input id="mQ" placeholder="Search models" style="flex:1;min-width:160px">
+      <label class="row" style="gap:6px"><input type="checkbox" id="mFree"> Free or in plan</label>
+      <button class="btn sm" id="mRefresh" title="Fetch the model list and usage again">${icon("refresh")}Refresh</button></div>
     <p class="hint" id="mHint">Loading models…</p>
     <div class="model-list" id="mList"></div>
-    <p class="hint">★ adds a model to the pickers when you build a team. Prices are per million tokens (input / output) as the CLI reports them.</p>
+    <p class="hint" id="mFoot">★ adds a model to the pickers when you build a team.</p>
     <div class="modal-actions"><button class="btn primary" data-close>Done</button></div>`, { wide: true });
   const list = $("#mList", m.body);
   const save = async (patch) => { try { S.config = await api.saveSettings(patch); } catch (e) { toast("error", "Could not save", e.message); } };
   const draw = () => {
     const q = query.toLowerCase();
-    const shown = rows.filter((r) => (!freeOnly || r.free) && (!q || r.id.toLowerCase().includes(q) || (r.name || "").toLowerCase().includes(q)));
-    $("#mHint", m.body).textContent = source === "settings"
-      ? `${meta.label || name} does not list its models, so these are the ones saved in settings. Type any model id under Configure.`
-      : `${shown.length} of ${rows.length} models · ${rows.filter((r) => r.free).length} free`;
-    list.innerHTML = shown.slice(0, 400).map((r) => `<div class="model-row ${def === r.id ? "is-default" : ""}">
+    const shown = rows.filter((r) => (!freeOnly || r.free || r.included) && (!q || r.id.toLowerCase().includes(q) || (r.name || "").toLowerCase().includes(q)));
+    const free = rows.filter((r) => r.free).length, inPlan = rows.filter((r) => r.included).length;
+    $("#mHint", m.body).textContent = res.error ? res.error
+      : res.source === "settings" ? `${label} does not list its models here, so these are the ones saved in settings.${res.hint ? ` (${res.hint})` : ""} Type any model id under Configure.`
+      : [`${shown.length} of ${rows.length} models`, free ? `${free} free` : "", inPlan ? `${inPlan} in your plan` : "", res.source_label ? `from ${res.source_label}` : ""].filter(Boolean).join(" · ");
+    $("#mFoot", m.body).textContent = `★ adds a model to the pickers when you build a team. ${res.plan_note || "Prices are USD per million tokens, input / output."}`;
+    list.innerHTML = shown.slice(0, 400).map((r) => `<div class="model-row ${def === r.id ? "is-default" : ""} ${r.available === false ? "is-off" : ""}">
       <button class="btn xs ghost star ${picked.includes(r.id) ? "on" : ""}" data-star="${esc(r.id)}" title="${picked.includes(r.id) ? "Remove from pickers" : "Add to pickers"}">${picked.includes(r.id) ? "★" : "☆"}</button>
       <div class="mr-name"><code>${esc(r.id)}</code>${r.name && r.name !== r.id ? `<span class="muted">${esc(r.name)}</span>` : ""}</div>
-      <div class="mr-meta">${r.free ? '<span class="badge green">free</span>' : r.input != null ? `<span class="price">${fmtPrice(r.input)} / ${fmtPrice(r.output)}</span>` : ""}${r.context ? `<span class="muted">${fmtCtx(r.context)} ctx</span>` : ""}${r.reasoning ? '<span class="muted">reasoning</span>' : ""}</div>
-      <button class="btn xs ${def === r.id ? "primary" : ""}" data-def="${esc(r.id)}">${def === r.id ? "Default" : "Set default"}</button></div>`).join("") || '<div class="empty small">No models match.</div>';
+      <div class="mr-meta">${modelBadges(r)}</div>
+      <button class="btn xs ${def === r.id ? "primary" : ""}" data-def="${esc(r.id)}">${def === r.id ? "Default" : "Set default"}</button></div>`).join("")
+      + (shown.length > 400 ? `<div class="empty small">${shown.length - 400} more; search to narrow the list.</div>` : "") || '<div class="empty small">No models match.</div>';
     $$("[data-star]", list).forEach((b) => (b.onclick = async () => {
       const id = b.dataset.star;
       picked = picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id];
@@ -107,30 +162,22 @@ export function openModels(name) {
       def = def === b.dataset.def ? "" : b.dataset.def;
       if (def && !picked.includes(def)) picked = [...picked, def];
       await save({ agent_defaults: { [name]: { model: def } }, models: { [name]: picked } }); draw();
-      toast("success", def ? `${meta.label || name} now defaults to ${def}` : "Default cleared");
+      toast("success", def ? `${label} now defaults to ${def}` : "Default cleared");
     }));
   };
-  const load = async (refresh) => {
+  const loadModels = async (refresh) => {
     $("#mHint", m.body).textContent = "Loading models…";
-    try {
-      const r = await api.agentModels(name, refresh);
-      rows = r.models || []; source = r.source;
-      if (r.error) $("#mHint", m.body).textContent = r.error;
-      draw();
-      if (r.error) $("#mHint", m.body).textContent = r.error;
-    } catch (e) { $("#mHint", m.body).textContent = e.message; }
+    try { res = await api.agentModels(name, refresh); rows = res.models || []; draw(); }
+    catch (e) { $("#mHint", m.body).textContent = e.message; }
   };
+  const loadAccount = (refresh) => api.agentAccount(name, refresh)
+    .then((a) => { $("#mAcct", m.body).innerHTML = accountHtml(a, label) || `<span class="muted">${esc(label)} does not report plan or usage.</span>`; })
+    .catch(() => { $("#mAcct", m.body).innerHTML = '<span class="muted">Plan and usage are unavailable right now.</span>'; });
   $("#mQ", m.body).oninput = (e) => { query = e.target.value; draw(); };
   $("#mFree", m.body).onchange = (e) => { freeOnly = e.target.checked; draw(); };
-  $("#mRefresh", m.body).onclick = () => load(true);
-  load(false);
-  api.agentAccount(name).then((a) => {
-    const chips = (items) => items.map((i) => `<span class="acct-item"><span class="muted">${esc(i.label)}</span><strong>${esc(i.value)}</strong></span>`).join("");
-    const pick = (a.usage || []).filter((u) => /sessions|total cost|input|output|avg cost/i.test(u.label));
-    $("#mAcct", m.body).innerHTML = (a.profile || []).length || pick.length
-      ? `${(a.profile || []).length ? `<div class="acct-row"><span class="acct-h">Account</span>${chips(a.profile)}</div>` : ""}${pick.length ? `<div class="acct-row"><span class="acct-h">Usage on this server</span>${chips(pick)}</div>` : ""}`
-      : `<span class="muted">${esc(meta.label || name)} does not report account balance or usage through its CLI${a.error ? ` (${esc(a.error)})` : ""}.</span>`;
-  }).catch(() => { $("#mAcct", m.body).innerHTML = '<span class="muted">Account details unavailable.</span>'; });
+  $("#mRefresh", m.body).onclick = () => { loadModels(true); loadAccount(true); };
+  loadModels(false);
+  loadAccount(false);
 }
 
 function openConfigure(name, onSaved) {

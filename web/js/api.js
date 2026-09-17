@@ -37,7 +37,7 @@ export const api = {
   installAgent: (name, action) => post(`/api/agents/${name}/install`, { action }),
   agentJobs: () => get("/api/agents/jobs"),
   agentModels: (name, refresh) => get(`/api/agents/${name}/models${refresh ? "?refresh=1" : ""}`),
-  agentAccount: (name) => get(`/api/agents/${name}/account`),
+  agentAccount: (name, refresh) => get(`/api/agents/${name}/account${refresh ? "?refresh=1" : ""}`),
   settings: () => get("/api/settings"),
   saveSettings: (partial) => post("/api/settings", partial),
   presets: () => get("/api/presets"),
