@@ -1094,6 +1094,30 @@ path.ch-agent.gemini, .sw.ch-agent.gemini { fill: var(--gemini); background: var
 .acct-row { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; }
 .acct-h { font-size: var(--fs-xs); font-weight: 700; color: var(--text-2); min-width: 150px; }
 .acct-item { display: inline-flex; gap: 6px; align-items: baseline; font-size: var(--fs-xs); }
+.acct-row.acct-top { align-items: flex-start; }
+.acct-row.acct-top > .acct-h { padding-top: 2px; }
+.quota-list { display: grid; gap: 8px; flex: 1; min-width: 220px; }
+.quota { display: grid; gap: 3px; }
+.quota-head { display: flex; flex-wrap: wrap; gap: 2px 10px; align-items: baseline; font-size: var(--fs-xs); }
+.quota-bar { height: 6px; border-radius: 99px; background: var(--panel-2); border: 1px solid var(--border); overflow: hidden; }
+.quota-bar > span { display: block; height: 100%; border-radius: 99px; background: var(--green); }
+.quota-bar > span.amber { background: var(--amber); }
+.quota-bar > span.red { background: var(--red); }
+.quota-asof { font-size: 10.5px; }
+.relay-usage-wrap { flex: 1; min-width: 0; overflow-x: auto; }
+.relay-usage { border-collapse: collapse; font-size: var(--fs-xs); }
+.relay-usage th, .relay-usage td { padding: 2px 8px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+.relay-usage thead th { color: var(--text-3); font-weight: 600; }
+.relay-usage tbody th { text-align: left; font-weight: 600; color: var(--text-2); padding-left: 0; }
+.relay-usage tr:last-child > * { border-bottom: 0; }
+.acct-notes { display: grid; gap: 2px; font-size: var(--fs-xs); }
+.model-row.is-off { opacity: .6; }
+.model-row .mr-meta { flex-wrap: wrap; justify-content: flex-end; }
+@media (max-width: 640px) {
+  .acct-h { min-width: 100%; }
+  .relay-usage th, .relay-usage td { padding: 2px 4px; }
+  .model-row .mr-meta { justify-content: flex-start; white-space: normal; }
+}
 .model-list { max-height: 52vh; overflow: auto; border: 1px solid var(--border); border-radius: var(--r); }
 .model-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--border); }
 .model-row:last-child { border-bottom: 0; }
