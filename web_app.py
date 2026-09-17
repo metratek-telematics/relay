@@ -402,6 +402,15 @@ def task_patch(tid):
     return jsonify(manager.update_task(tid, body()))
 
 
+@app.patch("/api/tasks/<tid>/acceptance")
+def task_acceptance(tid):
+    task_or_404(tid)
+    try:
+        return jsonify(manager.edit_acceptance(tid, body()))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+
 @app.delete("/api/tasks/<tid>")
 def task_delete(tid):
     manager.delete(tid, delete_worktree=request.args.get("worktree") == "1")

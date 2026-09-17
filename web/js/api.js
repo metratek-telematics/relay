@@ -50,6 +50,7 @@ export const api = {
   task: (id) => get(`/api/tasks/${encodeURIComponent(id)}`),
   createTask: (payload) => post("/api/tasks", payload),
   updateTask: (id, body) => patch(`/api/tasks/${encodeURIComponent(id)}`, body),
+  editAcceptance: (id, ops) => patch(`/api/tasks/${encodeURIComponent(id)}/acceptance`, ops),
   deleteTask: (id, worktree) => del(`/api/tasks/${encodeURIComponent(id)}${worktree ? "?worktree=1" : ""}`),
   action: (id, action, body = {}) => post(`/api/tasks/${encodeURIComponent(id)}/${action}`, body),
   messages: (id, after = 0, limit = 0) => get(`/api/tasks/${encodeURIComponent(id)}/messages?after=${after}&limit=${limit}`),

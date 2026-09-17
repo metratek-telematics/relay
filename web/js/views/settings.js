@@ -41,6 +41,7 @@ export function mountSettings(main, section) {
             <div class="field"><label>Agent turn timeout (minutes)</label><input type="number" min="5" data-cfg="agent_turn_timeout_minutes" value="${esc(c.agent_turn_timeout_minutes)}"><div class="help">A turn that runs longer is terminated and the agent is asked to continue in smaller steps.</div></div>
             <div class="field"><label>Quiet warning (minutes)</label><input type="number" min="1" data-cfg="stall_warning_minutes" value="${esc(c.stall_warning_minutes)}"><div class="help">Flag an agent that produces no output for this long.</div></div>
             <div class="field"><label>Envelope retries</label><input type="number" min="0" max="5" data-cfg="envelope_retries" value="${esc(c.envelope_retries)}"><div class="help">How many times to ask an agent to restate a missing JSON envelope.</div></div>
+            <div class="field"><label>Unanswered judge questions</label><input type="number" min="0" max="1440" data-cfg="judge_escalation_timeout_minutes" value="${esc(c.judge_escalation_timeout_minutes ?? 120)}"><div class="help">Minutes before Relay takes the safe automatic choice when nobody answers (extend the budget once, then deliver with follow-ups). 0 waits for you.</div></div>
           </div>
           <div class="field"><label>Parallel tasks</label><input type="number" min="1" max="8" data-cfg="max_parallel" value="${esc(c.max_parallel)}" style="width:100px"></div>
         </div></div>`;

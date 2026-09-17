@@ -6,6 +6,7 @@ import re
 import time
 
 from . import config as C
+from . import judge
 from .util import RULES_DIR, read_text, truncate
 
 _rules_cache = {"at": 0, "data": {}}
@@ -193,7 +194,10 @@ def packet_block(plan: dict) -> str:
     for key, title in (("requirements", "REQUIREMENTS (the user's request; the only mandatory scope)"),
                        ("acceptance", "ACCEPTANCE (derived from the requirements; must all hold for done)"),
                        ("optional", "OPTIONAL (only if cheap and clearly inside the request; never blocks done)")):
-        if plan.get(key):
+        if key == "acceptance" and plan.get("criteria"):
+            lines += ["ACCEPTANCE CONTRACT (ids are referenced by revisions and the done verdict; required ones must be met with evidence)",
+                      judge.acceptance_block(plan["criteria"], with_status=False), ""]
+        elif plan.get(key):
             lines += [title, *[f"- {x}" for x in plan[key]], ""]
     files = plan.get("known_files") or {}
     if files.get("primary") or files.get("supporting"):
@@ -297,7 +301,9 @@ HOW THIS SESSION WORKS
 YOUR FIRST JOB
 Inspect the repository enough to plan: the files the request touches, existing local changes, build/test setup. Then reply with the "plan" envelope. It is the team's shared context packet, so the worker does not repeat your discovery:
 - requirements: the user's request restated as short items, nothing added;
-- acceptance: observable criteria derived from those requirements only;
+- acceptance: the acceptance contract, 2 to 6 checkable criteria derived from those requirements only, each
+  {{"id":"A1","criterion":"observable outcome","how_to_verify":"test: python -m pytest tests/test_x.py | command: … | screenshot: … | inspection: …","required":true}}.
+  Done is gated on these: every required criterion needs status met with concrete evidence, so write criteria you can prove;
 - optional: improvements you would suggest but the user did not ask for (they never block done);
 - known_files (primary, supporting), findings (file + what you saw), constraints, unknowns;
 - summary, a short markdown plan listing the work packages in order, and the first work package as instruction.
@@ -306,7 +312,8 @@ Keep the instruction short: name the concern, the files, the expected result. Th
 """
 
 
-def supervisor_after_report(worker_label, turn, report_env, report_text, verification, changed, diffstat, guidance, remaining, cfg=None) -> str:
+def supervisor_after_report(worker_label, turn, report_env, report_text, verification, changed, diffstat, guidance, remaining, cfg=None,
+                            judge_text="") -> str:
     cfg = cfg or {}
     max_report = int(cfg.get("budget_report_chars") or 14000)
     max_files = int(cfg.get("budget_file_list") or 80)
@@ -339,29 +346,40 @@ def supervisor_after_report(worker_label, turn, report_env, report_text, verific
         lines.append(f"- …and {len(changed) - len(shown_changed)} more (run git status yourself)")
     if guidance:
         lines += ["", "USER GUIDANCE (new)", guidance]
+    if judge_text:
+        lines += ["", judge_text]
     lines += ["", f"ORCHESTRATOR · {remaining} work package(s) remain before the turn budget is exhausted."]
-    lines += ["", "Inspect the diff and the files this package changed (not the whole repository again). Judge against requirements and acceptance only; a failure matching a recorded blocked check is not the worker's defect.",
+    lines += ["", "Inspect the diff and the files this package changed (not the whole repository again). Judge against the acceptance contract and the evidence only; a failure matching a recorded blocked check is not the worker's defect.",
               "Then reply with ONE envelope:",
-              '- {"type":"decision","decision":"revise",...} with exact required fixes, or',
-              '- {"type":"instruction",...} with the next work package, or',
-              '- {"type":"decision","decision":"done",...} with a pr_summary when every acceptance criterion is met with evidence, or',
-              '- {"type":"question",...} if you are genuinely blocked.']
+              '- {"type":"decision","decision":"revise","addresses":["A2","F1"],"findings":[{"severity":"blocking","file":"path:line","problem":"…","fix":"…","criterion":"A2"}],...} only for blocking defects, or',
+              '- {"type":"instruction",...} with the next planned work package, or',
+              '- {"type":"decision","decision":"done","criteria":[{"id":"A1","status":"met","evidence":"`python -m pytest -q` → 12 passed"}],"follow_ups":[…],"pr_summary":"…"} when every required criterion is met with evidence, or',
+              '- {"type":"question",...} if you are genuinely blocked.',
+              "should_fix and nit items never justify a revision: list them in follow_ups and move on."]
     return "\n".join(lines)
 
 
-def supervisor_after_review(reviewer_label, review_env, review_text, round_no, max_rounds) -> str:
+def supervisor_after_review(reviewer_label, review_env, review_text, round_no, max_rounds, followups=None, guidance="") -> str:
     verdict = (review_env or {}).get("verdict", "FAIL")
     findings = (review_env or {}).get("findings") or []
     lines = [f"REVIEW FROM REVIEWER ({reviewer_label}) · round {round_no}/{max_rounds} · verdict: {verdict}",
              f"Summary: {(review_env or {}).get('summary','')}", ""]
     if findings:
+        lines.append("BLOCKING FINDINGS")
         for i, f in enumerate(findings, 1):
-            lines.append(f"{i}. [{f.get('severity','blocking')}] {f.get('file','')}: {f.get('problem','')}\n   Fix: {f.get('fix','')}")
+            lines.append(f"{f.get('id') or i}. [{f.get('severity','blocking')}] {f.get('file','')}: {f.get('problem','')}"
+                         + (f" · criterion {f['criterion']}" if f.get("criterion") else "") + f"\n   Fix: {f.get('fix','')}"
+                         + (f"\n   Fix attempts so far: {f['attempts']}" if f.get("attempts") else ""))
     else:
         lines.append(truncate(review_text, 8000))
-    lines += ["", "The reviewer blocked delivery. Verify each finding against the repository. Reply with a",
-              '{"type":"decision","decision":"revise",...} envelope containing the exact fixes for the worker.',
-              "If you believe a finding is wrong, still address it with evidence in the instruction so the reviewer can re-check."]
+    if followups:
+        lines += ["", f"{len(followups)} should_fix/nit item(s) were recorded as follow-ups for the pull request. Do not revise for them."]
+    if guidance:
+        lines += ["", "HUMAN GUIDANCE ON THESE FINDINGS", guidance]
+    lines += ["", "Verify each blocking finding against the repository. If it is real, reply with ONE",
+              '{"type":"decision","decision":"revise","addresses":["F1"],...} envelope whose instruction fixes all of them at once.',
+              "If a finding is wrong (not a defect against the acceptance contract, or already fixed), reply with a done decision whose",
+              "criteria evidence shows why; the reviewer re-checks it."]
     return "\n".join(lines)
 
 
@@ -391,6 +409,7 @@ HOW THIS SESSION WORKS
 - This session is persistent. Future messages are work packages, answers, or guidance. You remember everything.
 - Treat the context packet as prior repository inspection. Verify the files and assumptions your package depends on; do not repeat broad discovery unless the packet is missing, contradictory or stale.
 - Implement only the concern in the current work package. Run fast checks focused on what you changed; the orchestrator runs the full verification.
+- In your report, give evidence for the acceptance criteria your package touches (criterion id, the command you ran and its result, or file:line). Claims without output do not count.
 - If a check cannot run because of the environment (credentials, private registries, unreachable services), record it in blocked_checks and keep implementing. Do not build workaround environments.{(chr(10) + "- The design gate is enforced, not advisory: hard-coded colours outside token files, non-design-system fonts, gradient text and forbidden terms fail verification and block delivery. Run it before every report and fix every error it lists:" + chr(10) + "  " + gate_cmd) if gate_cmd else ""}
 - Do not commit; leave changes in the working tree. Never push, merge or deploy.
 - Every reply must end with exactly one fenced ```json envelope: a "report" (status complete | partial | blocked) or a "question".
@@ -412,7 +431,7 @@ def worker_followup(sup_label, turn, instruction, guidance, kind="instruction") 
     return "\n".join(parts)
 
 
-def reviewer_kickoff(task, wt, branch, plan_env, pr_summary, verification, diff_text, round_no, cfg=None, blocked=None) -> str:
+def reviewer_kickoff(task, wt, branch, plan_env, pr_summary, verification, diff_text, round_no, cfg=None, blocked=None, contract="") -> str:
     cfg = cfg or {}
     return f"""You are the INDEPENDENT REVIEWER in a multi-agent engineering team run by Relay.
 
@@ -428,6 +447,7 @@ PLAN
 CHECKS THAT COULD NOT RUN
 {blocked_block(blocked or [])}
 
+{("ACCEPTANCE CONTRACT WITH THE SUPERVISOR'S VERDICTS" + chr(10) + contract + chr(10)) if contract else ""}
 SUPERVISOR'S COMPLETION SUMMARY
 {pr_summary or '(none provided)'}
 
@@ -443,24 +463,27 @@ HOW THIS SESSION WORKS
 - This session is persistent; on later rounds you receive the new state and can check whether earlier findings were fixed.
 - Compare the implementation against the requirements and acceptance criteria. Inspect the diff and the code around it, the verification results and the checks that could not run. Do not modify files.
 - You are a gate, not a second designer: request corrections only for concrete defects (a missed requirement or acceptance criterion, a regression, a bug, a security problem). Optional items, style preferences and alternative designs are never blocking.
+- Check the evidence behind each required criterion yourself; an unproven or false claim is a blocking finding naming the criterion id.
+- Classify every finding: blocking (wrong behaviour against the contract, failing required check, security issue, data loss, broken build), should_fix or nit. Only blocking findings return the work; the others become pull-request follow-ups. FAIL requires at least one blocking finding.
 - Review round {round_no}. Reply with exactly one fenced ```json envelope of type "review" with verdict PASS or FAIL and concrete findings.
 """
 
 
-def reviewer_followup(round_no, verification, diff_text, sup_note) -> str:
+def reviewer_followup(round_no, verification, diff_text, sup_note, contract="", open_findings="") -> str:
     return f"""RE-REVIEW REQUEST · round {round_no}
 The supervisor and worker addressed your previous findings.
 
 Supervisor note:
 {sup_note or '(none)'}
-
+{(chr(10) + "ACCEPTANCE CONTRACT WITH THE SUPERVISOR'S VERDICTS" + chr(10) + contract + chr(10)) if contract else ""}{(chr(10) + "YOUR EARLIER BLOCKING FINDINGS (check each; keep the same wording if one persists)" + chr(10) + open_findings + chr(10)) if open_findings else ""}
 ORCHESTRATOR VERIFICATION
 {verification or '(no verification commands)'}
 
 DIFF (may be truncated — inspect the repository yourself)
 {diff_text}
 
-Check each earlier finding and look for regressions. Reply with a "review" envelope (PASS or FAIL).
+Check each earlier finding and look for regressions caused by the fix. Do not raise new requirements the contract does not contain;
+new non-blocking observations are should_fix or nit. Reply with a "review" envelope (PASS or FAIL).
 """
 
 
@@ -479,6 +502,31 @@ def nudge(role) -> str:
               "reviewer": 'a "review" envelope with verdict PASS or FAIL'}.get(role, "a protocol envelope")
     return (f"ORCHESTRATOR · your last reply did not end with a valid JSON envelope. Do not redo the work. "
             f"Reply now with ONLY {expect} inside a fenced ```json block, reflecting what you already did.")
+
+
+def done_gate_nudge(missing, contract, attempt, limit) -> str:
+    rows = "\n".join(f"- {m['id']}: {m['criterion']} · {m['reason']}" for m in missing)
+    return (f"ORCHESTRATOR · done was NOT accepted (attempt {attempt}/{limit}). The acceptance contract gates delivery and these required "
+            f"criteria are not proven:\n{rows}\n\nCURRENT CONTRACT\n{contract}\n\n"
+            "Evidence must be concrete: the command and its result (`python -m pytest tests/test_x.py -q` → 5 passed), a file:line you "
+            "read, or a screenshot path. Relay's own failing verification cannot be overridden by a claim.\n"
+            "Reply with ONE envelope: done again with a `criteria` list for every required id if you can now prove them; a revise "
+            "addressing the unmet ids if work is missing; or a question to the user if a criterion should be waived or cannot be met.")
+
+
+def revise_nudge(reason, contract, ledger_text) -> str:
+    return (f"ORCHESTRATOR · this revision was not dispatched: {reason}.\n\n"
+            "A revision must address unmet acceptance criteria or blocking findings, named in `addresses` (criterion ids like A2, "
+            "finding ids like F1) or given as findings with severity blocking. Blocking means: wrong behaviour against the contract, "
+            "a failing required check, a security issue, data loss or a broken build.\n"
+            f"\nCURRENT CONTRACT\n{contract}\n\nOPEN BLOCKING FINDINGS\n{ledger_text}\n\n"
+            "If nothing blocking remains, reply with a done decision (criteria with evidence) and put the rest in follow_ups. "
+            "Otherwise resend the revise with `addresses`.")
+
+
+def human_decision_note(summary) -> str:
+    return (f"ORCHESTRATOR · the human decided: {summary}\n"
+            "Act on it and reply with ONE envelope: the next instruction, a revise for anything still blocking, or done with criteria evidence.")
 
 
 def interrupted_note(note) -> str:

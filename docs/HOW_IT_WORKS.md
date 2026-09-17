@@ -6,8 +6,8 @@
 3. **Supervisor kickoff.** The supervisor inspects the repository with its own tools and replies with a plan, objective acceptance criteria and the first work package.
 4. **Worker turn.** The worker receives the work package, implements it with full tool access, runs local checks, and replies with a report (`complete`, `partial` or `blocked`). It may ask the supervisor or you a question instead.
 5. **Verification.** The orchestrator runs detected or configured commands (pytest, npm test, gradle, …) and records the results.
-6. **Supervisor evaluation.** The supervisor sees the report, verification output and `git status`, inspects the diff itself, and decides: next work package, revision with exact findings, a question, or `done` with a PR summary.
-7. **Independent review (optional).** A separate session (any agent) inspects the diff and returns PASS or FAIL with findings; FAIL goes back to the supervisor for a bounded number of rounds.
+6. **Supervisor evaluation.** The supervisor sees the report, verification output, `git status` and the acceptance contract, inspects the diff itself, and decides: next work package, a revision naming the criteria or blocking findings it addresses, a question, or `done` with per-criterion evidence and a PR summary. Relay refuses `done` while a required criterion is unproven or its own checks fail.
+7. **Independent review (optional).** A separate session (any agent) inspects the diff and returns PASS or FAIL with findings classified `blocking`, `should_fix` or `nit`. Only blocking findings go back to the supervisor; the rest become pull-request follow-ups. Findings that keep recurring, revisions that change nothing and exhausted budgets are put to you as a question instead of looping or failing.
 8. **Delivery.** Optionally after your approval: commit, push, draft PR, final report.
 
 ## Talking to the team

@@ -18,7 +18,7 @@ import traceback
 from pathlib import Path
 
 from . import config as C
-from . import designcheck, environment, gitops, github, protocol, repo_env
+from . import designcheck, environment, gitops, github, judge, protocol, repo_env
 from .runner import Interrupted, Stopped, TurnTimeout
 from .util import APP_DIR, new_id, now, quiet, read_text, truncate, write_text
 
@@ -100,6 +100,8 @@ class Pipeline:
         self.issue_text = ""
         self.refs_text = ""
         self.verify_cmds = []
+        self.max_review_rounds = max(self.max_review_rounds, int(self.state.get("max_review_rounds") or 0))
+        self._auto_choice = False
 
     # ------------------------------------------------------------ small helpers
     def save(self):
@@ -499,6 +501,12 @@ class Pipeline:
             self.r.timeline("system", "Resuming from checkpoint",
                             f"phase {self.state.get('phase')} · work package {self.state.get('turn')} · awaiting {self.state.get('awaiting')}")
             self.state["resumed"] = True
+            if self.state.pop("budget_exhausted", False):
+                # Resuming a task that stopped at its work-package budget means "keep going": grant the extension.
+                ext = max(1, int(self.cfg.get("judge_budget_extension") or 3))
+                need = int(self.state.get("turn") or 1) + ext - 1 - self.max_turns
+                self.state["extra_turns"] = max(int(self.state.get("extra_turns") or 0), need)
+                self.r.timeline("judge", "Work-package budget extended on resume", f"{ext} more work packages")
         else:
             self.state = {"phase": "kickoff", "turn": 0, "review_round": 0, "awaiting": "supervisor"}
             self.sessions = {}
@@ -564,11 +572,30 @@ class Pipeline:
                        "acceptance": [], "instruction": env["instruction"]}
             else:
                 raise RuntimeError("The supervisor did not produce a plan envelope.")
+        criteria = judge.normalize_acceptance(env.get("acceptance"))
+        if not criteria:
+            # One chance to state the contract; without it the task runs in legacy mode (no evidence gate).
+            self.r.timeline("supervisor", "Plan has no acceptance contract", "Asking the supervisor to add one")
+            _, env2 = self.supervisor_turn(
+                "ORCHESTRATOR · your plan has no `acceptance` list. Delivery is gated on it. Reply with the same plan envelope including "
+                '"acceptance":[{"id":"A1","criterion":"…","how_to_verify":"test: …","required":true}] (2 to 6 criteria from the requirements).',
+                f"{_label(sup_agent)} is adding acceptance criteria", turn=0)
+            if env2.get("type") == "plan":
+                env = {**env, **{k: v for k, v in env2.items() if v}}
+                criteria = judge.normalize_acceptance(env.get("acceptance"))
         plan = {"summary": env.get("summary", ""), "plan": env.get("plan", ""), **protocol.normalize_packet(env)}
+        plan["acceptance"] = judge.criterion_texts(criteria) or plan["acceptance"]
         self.state["plan"] = plan
-        self.artifact("plan", "PLAN.md", plan["plan"] + "\n\n## Context packet\n\n```\n" + protocol.packet_block(plan) + "\n```\n")
-        self.artifact("acceptance", "ACCEPTANCE.md", "\n".join(f"- [ ] {a}" for a in plan["acceptance"]))
+        self.artifact("plan", "PLAN.md", plan["plan"] + "\n\n## Context packet\n\n```\n" + protocol.packet_block({**plan, "criteria": criteria}) + "\n```\n")
         self.m.set_meta(self.tid, plan=plan)
+        # Criteria the human added before the run started are kept next to the supervisor's.
+        user_rows = [c for c in self.criteria() if c.get("source") == "user"]
+        if user_rows:
+            criteria = judge.edit_acceptance(criteria, {"add": user_rows})
+        if criteria:
+            self.set_criteria(criteria)
+        else:
+            self.artifact("acceptance", "ACCEPTANCE.md", "\n".join(f"- [ ] {a}" for a in plan["acceptance"]))
         self.r.msg(role="supervisor", agent=sup_agent, kind="plan", summary=plan["summary"], content=plan["plan"],
                    acceptance=plan["acceptance"], requirements=plan["requirements"], optional=plan["optional"],
                    known_files=plan["known_files"], findings=plan["findings"], constraints=plan["constraints"],
@@ -586,8 +613,9 @@ class Pipeline:
             self.r.check_stop()
             turn = int(self.state.get("turn") or 1)
             if self.state.get("awaiting") == "worker":
-                if turn > self.max_turns:
-                    raise TurnBudget(f"Turn budget exhausted after {self.max_turns} work packages. Raise the limit in the task workflow and resume.")
+                if turn > self.turn_limit():
+                    if not self.budget_escalation(turn):
+                        continue
                 kind = self.state.get("instruction_kind") or "instruction"
                 title = {"revise": f"Revision request · work package #{turn}", "question": f"Question for the worker · #{turn}"}.get(kind, f"Work package #{turn}")
                 self.handoff("supervisor", "worker", title, self.state.get("instruction", ""), subtype=kind,
@@ -596,7 +624,8 @@ class Pipeline:
                 sess = self.sessions.get("worker") or {}
                 if int(sess.get("turns", 0)) == 0 or sess.get("agent") != wrk_agent:
                     prompt = protocol.worker_kickoff(self.task, self.wt, self.branch, self.issue_text, self.refs_text,
-                                                     self.state.get("plan") or {}, self.state.get("instruction", ""), guidance, self.cfg,
+                                                     {**(self.state.get("plan") or {}), "criteria": self.criteria()},
+                                                     self.state.get("instruction", ""), guidance, self.cfg,
                                                      self.gate_command(), self.env_text())
                 else:
                     prompt = protocol.worker_followup(_label(sup_agent), turn, self.state.get("instruction", ""), guidance, kind)
@@ -624,6 +653,8 @@ class Pipeline:
                 self.state["last_verification"] = self.run_verification() if self.verify_mode == "each_report" else ""
                 self.state["awaiting"] = "supervisor"
                 self.save()
+                if kind == "revise" and self.state.get("fp_before"):
+                    self.check_revision_changed()
                 continue
 
             # supervisor evaluates the report
@@ -631,9 +662,13 @@ class Pipeline:
             ds = gitops.diff_stat(self.wt, self.base)
             self.m.set_meta(self.tid, diffstat=ds, changed_count=len(changed))
             guidance = self.take_guidance("supervisor")
-            remaining = max(0, self.max_turns - turn)
+            remaining = max(0, self.turn_limit() - turn)
+            note = self.state.pop("judge_note", "")
+            if note:
+                guidance = (guidance + "\n\n" if guidance else "") + note
             prompt = protocol.supervisor_after_report(_label(wrk_agent), turn, self.state.get("report"), (self.state.get("report") or {}).get("report", ""),
-                                                      self.state.get("last_verification", ""), changed, ds, guidance, remaining, self.cfg)
+                                                      self.state.get("last_verification", ""), changed, ds, guidance, remaining, self.cfg,
+                                                      self.judge_text())
             if self.state.get("resumed"):
                 prompt = protocol.resume_note({k: v for k, v in self.state.items() if k in ("phase", "turn", "awaiting")}) + "\n\n" + prompt
                 self.state["resumed"] = False
@@ -644,10 +679,14 @@ class Pipeline:
         sup_agent, _ = self.role_agent("supervisor")
         typ = env.get("type")
         if typ == "decision" and env.get("decision") == "done":
+            self.add_followups(env.get("follow_ups") or env.get("followups"), "supervisor")
+            gated = self.done_gate(env, turn)
+            if gated is not None:
+                return self.apply_supervisor_decision(gated, turn)
             self.state["pr_summary"] = env.get("pr_summary") or env.get("summary") or ""
             self.state["summary"] = env.get("summary") or ""
             self.r.msg(role="supervisor", agent=sup_agent, kind="decision", decision="done", summary=env.get("summary", ""),
-                       content=self.state["pr_summary"], turn=turn)
+                       content=self.state["pr_summary"], criteria=self.criteria(), turn=turn)
             self.r.timeline("supervisor", "Supervisor declared the task complete", env.get("summary", ""))
             # The design gate is enforced at done even when command verification is off.
             if (self.verify_mode == "before_review" and self.verify_cmds) or (self.design_gate and self.verify_mode != "each_report"):
@@ -659,31 +698,39 @@ class Pipeline:
                     self.state["verify_triage"] = int(self.state.get("verify_triage") or 0) + 1
                     if self.state["verify_triage"] > 1:
                         self.save()
-                        raise RuntimeError("Verification still fails after the supervisor triaged it, and the failing checks did not also fail on the "
-                                           "starting commit. Inspect the Checks tab, then resume with guidance or fix it in VS Code.")
+                        env2 = self.verify_escalation(vt, turn)
+                        if env2 is not None:
+                            return self.apply_supervisor_decision(env2, turn)
+                        return self.finish_done()
                     fake = {"type": "review", "verdict": "FAIL", "summary": "Verification commands failed after the done decision.",
                             "findings": [{"severity": "blocking", "file": "(verification)", "problem": "One or more verification commands failed.", "fix": "Make the checks pass."}]}
                     self.r.timeline("verify", "Verification failed after done decision", "Sending results back to the supervisor")
+                    ledger = judge.Ledger(self.state.get("ledger"))
+                    fake["findings"] = ledger.observe(judge.normalize_findings(fake["findings"]), "verification")
+                    self.state["ledger"] = ledger.dump()
+                    self.state["pending_findings"] = [f["id"] for f in fake["findings"]]
                     _, env2 = self.supervisor_turn(protocol.supervisor_after_review("Orchestrator", fake, vt, 0, 0), "Supervisor triaging failed verification", turn)
                     return self.apply_supervisor_decision(env2, turn)
-            rev_agent, _ = self.role_agent("reviewer")
-            if rev_agent:
-                self.state["phase"] = "review"
-                self.state["review_round"] = int(self.state.get("review_round") or 0) + 1
-            else:
-                self.state["phase"] = "deliver"
-            self.save()
-            return
+            return self.finish_done()
         if typ in ("instruction", "question") or (typ == "decision" and env.get("decision") == "revise"):
             kind = "revise" if typ == "decision" else ("question" if typ == "question" else "instruction")
             text = env.get("instruction") or env.get("question") or env.get("summary") or env.get("_text", "")
             if kind == "revise":
+                judged = self.judge_revise(env, turn)
+                if not judged.get("_judged"):
+                    # A new envelope from the supervisor (after a nudge or a human decision): judge it from the top.
+                    return self.apply_supervisor_decision(judged, turn)
+                env, text = judged, judged.get("instruction") or text
+            if kind == "revise":
                 self.r.msg(role="supervisor", agent=sup_agent, kind="decision", decision="revise", summary=env.get("summary", ""),
-                           content=text, turn=turn)
+                           content=text, addresses=env.get("addresses") or [], findings=env.get("_findings") or [], turn=turn)
                 self.r.timeline("supervisor", "Revision requested", env.get("summary", ""))
             else:
                 self.r.timeline("supervisor", "Next work package", env.get("summary", ""))
             self.state["verify_triage"] = 0
+            self.state["gate_nudges"] = 0
+            self.state["revise_nudges"] = 0
+            self.state["fp_before"] = judge.worktree_fingerprint(self.wt, self.base) if kind == "revise" else ""
             self.state.update({"turn": turn + 1, "awaiting": "worker", "instruction": text, "instruction_kind": kind,
                                "instruction_summary": env.get("summary", ""), "phase": "dialogue"})
             self.save()
@@ -704,6 +751,321 @@ class Pipeline:
     def task_meta(self):
         return self.m.store.get(self.tid) or {}
 
+    # ------------------------------------------------------------ judge
+    def turn_limit(self):
+        return self.max_turns + int(self.state.get("extra_turns") or 0)
+
+    def criteria(self):
+        """The acceptance contract. Task meta is the source of truth, so a human edit is seen at the next decision."""
+        return list(self.task_meta().get("acceptance") or [])
+
+    def set_criteria(self, criteria):
+        self.m.set_meta(self.tid, acceptance=criteria)
+        self.artifact("acceptance", "ACCEPTANCE.md", judge.acceptance_md(criteria))
+
+    def add_followups(self, items, source):
+        if not items:
+            return
+        merged = judge.add_followups(self.task_meta().get("follow_ups") or [], items, source)
+        self.state["follow_ups"] = merged
+        self.m.set_meta(self.tid, follow_ups=merged)
+
+    def open_findings_text(self):
+        rows = [r for r in judge.Ledger(self.state.get("ledger")).dump() if r.get("status") == "open"]
+        return judge.findings_block(rows) if rows else ""
+
+    def judge_text(self):
+        criteria = self.criteria()
+        if not criteria and not self.state.get("ledger"):
+            return ""
+        lines = []
+        if criteria:
+            lines += ["ACCEPTANCE CONTRACT (current status; done needs every required id met with concrete evidence)", judge.acceptance_block(criteria)]
+        open_rows = self.open_findings_text()
+        if open_rows:
+            lines += ["", "OPEN BLOCKING FINDINGS (reference their ids in a revise)", open_rows]
+        n = len(self.task_meta().get("follow_ups") or [])
+        if n:
+            lines += ["", f"{n} follow-up(s) recorded for the pull request (should_fix / nit); they do not need another round."]
+        return "\n".join(lines)
+
+    def escalate(self, title, question, choices, auto):
+        """Ask the human to decide a judge escalation. Returns (choice key, extra text). Unattended runs take `auto`."""
+        self._auto_choice = False
+        self.r.timeline("judge", title, truncate(question, 200))
+        turn = self.state.get("turn")
+        if not self.allow_questions:
+            self._auto_choice = True
+            self.r.msg(role="orchestrator", agent=None, kind="notice", turn=turn,
+                       content=f"{title}. Agent questions are disabled for this task, so Relay chose: {choices[auto]}.")
+            return auto, ""
+        qid = new_id("q")
+        content = f"**{title}**\n\n{question}"
+        qmsg = self.r.msg(role="orchestrator", agent="orchestrator", kind="question", qid=qid, content=content,
+                          options=list(choices.values()), answered=False, turn=turn)
+        self.m.ask_user(self.tid, {"id": qid, "kind": "question", "from": "orchestrator", "agent": "orchestrator", "question": content,
+                                   "options": list(choices.values()), "message_id": qmsg["id"], "time": now()})
+        self.r.status("needs_input", title)
+        self.m.notify("warning", title, truncate(question, 140), self.tid, kind="needs_input")
+        minutes = float(self.cfg.get("judge_escalation_timeout_minutes") or 0)
+        ans = self.r.wait_for_answer(qid, timeout=minutes * 60 if minutes > 0 else None)
+        self.m.clear_pending(self.tid)
+        if ans is None:
+            self._auto_choice = True
+            self.r.msg_update(qmsg["id"], answered=True, answer=f"(no answer within {int(minutes)} minutes) {choices[auto]}")
+            self.r.timeline("judge", "No answer · automatic choice", choices[auto])
+            return auto, ""
+        text = (ans.get("text") or "").strip()
+        self.r.msg_update(qmsg["id"], answered=True, answer=text)
+        self.r.msg(role="user", agent=None, kind="user", content=text or "(no text)", to="orchestrator", reply_to=qid, turn=turn)
+        key, rest = judge.classify_choice(text, choices)
+        self.r.timeline("user", f"Decided: {choices.get(key, 'guidance')}", truncate(rest, 200))
+        if key == "stop":
+            self.save()
+            raise Stopped(f"Stopped by the human at: {title}")
+        return key, rest
+
+    def done_gate(self, env, turn):
+        """Refuse `done` while a required criterion lacks proof. Returns the supervisor's next envelope, or None to proceed."""
+        criteria = self.criteria()
+        if not criteria:
+            return None   # legacy task without a contract
+        criteria = judge.apply_results(criteria, judge.normalize_results(env.get("criteria")))
+        gate = judge.done_gate(criteria, self.task_meta().get("verification"), check_verification=self.verify_mode == "each_report")
+        self.set_criteria(gate["criteria"])
+        if gate["ok"]:
+            self.state["gate_nudges"] = 0
+            return None
+        sup_agent, _ = self.role_agent("supervisor")
+        n = int(self.state.get("gate_nudges") or 0) + 1
+        self.state["gate_nudges"] = n
+        self.save()
+        limit = max(0, int(self.cfg.get("judge_gate_nudges", 2)))
+        ids = ", ".join(m["id"] for m in gate["missing"])
+        self.r.msg(role="orchestrator", agent=None, kind="gate", ok=False, missing=gate["missing"], turn=turn,
+                   content=f"Done refused: {ids} not proven")
+        self.r.timeline("judge", "Done refused · criteria not proven", ids)
+        if n <= limit:
+            _, env2 = self.supervisor_turn(protocol.done_gate_nudge(gate["missing"], judge.acceptance_block(gate["criteria"]), n, limit),
+                                           f"{_label(sup_agent)} is proving the acceptance criteria", turn)
+            return env2
+        rows = "\n".join(f"- **{m['id']}** {m['criterion']}: {m['reason']}" for m in gate["missing"])
+        question = (f"The supervisor declared the task done {n} times without proving these required criteria:\n\n{rows}\n\n"
+                    "Deliver anyway (they become follow-ups on the pull request), type guidance for the supervisor, or stop.")
+        key, text = self.escalate("Acceptance criteria not proven", question,
+                                  {"accept": "Deliver anyway, list the unproven criteria as follow-ups", "guidance": "Give guidance", "stop": "Stop the task"},
+                                  auto="accept")
+        self.state["gate_nudges"] = 0
+        if key == "accept":
+            self.add_followups([{"severity": "should_fix", "problem": f"{m['id']} not proven at delivery: {m['criterion']} ({m['reason']})"}
+                                for m in gate["missing"]], "acceptance gate")
+            self.save()
+            return None
+        self.save()
+        _, env2 = self.supervisor_turn(protocol.human_answer(question, text), f"{_label(sup_agent)} is acting on your guidance", turn)
+        return env2
+
+    def judge_revise(self, env, turn):
+        """Severity discipline and loop guards for a revise. Returns the (possibly amended) envelope to act on."""
+        sup_agent, _ = self.role_agent("supervisor")
+        criteria = self.criteria()
+        ledger = judge.Ledger(self.state.get("ledger"))
+        env = dict(env)
+        implicit = [i for i in self.state.get("pending_findings") or [] if ledger.get(i)]
+        if not judge.revise_refs(env) and implicit:
+            env["addresses"] = implicit
+        chk = judge.check_revise(env, criteria, ledger)
+        self.add_followups(chk["followups"], f"supervisor · work package {turn}")
+        if not chk["ok"] and (criteria or chk["followups"]):
+            n = int(self.state.get("revise_nudges") or 0) + 1
+            if n <= max(0, int(self.cfg.get("judge_revise_nudges", 1))):
+                self.state["revise_nudges"] = n
+                self.save()
+                self.r.msg(role="orchestrator", agent=None, kind="gate", ok=False, turn=turn, content=f"Revision refused: {chk['reason']}")
+                self.r.timeline("judge", "Revision refused", chk["reason"])
+                _, env2 = self.supervisor_turn(protocol.revise_nudge(chk["reason"], judge.acceptance_block(criteria), self.open_findings_text() or "(none)"),
+                                               f"{_label(sup_agent)} is restating the revision", turn)
+                return env2
+            self.r.timeline("judge", "Revision dispatched without references", chk["reason"])
+        observed = ledger.observe(chk["blocking"], f"work package {turn}")
+        refs = list(dict.fromkeys(chk["refs"] + [f["id"] for f in observed]))
+        finding_ids = [r for r in refs if ledger.get(r)]
+        recurring = [ledger.get(i) for i in finding_ids
+                     if ledger.get(i).get("status") == "open" and int(ledger.get(i).get("attempts") or 0) >= judge.MAX_FIX_ATTEMPTS]
+        self.state["ledger"] = ledger.dump()
+        note = ""
+        if recurring:
+            outcome, note = self.recurring_escalation(recurring, ledger)
+            finding_ids = [i for i in finding_ids if ledger.get(i).get("status") != "accepted"]
+            refs = [r for r in refs if not ledger.get(r) or r in finding_ids]
+            if outcome == "accept" and not refs:
+                ids = ", ".join(f["id"] for f in recurring)
+                _, env2 = self.supervisor_turn(protocol.human_decision_note(f"{ids} accepted as follow-ups; do not revise for them again."),
+                                               f"{_label(sup_agent)} is deciding after your decision", turn)
+                return env2
+        ledger.attempt(finding_ids)
+        self.state["ledger"] = ledger.dump()
+        self.state["pending_findings"] = []
+        self.state["revise_refs"] = refs
+        env["addresses"] = refs
+        env["_findings"] = observed
+        env["_judged"] = True
+        text = env.get("instruction") or env.get("summary") or env.get("_text", "")
+        if note:
+            text += "\n\nHUMAN GUIDANCE\n" + note
+        if finding_ids:
+            text += "\n\nThis revision addresses: " + ", ".join(refs) + ". Report the evidence for each."
+        env["instruction"] = text
+        self.save()
+        return env
+
+    def recurring_escalation(self, recurring, ledger):
+        rows = judge.findings_block(recurring)
+        question = (f"This blocking finding came back after the worker was asked to fix it {judge.MAX_FIX_ATTEMPTS} times:\n\n{rows}\n\n"
+                    "Accept it as a follow-up on the pull request, type guidance for the team, or stop.")
+        key, text = self.escalate("A blocking finding keeps coming back", question,
+                                  {"accept": "Accept as follow-up", "guidance": "Give guidance", "stop": "Stop the task"}, auto="accept")
+        for f in recurring:
+            if key == "accept":
+                ledger.set_status(f["id"], "accepted")
+            else:
+                ledger.set_status(f["id"], "open")   # guidance buys a fresh pair of attempts
+        if key == "accept":
+            self.add_followups([{**f, "severity": "should_fix"} for f in recurring], "accepted after recurring")
+        self.state["ledger"] = ledger.dump()
+        self.save()
+        return key, ("" if key == "accept" else (text or "The human asked the team to try once more; take a different approach."))
+
+    def check_revision_changed(self):
+        """A revision after which the worktree is byte-for-byte unchanged goes to the human instead of another round."""
+        before = self.state.pop("fp_before", "")
+        if not before or judge.worktree_fingerprint(self.wt, self.base) != before:
+            self.save()
+            return
+        turn = self.state.get("turn")
+        refs = self.state.get("revise_refs") or []
+        report = self.state.get("report") or {}
+        question = (f"The revision in work package #{turn} changed nothing in the worktree"
+                    + (f" (it addressed {', '.join(refs)})" if refs else "") + f".\n\nWorker's summary: {report.get('summary') or '(none)'}\n\n"
+                    "Accept the revised items as follow-ups, type guidance for the supervisor, or stop.")
+        key, text = self.escalate("Revision produced no change", question,
+                                  {"accept": "Accept the revised items as follow-ups", "guidance": "Give guidance", "stop": "Stop the task"},
+                                  auto="accept")
+        ledger = judge.Ledger(self.state.get("ledger"))
+        if key == "accept":
+            rows = [ledger.get(r) for r in refs if ledger.get(r)]
+            for r in rows:
+                ledger.set_status(r["id"], "accepted")
+            self.add_followups([{**r, "severity": "should_fix"} for r in rows]
+                               + ([{"severity": "should_fix", "problem": f"Revision not applied: {self.state.get('instruction_summary')}"}]
+                                  if not rows and self.state.get("instruction_summary") else []), "revision with no change")
+            self.state["judge_note"] = ("ORCHESTRATOR · the last revision changed nothing in the worktree and the human accepted "
+                                        + (", ".join(refs) or "the revised items") + " as follow-ups. Do not revise for them again; "
+                                        "decide done (with criteria evidence) or the next planned package.")
+        else:
+            for r in refs:
+                ledger.set_status(r, "open")
+            self.state["judge_note"] = f"ORCHESTRATOR · the last revision changed nothing in the worktree. Human guidance: {text or '(none)'}"
+        self.state["ledger"] = ledger.dump()
+        self.save()
+
+    def budget_escalation(self, turn):
+        """The work-package budget ran out. Returns True to continue with more packages, False when the phase changed."""
+        ext = max(1, int(self.cfg.get("judge_budget_extension") or 3))
+        limit = self.turn_limit()
+        kind = self.state.get("instruction_kind") or "instruction"
+        pending = self.state.get("instruction_summary") or truncate(self.state.get("instruction") or "", 300)
+        unmet = [c for c in self.criteria() if c.get("required") and c.get("status") != "met" and not (c.get("status") == "waived" and c.get("set_by") == "user")]
+        question = (f"The work-package budget ({limit}) is used up. The supervisor's next step is a {kind}: {pending or '(no summary)'}"
+                    + (f"\n\nRequired criteria not yet proven: {', '.join(c['id'] for c in unmet)}" if unmet else "")
+                    + f"\n\nAllow {ext} more work packages (any reply such as \"go ahead\" does this), deliver what exists now, or stop.")
+        choices = {"more": f"Allow {ext} more work packages", "deliver": "Deliver as it is, list remaining items as follow-ups", "stop": "Stop"}
+        self.state["budget_exhausted"] = True
+        self.save()
+        key, text = self.escalate("Work-package budget reached", question, choices,
+                                  auto="deliver" if self.state.get("auto_extended") else "more")
+        self.state["budget_exhausted"] = False
+        if key == "deliver":
+            self.add_followups([{"severity": "should_fix", "problem": f"Not done when the work-package budget ran out ({kind}): {pending}"}]
+                               + [{"severity": "should_fix", "problem": f"{c['id']} not proven: {c['criterion']}"} for c in unmet], "work-package budget")
+            self.state["pr_summary"] = self.state.get("pr_summary") or self.state.get("summary") or (self.state.get("plan") or {}).get("summary", "")
+            self.record_blocked([{"check": "Work-package budget", "action_required": True,
+                                  "reason": f"delivered after {limit} work packages before the supervisor declared done",
+                                  "impact": "remaining items are listed as follow-ups; review before merging"}])
+            self.state["phase"] = "deliver"
+            self.save()
+            return False
+        granted = ext
+        if key == "guidance":
+            m = re.search(r"\b(\d{1,2})\b", text)
+            if m and int(m.group(1)) > 0:
+                granted = min(int(m.group(1)), 20)
+            if text and not re.match(r"^\s*(go ahead|go on|yes|y|ok|okay|continue|proceed|sure|allow|more|\d+)\b", text.lower()):
+                self.state["instruction"] = (self.state.get("instruction") or "") + "\n\nUSER GUIDANCE\n" + text
+        if self._auto_choice:
+            self.state["auto_extended"] = True
+        self.state["extra_turns"] = int(self.state.get("extra_turns") or 0) + granted
+        self.r.timeline("judge", f"Work-package budget extended by {granted}", f"now {self.turn_limit()}")
+        self.save()
+        return True
+
+    def review_cap_escalation(self, rnd, observed, ledger):
+        """Review rounds are used up. Returns (continue, note): continue False means the task goes to delivery."""
+        question = (f"The reviewer still blocks delivery after {rnd} review rounds:\n\n{judge.findings_block(observed)}\n\n"
+                    "Deliver with these findings listed as follow-ups, allow one more review round (type guidance if you like), or stop.")
+        key, text = self.escalate("Review rounds used up", question,
+                                  {"deliver": "Deliver, list the open findings as follow-ups", "more": "Allow one more review round", "stop": "Stop the task"},
+                                  auto="deliver")
+        if key == "deliver":
+            for f in observed:
+                ledger.set_status(f["id"], "accepted")
+            self.state["ledger"] = ledger.dump()
+            self.add_followups([{**f, "severity": "should_fix"} for f in observed], f"open after {rnd} review rounds")
+            self.record_blocked([{"check": "Independent review", "action_required": True,
+                                  "reason": f"delivered with {len(observed)} blocking finding(s) open after {rnd} review rounds",
+                                  "impact": "the open findings are listed as follow-ups; check them before merging"}])
+            self.state["phase"] = "deliver"
+            self.save()
+            return False, ""
+        self.max_review_rounds = rnd + 1
+        self.state["max_review_rounds"] = self.max_review_rounds
+        self.save()
+        return True, text
+
+    def verify_escalation(self, vt, turn):
+        """Verification still fails after triage. Returns the supervisor's next envelope, or None to deliver with it recorded."""
+        failures = judge.failed_checks(self.task_meta().get("verification"))
+        names = ", ".join(f"`{f.get('command')}`" for f in failures) or "the verification"
+        question = (f"Verification still fails after the supervisor triaged it: {names}. The failure does not also happen on the starting commit.\n\n"
+                    "Deliver anyway with the failing checks recorded, type guidance for the supervisor, or stop.")
+        key, text = self.escalate("Verification still failing", question,
+                                  {"accept": "Deliver anyway, record the failing checks", "guidance": "Give guidance", "stop": "Stop the task"},
+                                  auto="accept")
+        self.state["verify_triage"] = 0
+        if key == "accept":
+            self.record_blocked([{"check": f.get("command") or "Verification", "action_required": True,
+                                  "reason": "failed in Relay's verification at delivery and not on the starting commit",
+                                  "impact": "delivered with this check failing; fix before merging"} for f in failures])
+            self.add_followups([{"severity": "should_fix", "problem": f"Verification failing at delivery: {f.get('command')} (exit {f.get('rc')})"}
+                                for f in failures], "verification")
+            self.save()
+            return None
+        self.save()
+        sup_agent, _ = self.role_agent("supervisor")
+        _, env2 = self.supervisor_turn(protocol.human_answer(question, text) + "\n\n" + protocol.supervisor_after_review("Orchestrator", {"verdict": "FAIL", "findings": []}, vt, 0, 0),
+                                       f"{_label(sup_agent)} is acting on your guidance", turn)
+        return env2
+
+    def finish_done(self):
+        rev_agent, _ = self.role_agent("reviewer")
+        if rev_agent:
+            self.state["phase"] = "review"
+            self.state["review_round"] = int(self.state.get("review_round") or 0) + 1
+        else:
+            self.state["phase"] = "deliver"
+        self.save()
+
+
     def review(self):
         sup_agent, _ = self.role_agent("supervisor")
         rev_agent, _ = self.role_agent("reviewer")
@@ -718,11 +1080,13 @@ class Pipeline:
             diff = gitops.full_diff(self.wt, int(self.cfg.get("budget_diff_chars") or 50000), self.base)
             sess = self.sessions.get("reviewer") or {}
             if int(sess.get("turns", 0)) == 0 or sess.get("agent") != rev_agent:
-                prompt = protocol.reviewer_kickoff(self.task, self.wt, self.branch, self.state.get("plan") or {},
+                prompt = protocol.reviewer_kickoff(self.task, self.wt, self.branch, {**(self.state.get("plan") or {}), "criteria": self.criteria()},
                                                    self.state.get("pr_summary", ""), vt, diff, rnd, self.cfg,
-                                                   self.state.get("blocked_checks") or [])
+                                                   self.state.get("blocked_checks") or [], judge.acceptance_block(self.criteria()) if self.criteria() else "")
             else:
-                prompt = protocol.reviewer_followup(rnd, vt, diff, self.state.get("pr_summary", ""))
+                prompt = protocol.reviewer_followup(rnd, vt, diff, self.state.get("pr_summary", ""),
+                                                    judge.acceptance_block(self.criteria()) if self.criteria() else "",
+                                                    self.open_findings_text())
             self.handoff("orchestrator", "reviewer", f"Independent review requested · round {rnd}", self.state.get("pr_summary", ""), subtype="review_request")
             try:
                 res, env = self.run_role("reviewer", prompt, f"Review round {rnd}")
@@ -739,27 +1103,59 @@ class Pipeline:
                 self.save()
                 break
             verdict = str(env.get("verdict", "FAIL")).upper()
-            findings = env.get("findings") if isinstance(env.get("findings"), list) else []
             text = env.get("_text") or env.get("text") or ""
+            findings = judge.normalize_findings(env.get("findings") if isinstance(env.get("findings"), list) else [])
+            ledger = judge.Ledger(self.state.get("ledger"))
+            for f in findings:
+                if f["severity"] == "blocking" and ledger.accepted(f):
+                    f["severity"] = "should_fix"   # the human already accepted it as a follow-up
+            blocking, minor = judge.split_findings(findings)
+            self.add_followups(minor, f"review round {rnd}")
+            claimed = verdict
+            # Severity decides, not the headline: FAIL needs a blocking finding, and a blocking finding is a FAIL.
+            # A FAIL with no structured findings at all (a verdict parsed from text) keeps the legacy behaviour.
+            verdict = "FAIL" if blocking else ("PASS" if findings else verdict)
+            observed = ledger.observe(blocking, f"review round {rnd}")
+            self.state["ledger"] = ledger.dump()
+            findings = observed + minor
             review_md = f"# Review round {rnd} · {verdict}\n\n{env.get('summary','')}\n\n" + "\n".join(
                 f"- [{f.get('severity','blocking')}] {f.get('file','')}: {f.get('problem','')} → {f.get('fix','')}" for f in findings) + f"\n\n---\n{text}"
             self.artifact("review", "REVIEW.md", review_md)
             self.r.msg(role="reviewer", agent=rev_agent, kind="review", verdict=verdict, summary=env.get("summary", ""),
                        findings=findings, content=text if not findings else "", turn=self.state.get("turn"))
-            self.m.set_meta(self.tid, review={"verdict": verdict, "round": rnd, "summary": env.get("summary", ""), "findings": findings})
-            self.r.timeline("reviewer", f"Review round {rnd}: {verdict}", env.get("summary", ""))
+            self.m.set_meta(self.tid, review={"verdict": verdict, "claimed_verdict": claimed, "round": rnd, "summary": env.get("summary", ""), "findings": findings})
+            self.r.timeline("reviewer", f"Review round {rnd}: {verdict}" + (f" (reviewer said {claimed})" if claimed != verdict else ""), env.get("summary", ""))
+            human_note = ""
+            recurring = ledger.recurring(observed)
+            if verdict == "FAIL" and recurring:
+                outcome, human_note = self.recurring_escalation(recurring, ledger)
+                observed = [f for f in observed if not ledger.accepted(f)]
+                if not observed:
+                    verdict = "PASS"
             if verdict == "PASS":
                 self.state["phase"] = "deliver"
                 self.save()
                 return
             if rnd >= self.max_review_rounds:
-                raise RuntimeError(f"The reviewer still blocks delivery after {rnd} review rounds. Inspect the findings, then resume with guidance.")
+                if human_note:
+                    self.max_review_rounds = rnd + 1   # the human just gave guidance on these findings: that buys the round
+                    self.state["max_review_rounds"] = self.max_review_rounds
+                else:
+                    go_on, human_note = self.review_cap_escalation(rnd, observed, ledger)
+                    if not go_on:
+                        return
+            self.state["pending_findings"] = [f["id"] for f in observed]
+            self.save()
             self.handoff("reviewer", "supervisor", f"Review findings · round {rnd}", env.get("summary", ""), subtype="review", findings=findings[:30])
-            _, senv = self.supervisor_turn(protocol.supervisor_after_review(_label(rev_agent), env, text, rnd, self.max_review_rounds),
+            _, senv = self.supervisor_turn(protocol.supervisor_after_review(_label(rev_agent), {**env, "findings": observed}, text, rnd,
+                                                                            self.max_review_rounds, minor, human_note),
                                            f"{_label(sup_agent)} is triaging review findings", self.state.get("turn"))
             if senv.get("type") == "decision" and senv.get("decision") == "done":
                 # Supervisor insists it is done; give the reviewer one more look with the supervisor's rebuttal.
                 self.state["pr_summary"] = senv.get("pr_summary") or self.state.get("pr_summary", "")
+                self.add_followups(senv.get("follow_ups") or senv.get("followups"), "supervisor")
+                if self.criteria() and senv.get("criteria"):
+                    self.set_criteria(judge.apply_results(self.criteria(), judge.normalize_results(senv.get("criteria"))))
                 self.state["review_round"] = rnd + 1
                 self.save()
                 continue
@@ -857,9 +1253,17 @@ class Pipeline:
         v = t.get("verification") or {}
         if v.get("items"):
             lines.append("**Verification:** " + ", ".join(f"`{i['command']}` {'✓' if i['ok'] else '✗'}" for i in v["items"]))
+        criteria = t.get("acceptance") or []
         acc = (self.state.get("plan") or {}).get("acceptance") or []
-        if acc:
+        if criteria:
+            mark = {"met": "x", "waived": "~"}
+            lines.append("\n**Acceptance criteria**\n" + "\n".join(
+                f"- [{mark.get(c.get('status'), ' ')}] {c['id']} {c['criterion']}" + (f" · {c['evidence']}" if c.get("evidence") else "") for c in criteria))
+        elif acc:
             lines.append("\n**Acceptance criteria**\n" + "\n".join(f"- [x] {a}" for a in acc))
+        follow = judge.followups_md(t.get("follow_ups") or [])
+        if follow:
+            lines.append("\n**Follow-ups** (non-blocking, not done in this change)\n" + follow)
         lines.append("\n_Generated by Relay._")
         return "\n".join(lines)
 
@@ -880,7 +1284,9 @@ class Pipeline:
 {(self.state.get('plan') or {}).get('plan','')}
 
 ## Acceptance criteria
-{chr(10).join('- ' + a for a in (self.state.get('plan') or {}).get('acceptance', []))}
+{judge.acceptance_md(t.get('acceptance')).split(chr(10), 2)[-1] if t.get('acceptance') else chr(10).join('- ' + a for a in (self.state.get('plan') or {}).get('acceptance', []))}
+## Follow-ups
+{judge.followups_md(t.get('follow_ups') or []) or '(none)'}
 
 ## Verification
 {self.state.get('last_verification') or '(none)'}

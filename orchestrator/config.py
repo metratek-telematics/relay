@@ -200,6 +200,11 @@ DEFAULTS = {
     "agent_turn_timeout_minutes": 60,
     "stall_warning_minutes": 8,
     "envelope_retries": 2,
+    # judge: how the supervisor's verdicts are held to the acceptance contract
+    "judge_gate_nudges": 2,                  # done attempts refused for missing evidence before the human is asked
+    "judge_revise_nudges": 1,                # revisions refused for missing ids / non-blocking-only findings before one is accepted
+    "judge_budget_extension": 3,             # work packages granted when the budget runs out and the team continues
+    "judge_escalation_timeout_minutes": 120,  # unanswered judge questions take the safe automatic choice after this (0 = wait)
     "max_parallel": 1,
     "queue_running": False,          # remembered across restarts so the queue resumes itself
     "auto_resume_interrupted": True,  # re-queue tasks that a restart interrupted mid-run
