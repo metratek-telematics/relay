@@ -478,6 +478,8 @@ class Assistant:
                 self.status["webhook_cleared"] = True
                 self._bot_key = key
             offset = int(_state.read().get("offset") or 0)
+            if self.status["consecutive_errors"] == 0:
+                self.status["running"] = True  # connected; the long poll below may wait up to poll_timeout
             updates = bot.call("getUpdates", {"offset": offset, "timeout": poll_timeout, "allowed_updates": ALLOWED_UPDATES},
                                timeout=poll_timeout + 15) or []
             self.status.update(running=True, last_poll_at=now_iso(), consecutive_errors=0)
@@ -961,7 +963,10 @@ class Assistant:
             lines.append("")
         for t in sorted(running, key=lambda t: t.get("number") or 0)[:12]:
             act = mission.last_activity(m.store, t["id"], window=40)
-            step = (act.get("activity") or {}).get("summary") or (act.get("said") or {}).get("text") or ""
+            tool = act.get("activity") or {}
+            step = (act.get("said") or {}).get("text") or ""
+            if tool.get("summary") and (not step or (tool.get("ts") or "") > ((act.get("said") or {}).get("ts") or "")):
+                step = f"{tool.get('tool') or tool.get('category') or tool.get('kind')}: {tool['summary']}"
             lines.append(f"<b>#{t.get('number')}</b> {h(clamp_text(t.get('name'), 60))}\n   {h(phase_of(t))} · {h(one_line(t.get('detail'), 90))}"
                          + (f"\n   <i>{h(one_line(step, 110))}</i>" if step else ""))
         if not running:
@@ -1081,10 +1086,12 @@ class Assistant:
             if ambiguous:
                 return {"ok": False, "text": f"“{repo_name}” matches several repositories: {names}. Be more specific."}
             return {"ok": False, "text": f"No repository matches “{repo_name}”." + (f" Known: {names}." if names else "")}
-        payload = {"repo": found, "requirements": request, "queue": True}
+        payload = {"repo": found, "requirements": request, "queue": True, "workflow": default_workflow(self.m.cfg())}
         lines = [f"<b>New task</b> in <b>{h(Path(found).name)}</b>", f"<blockquote>{h(clamp_text(request, 900))}</blockquote>"]
         try:
             wf = self.m.build_workflow(payload)
+            payload["workflow"] = {**payload["workflow"], "roles": {r: {k: (wf["roles"].get(r) or {}).get(k, "") for k in ("agent", "model", "effort")}
+                                                                   for r in ("supervisor", "worker", "reviewer")}}
             roles = wf["roles"]
             from .. import config as C
             team = " · ".join(f"{r}: {C.AGENTS.get(roles[r]['agent'], {}).get('label', roles[r]['agent'])}{(' ' + roles[r]['model']) if roles[r].get('model') else ''}"
@@ -1094,7 +1101,7 @@ class Assistant:
                 pf = self.m.learning.engine.preflight({**payload, "workflow": {"roles": roles}})
                 r = pf.get("risk") or {}
                 if r:
-                    factors = "; ".join(one_line(f.get("text") or f.get("evidence") or f.get("id"), 90) for f in (r.get("factors") or [])[:2])
+                    factors = " ".join(one_line(f.get("text") or f.get("evidence") or f.get("id"), 90).rstrip(". ") + "." for f in (r.get("factors") or [])[:2])
                     lines.append(f"Risk: <b>{h(r.get('level'))}</b>" + (f" ({round(float(r.get('p_fail') or 0) * 100)}% chance of trouble)" if r.get("p_fail") is not None else "")
                                  + (f"\n<i>{h(factors)}</i>" if factors else ""))
             except Exception:
@@ -1266,6 +1273,8 @@ class Assistant:
                 notes = [n for n in notes if not n.startswith("🚀")]
             if status == "failed" and "telegram" in (prefs.get("failed") or []):
                 notes = [n for n in notes if not n.startswith("❌")]
+            if status != "needs_input" or "telegram" in (prefs.get("needs_input") or []):
+                notes = [n for n in notes if not n.startswith("❓")]  # answered meanwhile, or the question itself arrives here
             if notes:
                 link = self.task_link(t)
                 rows = [[{"text": "Open in Relay", "url": link}]] if link else []
@@ -1575,7 +1584,7 @@ def render_notification(m, msg: dict, t: dict | None) -> tuple[str, dict | None,
 
 def progress_notes(prev: dict, snap: dict, t: dict) -> list[str]:
     notes = []
-    if snap["phase"] != prev["phase"] and snap["phase"]:
+    if snap["phase"] != prev["phase"] and snap["phase"] and snap["phase"] not in ("done", "delivered"):
         notes.append(f"➡️ Phase: {PHASE_LABEL.get(snap['phase'], snap['phase'])}")
     if snap["packages"] > prev["packages"]:
         notes.append(f"📦 Work package {snap['packages']} done")
@@ -1590,7 +1599,8 @@ def progress_notes(prev: dict, snap: dict, t: dict) -> list[str]:
         elif s == "stopped":
             notes.append("⏹ Stopped")
         elif s == "needs_input":
-            notes.append("❓ Waiting for you: " + one_line((t.get("pending") or {}).get("question") or t.get("detail"), 160))
+            q = re.sub(r"\*\*|`", "", str((t.get("pending") or {}).get("question") or t.get("detail") or ""))
+            notes.append("❓ Waiting for you: " + one_line(q, 160) + " (reply to the question message, or /needs)")
     return [h(n) for n in notes]
 
 
@@ -1607,6 +1617,20 @@ def unfollow(chat, tid):
 def followers_of(tid) -> list[tuple]:
     return [(int(chat) if re.fullmatch(r"-?\d+", chat) else chat, c.get("username")) for chat, c in (_chats.read().get("chats") or {}).items()
             if tid in (c.get("follows") or []) and c.get("username")]
+
+
+def default_workflow(cfg: dict) -> dict:
+    """The team a new task gets by default: the preset's agents with the configured model and effort only where the
+    configured role uses the same agent (a Claude model name means nothing to Codex)."""
+    from .. import config as C
+    preset = C.preset(cfg.get("workflow_preset"))
+    roles = {}
+    for r in ("supervisor", "worker", "reviewer"):
+        mine = (cfg.get("roles") or {}).get(r) or {}
+        agent = ((preset or {}).get("roles") or {}).get(r, {}).get("agent", "") if preset else mine.get("agent", "")
+        same = agent and agent == mine.get("agent")
+        roles[r] = {"agent": agent or "", "model": (mine.get("model") or "") if same else "", "effort": (mine.get("effort") or "") if same else ""}
+    return {"preset": cfg.get("workflow_preset") if preset else "custom", "roles": roles}
 
 
 def known_repos(m) -> list[str]:

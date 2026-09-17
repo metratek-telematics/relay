@@ -158,6 +158,39 @@ inside a Linux container.
 - **Extra toolchains.** Verification commands run inside the container. The image includes Node, Python and Git. For
   Java, Go, .NET or others, extend the image with a `FROM relay:local` Dockerfile.
 
+## Telegram
+
+Relay can message you on Telegram and take your answers, commands and questions from there.
+
+1. In Telegram, open **@BotFather**, send `/newbot` and copy the token.
+2. In Relay: **Settings → Integrations → Telegram assistant**, paste the token and press **Save**. The default mode,
+   **long polling**, needs nothing else: Relay asks Telegram for new messages itself, so no public address and no
+   proxy rule are involved. Only one Relay per bot token can poll; a second one on the same data folder waits.
+3. Open your bot in Telegram and send `/start`.
+4. In Relay open your avatar → **Profile → Notifications**, copy the `/link …` line and send it to the bot. Linking fills
+   in the chat and turns on Telegram for questions, approvals, deliveries and failures.
+
+What you can do there:
+
+- **Reply** to a question, approval or failure message to answer that exact question, or to send guidance to the task
+  (a task that has ended resumes with your message, like the composer on the task page).
+- **Buttons** answer options, approve, request changes, retry, and approve tool requests.
+- **Commands**: `/status`, `/needs`, `/tasks`, `/task N`, `/log N`, `/say N text` (`/say!` interrupts), `/answer N`,
+  `/approve N`, `/reject N why`, `/stop N`, `/retry N`, `/start N`, `/new repo: request` (confirm first), `/pause`,
+  `/resume`, `/digest 7d`, `/merge N` (admins, confirm first), `/follow N` for live progress. `/help` lists them.
+- **Anything else** goes to the assistant: a cheap agent turn (the cheapest signed-in Claude or Codex model unless you
+  choose one) with no tools and no file access, answering from Relay's live state. It can only suggest actions as
+  buttons; nothing happens until you press one.
+- **Voice notes** are transcribed when an OpenAI or Gemini API key is configured; otherwise the bot says it cannot.
+
+Every action runs as the linked Relay person, with the same role checks as the web interface, and is written to the
+audit log with `via: telegram`. Chats that are not linked get one reply explaining how to link and are otherwise
+ignored. Group chats are off unless an admin allows them.
+
+**Webhook mode** is available for setups that prefer it: set Relay's public URL (https), choose Webhook, press
+**Register webhook with Telegram**, and let `/api/org/integrations/telegram/webhook` bypass your forward-auth proxy
+(Relay checks Telegram's secret token on every call).
+
 ## Configuration through the environment
 
 | Variable | Default | Effect |

@@ -1026,7 +1026,6 @@ def org_telegram_send_test():
                                      f"Relay can reach this chat. Send /help to see what I can do.")
     except telegram.TelegramError as e:
         return jsonify({"error": f"Telegram answered: {e.description}"}), 502
-    audit.record(current_user(), "integration.telegram_test", {"type": "integration", "id": "telegram"}, via=g.get("org_via") or "", detail=f"chat {chat}")
     return jsonify({"ok": True, "chat_id": chat, "message_ids": ids})
 
 
