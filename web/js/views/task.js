@@ -210,7 +210,7 @@ export function mountTask(main, id) {
         else {
           const to = $("#gTo", host)?.value || "next";
           const r = await api.action(t.id, "guidance", { text, to, mode });
-          toast("success", r.applied === "interrupt" ? "Interrupting the current turn" : r.applied === "answer" ? "Delivered as the answer" : "Guidance queued", r.applied === "interrupt" ? "The agent restarts with your note." : r.applied === "next_boundary" ? `Delivered to the ${to === "next" ? "next agent turn" : to}.` : "");
+          toast("success", r.applied === "interrupt" ? "Interrupting the current turn" : r.applied === "answer" ? "Delivered as the answer" : r.applied === "resumed" ? "Task resumed with your message" : "Guidance queued", r.applied === "interrupt" ? "The agent restarts with your note." : r.applied === "resumed" ? "It continues from where it stopped; the next agent turn gets your message." : r.applied === "next_boundary" ? (r.note ? r.note : `Delivered to the ${to === "next" ? "next agent turn" : to}.`) : "");
         }
         ta.value = ""; grow();
       } catch (e) { toast("error", "Could not send", e.message); }

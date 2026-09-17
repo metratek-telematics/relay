@@ -17,9 +17,8 @@ from flask import Flask, Response, jsonify, request, send_from_directory
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
-from orchestrator import agents, config as C, github, gitops, handoff, history, repos  # noqa: E402
+from orchestrator import agents, config as C, github, gitops, handoff, history, repo_env, repos  # noqa: E402
 from orchestrator import issues  # noqa: E402
-
 from orchestrator import agent_info, installer  # noqa: E402
 
 # Agents installed from the Agents page must be found by health checks, runs and verification alike.
@@ -783,7 +782,14 @@ def repo_arg(raw):
 
 @app.get("/api/repos")
 def repos_list():
-    return jsonify(repos.list_repos(manager.tasks))
+    data = repos.list_repos(manager.tasks)
+    for r in data.get("repos") or []:
+        try:
+            e = repo_env.load(r["path"])
+            r["env_vars"], r["env_files"] = len(e["vars"]), len(e["files"])
+        except Exception:
+            pass
+    return jsonify(data)
 
 
 @app.post("/api/repos/<action>")
@@ -798,6 +804,28 @@ def repos_action(action):
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 502
     return jsonify({"error": f"Unknown action {action}"}), 404
+
+
+@app.get("/api/repos/env")
+def repo_env_get():
+    path = repo_arg(request.args.get("path"))
+    return jsonify(repo_env.public(repo_env.load(path)))
+
+
+@app.put("/api/repos/env")
+def repo_env_put():
+    b = body()
+    path = repo_arg(b.get("path"))
+    try:
+        return jsonify(repo_env.public(repo_env.save(path, b.get("env") or {})))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.post("/api/repos/env/parse")
+def repo_env_parse():
+    """Turn a pasted .env into variable rows (nothing is stored until the editor saves)."""
+    return jsonify({"vars": repo_env.parse_dotenv(body().get("text") or "")})
 
 
 @app.get("/api/repos/graph")

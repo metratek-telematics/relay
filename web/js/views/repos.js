@@ -3,6 +3,7 @@ import { $, $$, esc, icon, toast, confirm, modal, menu, timeAgo, copyText, debou
 import { S, statusOf, navigate } from "../state.js";
 import { api } from "../api.js";
 import { openNewTask } from "./newtask.js";
+import { openRepoEnv } from "./repoenv.js";
 
 const TABS = [["list", "Repositories", "folder"], ["worktrees", "Worktrees", "layers"], ["graph", "Branch graph", "branch"]];
 const FILTERS = [["all", "All"], ["orphaned", "Orphaned"], ["uncommitted", "Uncommitted"], ["merged", "Merged"], ["missing", "Missing"]];
@@ -120,6 +121,7 @@ export function mountRepos(main, section) {
       <div class="repo-actions">
         <button class="btn sm" data-act="fetch" ${r.remote ? "" : "disabled"} title="${r.remote ? "git fetch --prune" : "No remote configured"}">${icon("refresh")}Fetch</button>
         <button class="btn sm" data-act="pull" ${r.upstream ? "" : "disabled"} title="${r.upstream ? "Fast-forward from the upstream branch" : "No upstream branch"}">${icon("download")}Pull</button>
+        <button class="btn sm" data-act="env" title="Variables, secret files, services and checks for tasks in this repository">${icon("shield")}Environment${r.env_vars || r.env_files ? ` <span class="n">${(r.env_vars || 0) + (r.env_files || 0)}</span>` : ""}</button>
         <button class="btn sm" data-act="new" title="New task in this repository">${icon("plus")}New task</button>
         <button class="btn sm icon" data-act="more" aria-label="More actions" title="More actions">${icon("more")}</button>
       </div>
@@ -130,6 +132,7 @@ export function mountRepos(main, section) {
     if (!r) return;
     const btn = e?.currentTarget;
     if (act === "new") { openNewTask({ repo: r.path }); return; }
+    if (act === "env") { openRepoEnv(r, { onSaved: () => refresh() }); return; }
     if (act === "worktrees") { ui.repo = r.path; ui.filter = "all"; navigate("#/repos/worktrees"); return; }
     if (act === "more") {
       menu(btn, [
