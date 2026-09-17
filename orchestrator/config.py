@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import threading
 
+from .autopilot import DEFAULTS as _AUTOPILOT_DEFAULTS
 from .util import CONFIG_PATH, read_json, write_json
 
 BUILD = "14.1.0"
@@ -286,7 +287,10 @@ DEFAULTS = {
     "github_pr_base": "",
     "issues_comment_on_pickup": False,   # Issues board: comment "Relay picked this up" on the issue
     "issues_pickup_label": "",           # Issues board: label added to an issue when a task is created from it
-    "queue_stop_chain_on_failure": False,  # one-after-the-other chains keep going after a failed task
+    "queue_stop_chain_on_failure": False,
+    # Autopilot: dependencies and parking, limits and fallbacks, cost caps, run windows, quiet hours,
+    # watchdog and the morning digest. Keys and meaning: orchestrator/autopilot.py DEFAULTS.
+    "autopilot": copy.deepcopy(_AUTOPILOT_DEFAULTS),  # one-after-the-other chains keep going after a failed task
     "github_pr_body_template": "{summary}\n\n---\n{details}\n\n{issue_close}\n",
     # learning: scorecards, retrospectives, lessons (orchestrator/learning.py)
     "retro_enabled": True,             # one short agent turn after each task ends, proposing lessons for review

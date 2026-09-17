@@ -901,12 +901,21 @@ class Pipeline:
             self.r.msg(role="orchestrator", agent=None, kind="notice", turn=turn,
                        content=f"{title}. Agent questions are disabled for this task, so Relay chose: {choices[auto]}.")
             return auto, ""
+        ap = getattr(self.m, "autopilot", None)
+        if ap and ap.quiet():
+            # Quiet hours (Autopilot settings): nobody is there to answer, so take the safe choice now.
+            self._auto_choice = True
+            self.r.msg(role="orchestrator", agent=None, kind="notice", turn=turn,
+                       content=f"{title}. Quiet hours are on, so Relay chose: {choices[auto]}.")
+            self.r.timeline("judge", "Quiet hours · automatic choice", choices[auto])
+            return auto, ""
         qid = new_id("q")
         content = f"**{title}**\n\n{question}"
         qmsg = self.r.msg(role="orchestrator", agent="orchestrator", kind="question", qid=qid, content=content,
                           options=list(choices.values()), answered=False, turn=turn)
         self.m.ask_user(self.tid, {"id": qid, "kind": "question", "from": "orchestrator", "agent": "orchestrator", "question": content,
-                                   "options": list(choices.values()), "message_id": qmsg["id"], "time": now()})
+                                   "options": list(choices.values()), "message_id": qmsg["id"], "time": now(),
+                                   "auto": choices[auto]})
         self.r.status("needs_input", title)
         self.m.notify("warning", title, truncate(question, 140), self.tid, kind="needs_input")
         minutes = float(self.cfg.get("judge_escalation_timeout_minutes") or 0)

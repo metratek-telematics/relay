@@ -28,6 +28,8 @@
     <a class="rail-brand" href="#/" title="Relay"><span>R</span></a>
     <a class="rail-btn" href="#/" data-nav="dashboard" title="Dashboard (G D)"><i data-icon="home"></i></a>
     <button class="rail-btn" id="sidebarToggle" title="Show or hide the task list (B) · J / K to move through it"><i data-icon="tasks"></i></button>
+    <a class="rail-btn" href="#/inbox" data-nav="inbox" title="Needs you (G Y)"><i data-icon="inbox"></i><span class="rail-badge" id="inboxBadge" hidden></span></a>
+    <a class="rail-btn" href="#/digest" data-nav="digest" title="Digest (G E)"><i data-icon="sunrise"></i></a>
     <a class="rail-btn" href="#/agents" data-nav="agents" title="Agents (G A)"><i data-icon="bot"></i></a>
     <a class="rail-btn" href="#/issues" data-nav="issues" title="Issues (G I)"><i data-icon="issue"></i></a>
     <a class="rail-btn" href="#/github" data-nav="github" title="GitHub inbox (G H)"><i data-icon="github"></i></a>
@@ -70,7 +72,10 @@
     </div>
   </aside>
 
-  <main class="main" id="main"></main>
+  <div class="main-col">
+    <div class="ap-bar" id="apBar" role="status" aria-live="polite" hidden></div>
+    <main class="main" id="main"></main>
+  </div>
 </div>
 <div id="notifPanel" class="notif-panel" hidden></div>
 <script type="module" src="/js/app.js?v=14.1.0"></script>

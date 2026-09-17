@@ -10,6 +10,7 @@ import traceback
 from pathlib import Path
 
 from . import agents, config as C, github, gitops, judge, stacks
+from .autopilot import Autopilot
 from .learning import Learning
 from .pipeline import TurnBudget, orchestrate
 from .runner import Runner, Stopped
@@ -39,6 +40,46 @@ class Manager:
         self._cfg_at = 0
         self.notifications: list[dict] = []
         self.learning = Learning(self)  # scorecards, retrospectives, lessons
+        self.autopilot = Autopilot(self)  # dependencies, limits, windows, watchdog, digest (orchestrator/autopilot.py)
+        self.number_tasks()
+
+    def number_tasks(self):
+        """Give every task a short number (#12) in creation order, so waiting tasks can say what they wait for."""
+        rows = sorted(self.store.list(), key=lambda t: (t.get("created_at") or "", t["id"]))
+        top = max([int(t.get("number") or 0) for t in rows] or [0])
+        for t in rows:
+            if not t.get("number"):
+                top += 1
+                self.store.update(t["id"], touch=False, number=top)
+
+    def next_number(self) -> int:
+        return max([int(t.get("number") or 0) for t in self.store.list()] or [0]) + 1
+
+    def clean_dependencies(self, tid, deps) -> list:
+        """Validated dependency ids: existing tasks, not itself, no cycles."""
+        if deps in (None, ""):
+            return []
+        if not isinstance(deps, list):
+            deps = [deps]
+        rows = self.store.list()
+        by_id = {t["id"]: t for t in rows}
+        by_num = {str(t.get("number")): t["id"] for t in rows if t.get("number")}
+        out = []
+        for d in deps:
+            key = str(d or "").strip().lstrip("#")
+            if not key:
+                continue
+            ref = key if key in by_id else by_num.get(key)
+            if not ref:
+                raise ValueError(f"The task this depends on ({d}) does not exist.")
+            if ref == tid:
+                raise ValueError("A task cannot depend on itself.")
+            if ref not in out:
+                out.append(ref)
+        from .autopilot import dependency_cycle
+        if tid and dependency_cycle(tid, out, by_id):
+            raise ValueError("These dependencies would make a loop: a task would wait for itself.")
+        return out[:20]
 
     # ------------------------------------------------------------ config
     def cfg(self) -> dict:
@@ -154,6 +195,7 @@ class Manager:
         if parent and not self.store.get(parent):
             raise ValueError("The task this follows up no longer exists.")
         tid = new_task_id()
+        depends_on = self.clean_dependencies(tid, payload.get("depends_on"))
         name = (payload.get("name") or "").strip() or (gitops.auto_task_name(requirements) or requirements[:60] if requirements else f"Issue #{issue}")
         branch = self.branch_for(payload, repo, name, requirements, issue)
         t = {
@@ -171,7 +213,14 @@ class Manager:
             "github_repo": github.remote_repo_name(repo),
             "branch_name": branch,
             "queue_pos": time.time(),
+            "number": self.next_number(),
         }
+        if depends_on:
+            t["depends_on"] = depends_on
+        if isinstance(payload.get("retry_policy"), dict):
+            t["retry_policy"] = {"infra": max(0, int(payload["retry_policy"].get("infra") or 0))}
+        if payload.get("cost_cap_usd"):
+            t["cost_cap_usd"] = max(0.0, float(payload.get("cost_cap_usd") or 0))
         if parent:
             t["follow_up_of"] = parent
         if isinstance(payload.get("connectors"), list):  # None keeps the repository's default connectors
@@ -193,6 +242,13 @@ class Manager:
         for k in ("name", "requirements", "priority", "tags", "archived"):
             if k in patch:
                 allowed[k] = patch[k]
+        if "depends_on" in patch:
+            allowed["depends_on"] = self.clean_dependencies(tid, patch["depends_on"])
+            allowed["waiting"] = None
+        if isinstance(patch.get("retry_policy"), dict):
+            allowed["retry_policy"] = {"infra": max(0, int(patch["retry_policy"].get("infra") or 0))}
+        if "cost_cap_usd" in patch:
+            allowed["cost_cap_usd"] = max(0.0, float(patch.get("cost_cap_usd") or 0))
         if "connectors" in patch and (patch["connectors"] is None or isinstance(patch["connectors"], list)):
             allowed["connectors"] = patch["connectors"]
         if "workflow" in patch and isinstance(patch["workflow"], dict):
@@ -357,20 +413,24 @@ class Manager:
 
     def chain_blocked(self, t, rows, queued) -> bool:
         """A task in a chain waits while another task of the chain runs, waits for you, or is ahead of it in the queue."""
+        return self.chain_blocker(t, rows, queued) is not None
+
+    def chain_blocker(self, t, rows, queued):
+        """The chain task t waits for, or None."""
         chain = t.get("chain_id")
         if not chain:
-            return False
+            return None
         for o in rows:
             if o["id"] == t["id"] or o.get("chain_id") != chain:
                 continue
             if self._busy(o):
-                return True
+                return o
         for o in queued:
             if o["id"] == t["id"]:
-                return False
+                return None
             if o.get("chain_id") == chain:
-                return True
-        return False
+                return o
+        return None
 
     def move_in_queue(self, tid, direction):
         """Swap a queued task with its neighbour in run order. It takes the neighbour's priority, so the order you see is the order that runs."""
@@ -433,20 +493,10 @@ class Manager:
     def _loop(self):
         while self.scheduler:
             try:
-                rows = self.store.list()
-                active = sum(1 for t in rows if self._busy(t) or t.get("status") in WAITING and t["id"] in self.runners)
-                queued = self.queue_order(rows)
-                room = max(0, self.max_parallel - active)
-                for t in queued:
-                    if room <= 0:
-                        break
-                    if self.chain_blocked(t, rows, queued):
-                        continue
-                    self.launch(t["id"])
-                    room -= 1
-                    rows = self.store.list()
+                # Dependencies, parking, run windows, limits and fallbacks: orchestrator/autopilot.py
+                self.autopilot.schedule()
             except Exception:
-                pass
+                traceback.print_exc()
             time.sleep(0.5)
 
     def launch(self, tid):
@@ -489,8 +539,13 @@ class Manager:
                 self.emit_task(tid)
                 self.emit("queue", self.queue_state())
                 self.learning.task_ended(tid)
+                try:
+                    self.autopilot.after_run(tid)  # automatic retry of infrastructure failures
+                except Exception:
+                    traceback.print_exc()
 
-        threading.Thread(target=work, daemon=True).start()
+        r.thread = threading.Thread(target=work, daemon=True)  # the watchdog checks it is still alive
+        r.thread.start()
 
     # ------------------------------------------------------------ control actions
     def start_task(self, tid):
@@ -539,6 +594,8 @@ class Manager:
         r = self.runners.get(tid)
         t = self.store.get(tid)
         if r:
+            if t and t.get("autopilot_parked"):
+                self.autopilot.resume_parked(tid)
             r.resume()
             self.store.update(tid, immediate=True, pause_requested=False)
             if t and t.get("status") == "paused":
@@ -548,7 +605,7 @@ class Manager:
         if t and t.get("status") in TERMINAL | {"paused"}:
             self.retry(tid, fresh=False)
 
-    def retry(self, tid, fresh=False):
+    def retry(self, tid, fresh=False, start_queue=True):
         t = self.store.get(tid)
         if not t:
             raise KeyError("Task not found")
@@ -571,7 +628,7 @@ class Manager:
         self.store.update(tid, immediate=True, **patch)
         self.timeline(tid, "user", "Requeued", patch["detail"])
         self.emit_task(tid)
-        if not self.scheduler:
+        if start_queue and not self.scheduler:
             self.start()
 
     def answer(self, tid, qid, text, extra=None):
@@ -759,6 +816,10 @@ class Manager:
         tot["tool_calls"] += int(tool_calls or 0)
         self.store.update(tid, metrics=m)
         self.emit_task(tid)
+        try:
+            self.autopilot.on_cost(tid)  # pause at the task's cost cap
+        except Exception:
+            traceback.print_exc()
 
     def ask_user(self, tid, pending: dict):
         self.store.update(tid, immediate=True, pending=pending)
