@@ -84,6 +84,9 @@ export function openNewTask(prefill = {}) {
     template: edit?.template || parent?.template || "feature", priority: edit?.priority || parent?.priority || "normal", tags: (edit?.tags || parent?.tags || []).join(", "),
     workflow: edit ? JSON.parse(JSON.stringify(edit.workflow)) : parent?.workflow ? JSON.parse(JSON.stringify(parent.workflow)) : defaultWorkflow(), queue: true,
     branch: parent ? (parent.branch || parent.branch_name || "") : "", branchEdited: !!parent,
+    // Autopilot: run after other tasks, automatic retries of agent crashes, a cost cap.
+    depends_on: edit?.depends_on ? [...edit.depends_on] : parent && parent.status !== "done" ? [parent.id] : [],
+    retry: edit?.retry_policy?.infra ?? "", cost_cap: edit?.cost_cap_usd || "",
     connectors: edit?.connectors || parent?.connectors || null, // null: the repository's default connectors
   };
   let step = edit || parent ? 1 : 0;
@@ -223,6 +226,7 @@ export function openNewTask(prefill = {}) {
         </div>
         ${warn.length ? `<div class="modal-error" style="margin-top:12px">${warn.map(esc).join("<br>")}<br><a href="#/agents" data-close>Open Agents page</a></div>` : ""}
         ${!edit ? `<div class="field" style="margin-top:14px"><label>Branch</label><input id="tbranch" class="mono" value="${esc(data.branch)}" placeholder="suggesting…" spellcheck="false"><div class="help">${parent && data.branch === (parent.branch || parent.branch_name) ? `The branch ${esc(parent.name)} delivered; this task adds commits on top of it.` : "Suggested from the task name. Edit it freely; an existing branch is built on."}</div></div>` : ""}
+        ${autopilotOptions(data, edit)}
         <details class="field conn-task" id="connBox" style="margin-top:14px"><summary class="field-label">Advanced · connectors <span class="muted" id="connSum">loading…</span></summary>
           <div id="connPick" style="margin-top:8px"></div><div class="help">Real environments the agents may check through Relay. The default is the repository's connectors, never production.</div></details>
         ${!edit ? `<div class="field inline" style="margin-top:14px"><label>Queue immediately (and start the queue if idle)</label><span class="switch ${data.queue ? "on" : ""}" id="qSwitch"></span></div>` : ""}
@@ -241,12 +245,20 @@ export function openNewTask(prefill = {}) {
         if (!data.branchEdited) api.branchName({ repo: data.repo, name: data.name, requirements: data.requirements, template: data.template, issue: data.issue })
           .then((r) => { if (!data.branchEdited) { data.branch = r.branch; bInput.value = r.branch; } }).catch(() => { bInput.placeholder = "chosen when the task starts"; });
       }
-      $("#qSwitch", body) && ($("#qSwitch", body).onclick = () => { data.queue = !data.queue; render(); });
+      const collectAp = () => {
+        data.depends_on = $$("[data-dep]:checked", body).map((c) => c.value);
+        data.retry = $("#tretry", body)?.value ?? data.retry;
+        data.cost_cap = $("#tcap", body)?.value ?? data.cost_cap;
+      };
+      $$("[data-dep], #tretry, #tcap", body).forEach((i) => i.addEventListener("change", collectAp));
+      $("#qSwitch", body) && ($("#qSwitch", body).onclick = () => { collectAp(); data.queue = !data.queue; render(); });
       $("#wCreate", body).onclick = async () => {
         const btn = $("#wCreate", body); btn.disabled = true; btn.innerHTML = `${icon("spinner", "spin")}${edit ? "Saving…" : "Creating…"}`;
         try {
           const payload = { repo: data.repo, name: data.name, requirements: data.requirements, issue: data.issue, template: data.template, priority: data.priority,
-            tags: data.tags.split(",").map((x) => x.trim()).filter(Boolean), workflow: data.workflow, queue: data.queue, branch: edit ? undefined : data.branch, follow_up_of: parent?.id };
+            tags: data.tags.split(",").map((x) => x.trim()).filter(Boolean), workflow: data.workflow, queue: data.queue, branch: edit ? undefined : data.branch, follow_up_of: parent?.id,
+            depends_on: data.depends_on, cost_cap_usd: Number(data.cost_cap) || 0 };
+          if (String(data.retry).trim() !== "") payload.retry_policy = { infra: Math.max(0, Number(data.retry) || 0) };
           if (data.connectors) payload.connectors = data.connectors; // untouched: the repository's defaults apply when the task starts
           if (edit) { await api.updateTask(edit.id, payload); toast("success", "Task updated"); m.close(); return; }
           const t = await api.createTask(payload);
@@ -259,4 +271,18 @@ export function openNewTask(prefill = {}) {
     }
   }
   drawSteps(); render();
+}
+
+// "Runs after" and the other autopilot options on the review step.
+function autopilotOptions(data, edit) {
+  const open = [...S.tasks.values()].filter((t) => !t.archived && t.id !== edit?.id && !["stopped"].includes(t.status) && (t.status !== "done" || data.depends_on.includes(t.id)))
+    .sort((a, b) => (b.number || 0) - (a.number || 0)).slice(0, 30);
+  const n = data.depends_on.length;
+  return `<details class="ap-opts" ${n || data.cost_cap || String(data.retry) !== "" ? "open" : ""}><summary>${icon("clock", "sm")}Autopilot options${n ? ` · runs after ${n} task${n === 1 ? "" : "s"}` : ""}</summary>
+    <div class="field"><label>Runs after</label>${open.length ? `<div class="dep-list">${open.map((t) => `<label class="dep-opt"><input type="checkbox" data-dep value="${esc(t.id)}" ${data.depends_on.includes(t.id) ? "checked" : ""}><span class="truncate">${t.number ? `#${esc(t.number)} ` : ""}${esc(t.name)}</span><span class="muted">${esc(t.status)}</span></label>`).join("")}</div>` : '<div class="help">No other open tasks.</div>'}
+      <div class="help">It starts only once these are delivered. Other queued tasks carry on meanwhile.</div></div>
+    <div class="grid2">
+      <div class="field"><label for="tretry">Automatic retries after an agent crash or hang</label><input id="tretry" type="number" min="0" max="5" value="${esc(data.retry)}" placeholder="default (${esc(S.config.autopilot?.retry_infra_failures ?? 1)})"><div class="help">Never for judge outcomes such as a used-up budget.</div></div>
+      <div class="field"><label for="tcap">Cost cap (USD, estimated)</label><input id="tcap" type="number" min="0" step="0.5" value="${esc(data.cost_cap)}" placeholder="${S.config.autopilot?.task_cost_cap_usd ? `default $${esc(S.config.autopilot.task_cost_cap_usd)}` : "no cap"}"><div class="help">The task pauses after the turn that crosses it.</div></div>
+    </div></details>`;
 }
