@@ -18,7 +18,7 @@ import traceback
 from pathlib import Path
 
 from . import config as C
-from . import commitguard, connectors, designcheck, environment, gitops, github, judge, lessons, multirepo, protocol, repo_env, stacks
+from . import commitguard, connectors, design, designcheck, environment, gitops, github, judge, lessons, multirepo, protocol, repo_env, stacks
 from .runner import Interrupted, Stopped, TurnTimeout
 from .util import APP_DIR, new_id, now, quiet, read_text, truncate, write_text
 
@@ -92,7 +92,7 @@ def context_refs(refs):
 
 
 # ----------------------------------------------------------------------------- pipeline
-class Pipeline(multirepo.MultiRepo):
+class Pipeline(design.DesignFlow, multirepo.MultiRepo):
     def __init__(self, task, runner, manager):
         self.task = task
         self.r = runner
@@ -167,11 +167,13 @@ class Pipeline(multirepo.MultiRepo):
         return "reviewing"
 
     # ------------------------------------------------------------ agent turns
-    def run_role(self, role, prompt, label, turn=None, expect=None):
+    def run_role(self, role, prompt, label, turn=None, expect=None, session_key=None):
         agent, model = self.role_agent(role)
         if not agent:
             raise RuntimeError(f"No agent configured for the {role} role.")
-        sess = dict(self.sessions.get(role) or {})
+        # A separate session key gives the same agent a fresh, independent conversation (the design reviewer).
+        skey = session_key or role
+        sess = dict(self.sessions.get(skey) or {})
         if sess.get("agent") != agent:
             sess = {"agent": agent, "turns": 0}
         expect = expect or {"supervisor": SUP_TYPES, "worker": WRK_TYPES, "reviewer": REV_TYPES}[role]
@@ -188,7 +190,7 @@ class Pipeline(multirepo.MultiRepo):
             nonlocal sess, restarts
             restarts += 1
             sess = {"agent": agent, "turns": 0}
-            self.sessions[role] = sess
+            self.sessions[skey] = sess
             self.save()
             self.r.timeline(role, "Starting a fresh session", f"{_label(agent)} ({role}): {truncate(reason, 160)}")
             return (f"ORCHESTRATOR · your previous session for this role broke ({truncate(reason, 300)}), so this is a new session. "
@@ -217,7 +219,7 @@ class Pipeline(multirepo.MultiRepo):
                           else fresh_session(str(e)))
                 continue
             sess = res["session"]
-            self.sessions[role] = sess
+            self.sessions[skey] = sess
             self.guard_commits(role, agent)
             self.save()
             if not res.get("ok"):
@@ -244,7 +246,7 @@ class Pipeline(multirepo.MultiRepo):
                               + "\nContinue from the current working tree state and end with the appropriate protocol envelope.")
                 continue
             env = protocol.envelope_from_result(res)
-            if role == "reviewer" and (not env or env.get("type") != "review"):
+            if "review" in expect and (not env or env.get("type") != "review"):
                 v = protocol.verdict_from_text(res.get("last_message") or res.get("text") or "")
                 if v:
                     env = {"type": "review", "verdict": v, "summary": "(verdict parsed from text)", "findings": [],
@@ -260,7 +262,7 @@ class Pipeline(multirepo.MultiRepo):
                     continue
                 raise RuntimeError(f"{_label(agent)} ({role}) did not return a valid protocol envelope after {nudges} attempts.")
             self.r.timeline(role, "Missing protocol envelope", f"Asking {_label(agent)} to restate its reply ({nudges})")
-            prompt = protocol.nudge(role)
+            prompt = protocol.nudge(role, expect)
 
     def guard_commits(self, role, agent):
         """Agents never commit (Relay does at delivery): undo any commit made during the turn, keeping its changes."""
@@ -692,6 +694,7 @@ class Pipeline(multirepo.MultiRepo):
         prompt = protocol.with_lessons(prompt, self.lessons_text)
         prompt = protocol.with_block(prompt, self.playbook_text)
         prompt = protocol.with_block(prompt, self.context_text("supervisor"))
+        prompt = protocol.with_block(prompt, self.kickoff_design_note())
         res, env = self.supervisor_turn(prompt, f"{_label(sup_agent)} is inspecting the repository and planning", turn=0)
         if env.get("type") != "plan":
             if env.get("type") in ("instruction", "decision") and env.get("instruction"):
@@ -738,6 +741,7 @@ class Pipeline(multirepo.MultiRepo):
                            "instruction": self.package_prefix(env) + (env.get("instruction") or "Implement the plan."), "instruction_kind": "instruction",
                            "instruction_summary": env.get("summary", "")})
         self.save()
+        self.maybe_enter_design(env)   # complex or multi-repository tasks design first (orchestrator/design.py)
 
     def dialogue(self):
         sup_agent, _ = self.role_agent("supervisor")
@@ -769,6 +773,7 @@ class Pipeline(multirepo.MultiRepo):
                     self.state["resumed"] = False
                 res, env = self.worker_turn(prompt, f"Work package #{turn}", turn)
                 self.note_package_report(env)
+                self.note_amendments(env, "worker")
                 report = {"status": env.get("status", "complete"), "summary": env.get("summary", ""),
                           "report": env.get("report") or env.get("_text", ""), "files": env.get("files") or [],
                           "blocked_checks": protocol.blocked_checks(env), "blockers": protocol.blockers(env)}
@@ -804,7 +809,7 @@ class Pipeline(multirepo.MultiRepo):
                 guidance = (guidance + "\n\n" if guidance else "") + note
             prompt = protocol.supervisor_after_report(_label(wrk_agent), turn, self.state.get("report"), (self.state.get("report") or {}).get("report", ""),
                                                       self.state.get("last_verification", ""), changed, ds, guidance, remaining, self.cfg,
-                                                      self.judge_text())
+                                                      "\n\n".join(x for x in (self.judge_text(), self.design_judge_text()) if x))
             if self.state.get("resumed"):
                 prompt = protocol.resume_note({k: v for k, v in self.state.items() if k in ("phase", "turn", "awaiting")}) + "\n\n" + prompt
                 self.state["resumed"] = False
@@ -814,6 +819,7 @@ class Pipeline(multirepo.MultiRepo):
     def apply_supervisor_decision(self, env, turn):
         sup_agent, _ = self.role_agent("supervisor")
         typ = env.get("type")
+        self.note_amendments(env, "supervisor")
         if typ == "decision" and env.get("decision") == "done":
             self.add_followups(env.get("follow_ups") or env.get("followups"), "supervisor")
             gated = self.done_gate(env, turn)
@@ -1358,6 +1364,7 @@ class Pipeline(multirepo.MultiRepo):
         cfg = self.cfg
         prefix = (cfg.get("commit_message_prefix") or "agent:").strip()
         title = t.get("github_issue_title") or t["name"]
+        self.write_design_doc()   # docs/designs/<date>-<slug>.md in the primary repository, when the task has an approved design
         committed = gitops.commit_all(self.r, self.wt, f"{prefix} {title}".strip())
         self.r.timeline("git", "Committed" if committed else "Nothing new to commit", self.branch)
         self.state["head"] = commitguard.head(self.wt)
@@ -1368,6 +1375,7 @@ class Pipeline(multirepo.MultiRepo):
             self.r.status("delivering", "Pushing the task branch to GitHub")
             gitops.push_branch(self.r, self.wt, self.branch, lease=self.state.get("agent_pushed") or "")
             self.r.timeline("github", "Branch pushed", self.branch)
+            self.design_doc_url()
             if cfg.get("github_auto_create_pr", True):
                 existing = github.pr_for_branch(self.repo_full, self.branch)
                 if existing:
@@ -1383,8 +1391,11 @@ class Pipeline(multirepo.MultiRepo):
                     pr = github.create_pr(self.r, self.wt, self.repo_full, self.branch, title, body_file, base, cfg.get("github_pr_draft", True))
                     self.r.timeline("github", "Draft pull request opened", pr.get("url") or "")
                     self.m.notify("success", "Pull request opened", pr.get("url") or title, self.tid, kind="pr_opened")
+                self.m.set_meta(self.tid, pr_url=pr.get("url"), pr_number=pr.get("number"))
+                self.comment_design(pr)
 
         self.deliver_related(pr, title, prefix)
+        self.write_pr_previews()
         report = self.final_report_md(pr, committed)
         self.artifact("report", "REPORT.md", report)
         self.state["phase"] = "done"
@@ -1393,6 +1404,15 @@ class Pipeline(multirepo.MultiRepo):
                                    "summary": self.state.get("summary") or self.state.get("pr_summary") or "", "diffstat": gitops.diff_stat(self.wt, self.base), "changed_count": len(gitops.changed_files(self.wt, self.base))})
         self.r.msg(role="orchestrator", agent=None, kind="complete", content=self.state.get("summary") or "", pr_url=pr.get("url"),
                    branch=self.branch, turn=self.state.get("turn"))
+
+    def write_pr_previews(self):
+        """The pull request bodies as Relay sends them, per repository, written also when nothing is pushed."""
+        t = self.task_meta()
+        body = protocol.pr_body(self.cfg, t, self.state.get("pr_summary") or self.state.get("summary"), self.details_md(), t.get("github_issue_number"))
+        write_text(self.run_dir / "PR_BODY.md", body)
+        for r in self.related:
+            write_text(Path(self.run_dir) / "repos" / r["name"] / "PR_BODY.md", self._related_pr_body(r, t))
+        self.write_changeset_preview()
 
     def details_md(self):
         t = self.task_meta()
@@ -1417,6 +1437,9 @@ class Pipeline(multirepo.MultiRepo):
         follow = judge.followups_md(t.get("follow_ups") or [])
         if follow:
             lines.append("\n**Follow-ups** (non-blocking, not done in this change)\n" + follow)
+        changes = self.changeset_text()
+        if changes:
+            lines.append("\n" + changes)
         lines.append("\n_Generated by Relay._")
         return "\n".join(lines)
 
@@ -1493,6 +1516,8 @@ class Pipeline(multirepo.MultiRepo):
             self.connect_start()
             if self.state.get("phase") == "kickoff":
                 self.kickoff()
+            if self.state.get("phase") == "design":
+                self.design_phase()
             if self.state.get("phase") == "dialogue":
                 self.dialogue()
             if self.state.get("phase") == "review":

@@ -58,6 +58,7 @@ export const api = {
   commits: (id) => get(`/api/tasks/${encodeURIComponent(id)}/commits`),
   commitDiff: (id, sha, path) => get(`/api/tasks/${encodeURIComponent(id)}/commits/${encodeURIComponent(sha)}/diff${path ? `?path=${encodeURIComponent(path)}` : ""}`),
   work: (id) => get(`/api/tasks/${encodeURIComponent(id)}/work`),
+  changeset: (id) => get(`/api/tasks/${encodeURIComponent(id)}/changeset`),
   pr: (id, force) => get(`/api/tasks/${encodeURIComponent(id)}/pr${force ? "?force=1" : ""}`),
   branchName: (p) => get(`/api/branch-name?${new URLSearchParams(p)}`),
   files: (id) => get(`/api/tasks/${encodeURIComponent(id)}/files`),
