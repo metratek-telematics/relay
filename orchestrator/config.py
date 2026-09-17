@@ -5,6 +5,7 @@ import copy
 import threading
 
 from .autopilot import DEFAULTS as _AUTOPILOT_DEFAULTS
+from .learning_defaults import DEFAULTS as _LEARNING_DEFAULTS
 from .util import CONFIG_PATH, read_json, write_json
 
 BUILD = "14.1.0"
@@ -303,6 +304,9 @@ DEFAULTS = {
     "lessons_max_in_prompt": 15,
     "scorecard_refresh_minutes": 30,   # how often recent pull requests are re-checked (merged, closed, human commits)
     "scorecard_refresh_days": 14,
+    # Learning engine: outcome dataset, team recommendation, pre-flight risk, autopsies and proposals, lesson effects,
+    # playbooks. Keys and meaning: orchestrator/learning_defaults.py.
+    "learning": copy.deepcopy(_LEARNING_DEFAULTS),
     # ui
     "ui_theme": "system",
     "ui_density": "comfortable",

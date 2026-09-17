@@ -12,7 +12,7 @@ Outcome
     stopped        stopped by the user
 
 Success (the dashboard's success rate) means: outcome delivered_pr or done_no_pr,
-and the pull request was not closed without merging.
+the pull request was not closed without merging, and it was not reverted after merging.
 
 Score, 0 to 100
     score = clamp(base + post-delivery + process adjustments, 0, 100)
@@ -20,6 +20,7 @@ Score, 0 to 100
     base                delivered_pr 70 · done_no_pr 65 · failed 15 · stopped 10
     post-delivery       PR merged +20 · PR closed unmerged -40 · PR still open 0
     (PR tasks only)     humans pushed commits to the branch after delivery -10
+                        merged, then reverted on the base branch within 14 days -40 (and not a success)
     verification        first verification run passed +5 · last run failed -10
     independent review  passed in round 1 +5 · every further round -4 (max -12)
     revisions           each supervisor revision request -3 (max -12)
@@ -50,7 +51,7 @@ from pathlib import Path
 from . import config as C
 from .util import STATE_DIR, now, read_json, truncate, write_json
 
-VERSION = 1
+VERSION = 2
 FINISHED = {"done", "failed", "stopped"}
 SCORECARDS_FILE = STATE_DIR / "scorecards.json"
 
@@ -222,7 +223,7 @@ def compute(task: dict, messages: list[dict], pr: dict | None = None) -> dict:
         card["pr"] = {"url": task.get("pr_url"), "number": task.get("pr_number"), "state": "open", "merged_at": None,
                       "closed_at": None, "human_commits": None, "checked_at": None, "error": None, **(pr or {})}
     card["score"], card["score_parts"] = score(card)
-    card["success"] = outcome in ("delivered_pr", "done_no_pr") and (card["pr"] or {}).get("state") != "closed"
+    card["success"] = outcome in ("delivered_pr", "done_no_pr") and (card["pr"] or {}).get("state") != "closed" and not (card["pr"] or {}).get("reverted")
     return card
 
 
@@ -244,6 +245,8 @@ def score(card: dict) -> tuple[int, list[dict]]:
             add("Pull request closed without merging", -40)
         if pr.get("human_commits"):
             add(f"{pr['human_commits']} human commit(s) after delivery", -10)
+        if pr.get("reverted"):
+            add("Reverted on the base branch after merging", -40)
     v = card["verification"]
     if v["first_ok"]:
         add("Verification passed first time", 5)
@@ -264,7 +267,7 @@ def score(card: dict) -> tuple[int, list[dict]]:
 
 
 # ----------------------------------------------------------------------------- post-delivery signal
-PR_FIELDS = "state,mergedAt,closedAt,url,commits"
+PR_FIELDS = "state,mergedAt,closedAt,url,commits,mergeCommit,title,baseRefName"
 
 
 def human_commits(commits: list[dict], delivered_at: str, prefix: str) -> int:
@@ -303,9 +306,57 @@ def fetch_pr(card: dict, cfg: dict, gh_json) -> dict:
     state = (data.get("state") or "").upper()
     pr.update(state="merged" if state == "MERGED" else "closed" if state == "CLOSED" else "open",
               merged_at=data.get("mergedAt"), closed_at=data.get("closedAt"), url=data.get("url") or url,
+              merge_sha=(data.get("mergeCommit") or {}).get("oid") or pr.get("merge_sha"), title=data.get("title") or pr.get("title"),
+              base=data.get("baseRefName") or pr.get("base"),
               human_commits=human_commits(data.get("commits") or [], card.get("finished_at"), cfg.get("commit_message_prefix") or "agent:"),
               checked_at=now(), error=None)
     return pr
+
+
+# ----------------------------------------------------------------------------- reverts
+def find_revert(commits: list[dict], merge_sha: str | None, title: str | None, number) -> dict | None:
+    """A commit on the base branch that reverts the pull request. Pure.
+
+    `commits` are {"sha", "message"} (newest or oldest first). It matches git's own revert message
+    ("This reverts commit <sha>" naming the merge commit or its short form), GitHub's revert button
+    ('Revert "<title>"' / 'Revert "... (#<number>)"'), or a subject naming the pull request number.
+    """
+    sha = (merge_sha or "").lower()
+    title = (title or "").strip()
+    for c in commits or []:
+        msg = c.get("message") or ""
+        head = msg.splitlines()[0] if msg else ""
+        if not head.lower().startswith("revert"):
+            continue
+        m = re.search(r"This reverts commit ([0-9a-f]{7,40})", msg, re.I)
+        if sha and m and (sha.startswith(m.group(1).lower()) or m.group(1).lower().startswith(sha[:7])):
+            return {"sha": c.get("sha"), "subject": head}
+        if title and f'"{title}' in head:
+            return {"sha": c.get("sha"), "subject": head}
+        if number and re.search(rf"(?:#|pull/){int(number)}\b", msg):
+            return {"sha": c.get("sha"), "subject": head}
+    return None
+
+
+def fetch_revert(card: dict, gh_json, window_days: int = 14) -> dict | None:
+    """Look at the base branch's commits since the merge for a revert of this pull request. None when unknown."""
+    pr = card.get("pr") or {}
+    if pr.get("state") != "merged" or not pr.get("merged_at"):
+        return None
+    m = re.search(r"github\.com/([^/]+/[^/]+)/pull/(\d+)", pr.get("url") or "")
+    repo = m.group(1) if m else card.get("github_repo")
+    base = pr.get("base") or ""
+    if not repo:
+        return None
+    merged = pr["merged_at"].replace("Z", "+00:00")
+    try:
+        until = (datetime.fromisoformat(merged) + timedelta(days=window_days)).isoformat()
+    except ValueError:
+        return None
+    path = f"repos/{repo}/commits?since={merged}&until={until}&per_page=100" + (f"&sha={base}" if base else "")
+    rows = gh_json(["api", path], timeout=45) or []
+    commits = [{"sha": r.get("sha"), "message": (r.get("commit") or {}).get("message") or ""} for r in rows if isinstance(r, dict)]
+    return find_revert(commits, pr.get("merge_sha"), pr.get("title"), pr.get("number")) or {}
 
 
 # ----------------------------------------------------------------------------- store

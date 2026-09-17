@@ -17,6 +17,7 @@ import hashlib
 import re
 import threading
 
+from . import lesson_effect
 from .util import DATA_DIR, new_id, now, read_json, safe_slug, truncate, write_json
 
 LESSONS_DIR = DATA_DIR / "lessons"
@@ -107,20 +108,49 @@ def _known(scope: str, repo: str) -> set:
     return {_norm(x.get(k)) for x in rows for k in ("text", "original_text") if x.get(k)}
 
 
+def _clean_category(value, text) -> str:
+    return value if value in lesson_effect.CATEGORIES else lesson_effect.categorize(text)
+
+
+def _task_components(task: dict) -> list[str]:
+    files = list((task.get("plan") or {}).get("known_files") or [])
+    out = []
+    for f in files:
+        f = str(f).strip().lstrip("./")
+        seg = "/".join(f.split("/")[:2]) if "/" in f else f
+        if seg and seg not in out:
+            out.append(seg)
+    return out[:10]
+
+
 def propose(items: list[dict], task: dict, repo: str, repo_label: str = "") -> list[dict]:
-    """Queue lessons from a retrospective. Duplicates of queued, rejected or approved lessons are dropped."""
+    """Queue lessons from a retrospective. Duplicates of queued, rejected or approved lessons are dropped.
+
+    A lesson that another task's retrospective already queued in (nearly) the same words is not queued
+    twice: the queued one records this task as support instead (orchestrator/lesson_effect.py).
+    """
     added = []
+    supported = False
     with _lock:
         q = _read_queue()
         for it in items or []:
             text = _clean_text(it.get("text"))
             scope = "global" if it.get("scope") == "global" or not repo else "repo"
-            if len(_norm(text)) < 12 or _norm(text) in _known(scope, repo) | {_norm(x["text"]) for x in added}:
+            same = [x for x in lesson_effect.support(q, text, task.get("id")) if (x.get("repo") or x.get("proposed_repo") or "") in (repo, "")]
+            for x in same:
+                sup = x.setdefault("support", [])
+                if task.get("id") not in [s.get("task_id") for s in sup]:
+                    sup.append({"task_id": task.get("id"), "task_name": task.get("name"), "text": text, "time": now()})
+                    supported = True
+            if same or len(_norm(text)) < 12 or _norm(text) in _known(scope, repo) | {_norm(x["text"]) for x in added}:
                 continue
             row = {"id": new_id("l_"), "status": "proposed", "scope": scope, "repo": repo if scope == "repo" else "",
                    "proposed_repo": repo, "repo_label": repo_label, "text": text, "evidence": truncate(str(it.get("evidence") or ""), 500),
+                   "category": _clean_category(it.get("category"), text), "components": _task_components(task),
                    "task_id": task.get("id"), "task_name": task.get("name"), "source": "retro", "created_at": now()}
             added.append(row)
+        if supported and not added:
+            write_json(QUEUE_FILE, q)
         if added:
             q += added
             rejected = [x for x in q if x.get("status") == "rejected"]
@@ -164,7 +194,12 @@ def _place(row: dict, scope: str, repo: str):
     _save_approved(scope, repo, rows)
 
 
-def approve(lid: str, text: str | None = None, scope: str | None = None, repo: str | None = None) -> dict:
+def support_count(row: dict) -> int:
+    """Distinct tasks behind a proposed lesson: the one that proposed it plus every supporting task."""
+    return len({row.get("task_id")} | {s.get("task_id") for s in row.get("support") or []} - {None})
+
+
+def approve(lid: str, text: str | None = None, scope: str | None = None, repo: str | None = None, auto: bool = False) -> dict:
     with _lock:
         q = _read_queue()
         row = next((x for x in q if x.get("id") == lid), None)
@@ -175,7 +210,9 @@ def approve(lid: str, text: str | None = None, scope: str | None = None, repo: s
             raise ValueError("The lesson is empty.")
         scope = scope or row.get("scope") or "repo"
         repo = (repo if repo is not None else (row.get("repo") or row.get("proposed_repo") or "")) if scope == "repo" else ""
-        out = {**row, "text": text, "approved_at": now(), "edited": text != row["text"]}
+        out = {**row, "text": text, "approved_at": now(), "edited": text != row["text"], "category": _clean_category(row.get("category"), text)}
+        if auto:
+            out["auto_approved"] = True
         if out["edited"]:
             out["original_text"] = row["text"]
         _place(out, scope, repo)
@@ -202,6 +239,8 @@ def update(lid: str, patch: dict) -> dict:
         if row:
             if "text" in patch:
                 row["text"] = _clean_text(patch["text"])
+            if patch.get("category") in lesson_effect.CATEGORIES:
+                row["category"] = patch["category"]
             if patch.get("scope") in ("repo", "global"):
                 row["scope"] = patch["scope"]
                 row["repo"] = (row.get("proposed_repo") or "") if patch["scope"] == "repo" else ""
@@ -218,6 +257,12 @@ def update(lid: str, patch: dict) -> dict:
             cur["edited"] = True
         if "enabled" in patch:
             cur["enabled"] = bool(patch["enabled"])
+            if patch["enabled"]:
+                cur.pop("retired_at", None)
+        if patch.get("retire"):
+            cur.update(enabled=False, retired_at=now(), retired_reason=truncate(str(patch.get("reason") or ""), 300))
+        if patch.get("category") in lesson_effect.CATEGORIES:
+            cur["category"] = patch["category"]
         cur["updated_at"] = now()
         new_scope = patch.get("scope") if patch.get("scope") in ("repo", "global") else scope
         new_repo = (patch.get("repo") or repo or cur.get("proposed_repo") or "") if new_scope == "repo" else ""
@@ -247,24 +292,31 @@ def delete(lid: str):
         _save_approved(scope, repo, rows)
 
 
-def add(text: str, scope: str = "global", repo: str = "") -> dict:
-    """A lesson written by a person goes straight to the approved list."""
+def add(text: str, scope: str = "global", repo: str = "", category: str = "", source: str = "manual", evidence: str = "") -> dict:
+    """A lesson written by a person (or applied from an improvement proposal) goes straight to the approved list."""
     text = _clean_text(text)
     if len(_norm(text)) < 3:
         raise ValueError("The lesson is empty.")
     scope = scope if scope in ("repo", "global") else "global"
     with _lock:
-        row = {"id": new_id("l_"), "text": text, "evidence": "", "source": "manual", "created_at": now(), "approved_at": now(),
-               "proposed_repo": repo if scope == "repo" else ""}
+        row = {"id": new_id("l_"), "text": text, "evidence": truncate(str(evidence or ""), 500), "source": source, "created_at": now(), "approved_at": now(),
+               "proposed_repo": repo if scope == "repo" else "", "category": _clean_category(category, text)}
         _place(row, scope, repo if scope == "repo" else "")
         return {**row, "scope": scope, "repo": repo if scope == "repo" else "", "status": "approved"}
 
 
-def for_prompt(repo: str, limit: int = 15) -> list[dict]:
-    """What a new task on this repository is told: its own lessons first (newest first), then global ones."""
+def for_prompt(repo: str, limit: int = 15, ctx: dict | None = None, effects: dict | None = None) -> list[dict]:
+    """What a new task on this repository is told.
+
+    Without a task context: its own lessons first (newest first), then global ones. With one (the
+    `lessons_selection: relevant` default): only lessons relevant to the task, best first
+    (orchestrator/lesson_effect.py `select`).
+    """
     with _lock:
-        own = [dict(x, scope="repo") for x in _read_repo(repo)] if repo else []
-        glob = [dict(x, scope="global") for x in _read_global()]
+        own = [dict(x, scope="repo", repo=repo) for x in _read_repo(repo)] if repo else []
+        glob = [dict(x, scope="global", repo="") for x in _read_global()]
+    if ctx is not None:
+        return lesson_effect.select(own + glob, {**ctx, "repo": repo}, limit, effects)
     pick = lambda rows: sorted((x for x in rows if x.get("enabled", True)), key=lambda x: x.get("approved_at") or "", reverse=True)
     return (pick(own) + pick(glob))[:max(0, int(limit))]
 
@@ -288,11 +340,21 @@ def kickoff_block(manager, task: dict, cfg: dict) -> str:
     if not cfg.get("lessons_inject", True):
         return ""
     from .scorecard import repo_key
+    learn = cfg.get("learning") or {}
+    relevant = learn.get("lessons_selection", "relevant") == "relevant"
     try:
-        rows = for_prompt(repo_key(task), int(cfg.get("lessons_max_in_prompt") or 15))
+        ctx, effects = None, None
+        if relevant:
+            ctx = {"template": task.get("template") or "feature", "requirements": f"{task.get('name') or ''}\n{task.get('requirements') or ''}",
+                   "components": [r.get("component") for r in task.get("repos") or [] if r.get("component")]}
+            engine = getattr(getattr(manager, "learning", None), "engine", None)
+            effects = engine.lesson_effects() if engine else None
+        rows = for_prompt(repo_key(task), int(cfg.get("lessons_max_in_prompt") or 15), ctx, effects)
     except Exception:  # an unreadable lessons file must not stop a task
         return ""
-    manager.set_meta(task["id"], lessons_used=[x["id"] for x in rows])
+    manager.set_meta(task["id"], lessons_used=[x["id"] for x in rows],
+                     lessons_selection=[{"id": x["id"], "relevance": x.get("relevance"), "why": x.get("relevance_why")} for x in rows] if relevant else None)
     if rows:
-        manager.timeline(task["id"], "system", "Lessons from earlier tasks", f"{len(rows)} approved lesson(s) added to the kickoff prompts")
+        manager.timeline(task["id"], "system", "Lessons from earlier tasks",
+                         f"{len(rows)} approved lesson(s) added to the kickoff prompts" + (" · chosen by relevance to this task" if relevant else ""))
     return prompt_block(rows)

@@ -761,6 +761,12 @@ class Autopilot:
             if room <= 0:
                 self.set_waiting(t, None)
                 continue
+            try:
+                # Learning: pick the team from past outcomes when that is switched on (learning_engine.auto_pick).
+                if m.learning.engine.auto_pick(t["id"]):
+                    t = m.store.get(t["id"]) or t
+            except Exception:
+                log.exception("auto-picking the team of %s failed", t["id"])
             cap = self.capacity(t)
             if not cap["ok"]:
                 until = cap.get("wait_until")
