@@ -199,3 +199,29 @@ def _in_tree(wt: Path, base: str, term: str, rx) -> bool:
     """
     names = (quiet(["git", "ls-tree", "-r", "--name-only", base], cwd=wt, timeout=60).stdout or "")
     return bool(rx.search(names))
+
+
+def report_text(result: dict, limit: int = 60) -> str:
+    lines = [f"Design gate: {'PASS' if result['ok'] else 'FAIL'} · {len(result['errors'])} error(s), {len(result['warnings'])} warning(s)"]
+    for kind, rows in (("error", result["errors"]), ("warning", result["warnings"])):
+        for r in rows[:limit]:
+            lines.append(f"{kind}: {r['file']}:{r['line']} [{r['rule']}] {r['message']}" + (f"\n    {r['text']}" if r["text"] and r["rule"] != "forbidden-term" else ""))
+        if len(rows) > limit:
+            lines.append(f"…and {len(rows) - limit} more {kind}s")
+    return "\n".join(lines)
+
+
+if __name__ == "__main__":
+    import argparse
+    ap = argparse.ArgumentParser(description="Relay design gate")
+    ap.add_argument("--base", required=True, help="commit the task started from")
+    ap.add_argument("--path", default=".", help="worktree (default: current directory)")
+    ap.add_argument("--forbid", action="append", default=[], help="forbidden term (repeatable)")
+    ap.add_argument("--forbid-file", help="file with one forbidden term per line")
+    args = ap.parse_args()
+    terms = list(args.forbid)
+    if args.forbid_file and Path(args.forbid_file).is_file():
+        terms += Path(args.forbid_file).read_text(encoding="utf-8").splitlines()
+    res = check(Path(args.path).resolve(), args.base, terms)
+    print(report_text(res))
+    sys.exit(0 if res["ok"] else 1)

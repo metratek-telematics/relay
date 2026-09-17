@@ -1,12 +1,13 @@
 // Relay 14 · application bootstrap, routing, live events, sidebar.
 import { api, connectEvents, onConnection, conn } from "./api.js";
 import { $, $$, el, esc, icon, toast, palette, timeAgo, fmtSec, basename, throttle } from "./ui.js";
-import { S, bus, navigate, statusOf, LIVE, msgStore, agentLabel, agentInitial, roleAgent, ROLE_LABEL } from "./state.js";
+import { S, bus, navigate, statusOf, LIVE, byQueue, queuedInOrder, msgStore, agentLabel, agentInitial, roleAgent, ROLE_LABEL } from "./state.js";
 import { mountDashboard } from "./views/dashboard.js";
 import { mountTask } from "./views/task.js";
 import { mountSettings } from "./views/settings.js";
 import { mountAgents } from "./views/agents.js";
 import { mountGithub } from "./views/github.js";
+import { mountIssues } from "./views/issues.js";
 import { mountRepos } from "./views/repos.js";
 import { openNewTask } from "./views/newtask.js";
 import { TABS } from "./views/inspector.js";
@@ -129,7 +130,7 @@ function parseRoute() {
   if (parts[0] === "task" && parts[1]) return { view: "task", id: decodeURIComponent(parts[1]), tab: parts[2] || null, section: null };
   if (parts[0] === "settings") return { view: "settings", id: null, tab: null, section: parts[1] || "workflow" };
   if (parts[0] === "repos") return { view: "repos", id: null, tab: null, section: parts[1] || "list" };
-  if (["agents", "github", "tasks", "dashboard"].includes(parts[0])) return { view: parts[0] === "dashboard" ? "dashboard" : parts[0], id: null, tab: null, section: null };
+  if (["agents", "github", "issues", "tasks", "dashboard"].includes(parts[0])) return { view: parts[0] === "dashboard" ? "dashboard" : parts[0], id: null, tab: null, section: null };
   return { view: "dashboard", id: null, tab: null, section: null };
 }
 function route() {
@@ -146,6 +147,7 @@ function route() {
   else if (r.view === "settings") view = mountSettings(main, r.section);
   else if (r.view === "agents") view = mountAgents(main);
   else if (r.view === "github") view = mountGithub(main);
+  else if (r.view === "issues") view = mountIssues(main);
   else if (r.view === "repos") view = mountRepos(main, r.section);
   else if (r.view === "tasks") view = mountTasksHome();
   else view = mountDashboard(main);
@@ -182,11 +184,19 @@ function matchesFilter(t) {
   if (f === "failed") return ["failed", "stopped", "interrupted"].includes(t.status);
   return true;
 }
+function queuedFirst(a, b) {
+  const qa = a.status === "queued", qb = b.status === "queued";
+  if (qa !== qb) return qa ? -1 : 1;
+  return qa ? byQueue(a, b) : 0;
+}
 function renderSidebar() {
   const q = S.ui.search.trim().toLowerCase();
   const all = [...S.tasks.values()];
   const rows = all.filter(matchesFilter).filter((t) => !q || `${t.name} ${t.repo} ${(t.tags || []).join(" ")} ${t.github_repo || ""}`.toLowerCase().includes(q))
-    .sort((a, b) => groupOf(a) - groupOf(b) || (b.updated_at || "").localeCompare(a.updated_at || ""));
+    .sort((a, b) => groupOf(a) - groupOf(b) || (groupOf(a) === 2 ? queuedFirst(a, b) : 0) || (b.updated_at || "").localeCompare(a.updated_at || ""));
+  // Queued tasks are listed in the order they will run, so reordering them here is what the scheduler follows.
+  const order = queuedInOrder(all);
+  const rank = new Map(order.map((t, i) => [t.id, i]));
   $("#taskCount").textContent = all.filter((t) => !t.archived).length;
   const list = $("#taskList");
   if (!rows.length) { list.innerHTML = `<div class="empty small">${q ? "No tasks match." : S.ui.filter === "all" ? "No tasks yet." : "Nothing here."}</div>`; return; }
@@ -202,15 +212,19 @@ function renderSidebar() {
     const badge = st.attention ? `<span class="badge amber">${t.pending ? (t.pending.kind === "approval" ? "approve" : "question") : st.label}</span>` : (t.pr_number ? `<span class="badge green">PR #${esc(t.pr_number)}</span>` : (t.status === "failed" ? '<span class="badge red">failed</span>' : ""));
     const canStart = ["queued", "draft", "failed", "stopped", "interrupted"].includes(t.status);
     const canStop = live || t.status === "needs_input" || t.status === "paused";
+    const pos = rank.get(t.id);
     const quick = canStop
       ? `<button class="task-quick stop" data-stop="${esc(t.id)}" title="Stop this task">${icon("stop")}</button>`
-      : (canStart ? `<button class="task-quick" data-start="${esc(t.id)}" title="Start now (runs alongside other tasks)">${icon("play")}</button>` : "");
+      : pos !== undefined
+        ? `<span class="task-quick-group"><button class="task-quick" data-move="${esc(t.id)}" data-dir="up" title="Run earlier" aria-label="Move up in queue" ${pos === 0 ? "disabled" : ""}>${icon("chevronUp")}</button><button class="task-quick" data-move="${esc(t.id)}" data-dir="down" title="Run later" aria-label="Move down in queue" ${pos === order.length - 1 ? "disabled" : ""}>${icon("chevronDown")}</button><button class="task-quick" data-unqueue="${esc(t.id)}" title="Remove from the queue (keeps it as a draft)" aria-label="Remove from queue">${icon("unqueue")}</button><button class="task-quick" data-start="${esc(t.id)}" title="Start now (runs alongside other tasks)" aria-label="Start now">${icon("play")}</button></span>`
+        : (canStart ? `<button class="task-quick" data-start="${esc(t.id)}" title="Start now (runs alongside other tasks)">${icon("play")}</button>` : "");
+    const queueTag = pos !== undefined ? `<span class="q-pos" title="${t.chain_id ? "Runs after the previous task of its chain ends" : "Position in the queue"}">#${pos + 1}${t.chain_id ? " · chain" : ""}</span>` : "";
     return head + `<div class="task-row ${S.route.id === t.id ? "active" : ""}">
       <button class="task-item" data-task="${esc(t.id)}" role="listitem" title="${esc(t.name)}">
       <span class="st ${live ? "live" : ""}" style="background:${color};color:${color}"></span>
       <span class="name">${esc(t.name)}</span>
       ${badge || "<span></span>"}
-      <span class="sub"><span class="wf-mini" title="${esc(roles.map(agentLabel).join(" → "))}">${roles.map((a) => `<i class="av ${esc(a)}">${esc(agentInitial(a)[0])}</i>`).join("")}</span><span class="truncate">${esc(t.github_repo || basename(t.repo))}</span><span style="margin-left:auto">${live ? esc(st.label.toLowerCase()) : timeAgo(t.updated_at)}</span></span>
+      <span class="sub"><span class="wf-mini" title="${esc(roles.map(agentLabel).join(" → "))}">${roles.map((a) => `<i class="av ${esc(a)}">${esc(agentInitial(a)[0])}</i>`).join("")}</span>${queueTag}<span class="truncate">${esc(t.github_repo || basename(t.repo))}</span><span style="margin-left:auto">${live ? esc(st.label.toLowerCase()) : timeAgo(t.updated_at)}</span></span>
     </button>${quick}</div>`;
   }).join("");
   $$("[data-task]", list).forEach((b) => (b.onclick = () => navigate(`#/task/${b.dataset.task}`)));
@@ -219,6 +233,18 @@ function renderSidebar() {
     b.disabled = true;
     try { await api.action(b.dataset.start, "start"); toast("success", "Started"); }
     catch (err) { toast("error", "Could not start", err.message); b.disabled = false; }
+  }));
+  $$("[data-move]", list).forEach((b) => (b.onclick = async (e) => {
+    e.stopPropagation();
+    b.disabled = true;
+    try { const r = await api.moveInQueue(b.dataset.move, b.dataset.dir); if (r.task) upsertTask(r.task); renderSidebar(); }
+    catch (err) { toast("error", "Could not reorder", err.message); b.disabled = false; }
+  }));
+  $$("[data-unqueue]", list).forEach((b) => (b.onclick = async (e) => {
+    e.stopPropagation();
+    b.disabled = true;
+    try { await api.action(b.dataset.unqueue, "unqueue"); toast("info", "Removed from the queue", "It stays as a draft; start or queue it again any time."); }
+    catch (err) { toast("error", "Could not remove from queue", err.message); b.disabled = false; }
   }));
   $$("[data-stop]", list).forEach((b) => (b.onclick = async (e) => {
     e.stopPropagation();
@@ -344,6 +370,7 @@ function paletteItems() {
     { group: "Actions", label: "Show or hide the task list", icon: "tasks", hint: keysFor("sidebar"), onClick: () => $("#sidebarToggle").click() },
     { group: "Navigate", label: "Dashboard", icon: "home", hint: keysFor("goDashboard"), onClick: () => navigate("#/") },
     { group: "Navigate", label: "Agents", icon: "bot", hint: keysFor("goAgents"), onClick: () => navigate("#/agents") },
+    { group: "Navigate", label: "Issues", icon: "issue", hint: keysFor("goIssues"), keywords: "tickets github board", onClick: () => navigate("#/issues") },
     { group: "Navigate", label: "GitHub inbox", icon: "github", hint: keysFor("goGithub"), onClick: () => navigate("#/github") },
     { group: "Navigate", label: "Repositories", icon: "folder", hint: keysFor("goRepos"), keywords: "branches clone git", onClick: () => navigate("#/repos") },
     { group: "Navigate", label: "Worktrees", icon: "layers", keywords: "clean up repositories", onClick: () => navigate("#/repos/worktrees") },
@@ -385,7 +412,7 @@ function stepTask(delta) {
 
 // "g" starts a two-key sequence; a small pill shows it is waiting for the second key.
 let chordUntil = 0;
-const chordPill = el('<div class="chord-pill" hidden><kbd>G</kbd> then <kbd>D</kbd> dashboard · <kbd>T</kbd> tasks · <kbd>A</kbd> agents · <kbd>H</kbd> GitHub · <kbd>S</kbd> settings · <kbd>R</kbd> repositories</div>');
+const chordPill = el('<div class="chord-pill" hidden><kbd>G</kbd> then <kbd>D</kbd> dashboard · <kbd>T</kbd> tasks · <kbd>A</kbd> agents · <kbd>H</kbd> GitHub · <kbd>I</kbd> issues · <kbd>S</kbd> settings · <kbd>R</kbd> repositories</div>');
 document.body.appendChild(chordPill);
 const endChord = () => { chordUntil = 0; chordPill.hidden = true; };
 
