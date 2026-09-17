@@ -35,7 +35,9 @@ export const AGENT_META_FALLBACK = {
   gemini: { label: "Gemini", vendor: "Google", color: "#2f9d87" },
 };
 export function agentLabel(a) { return (S.agentMeta[a] || AGENT_META_FALLBACK[a] || {}).label || ({ user: "You", orchestrator: "Orchestrator", system: "Orchestrator", verify: "Verification", git: "Git", github: "GitHub" }[a]) || a || "—"; }
-export function agentInitial(a) { return ({ codex: "Cx", claude: "Cl", gemini: "Ge", user: "You", orchestrator: "O", system: "O", verify: "V", git: "G", github: "GH" }[a]) || (a || "?").slice(0, 1).toUpperCase(); }
+export function agentInitial(a) { return ({ codex: "Cx", claude: "Cl", gemini: "Ge", user: "You", orchestrator: "O", system: "O", verify: "V", git: "G", github: "GH" }[a]) || (S.agentMeta[a] || {}).initials || (a || "?").slice(0, 2).replace(/^./, (c) => c.toUpperCase()); }
+// Every agent Relay knows, built-in first; pack agents follow in catalog order.
+export function agentIds() { const ids = Object.keys(S.agentMeta || {}); return ids.length ? ids : Object.keys(AGENT_META_FALLBACK); }
 export const ROLE_LABEL = { supervisor: "Supervisor", worker: "Worker", reviewer: "Reviewer", user: "You", orchestrator: "Orchestrator", system: "Orchestrator", verify: "Verification", git: "Git", github: "GitHub" };
 
 export const STATUS = {

@@ -13,7 +13,16 @@ import time
 from pathlib import Path
 
 from .agents import TurnContext, adapter
+from .environment import venv_bin
 from .util import IS_WINDOWS, kill_tree, new_id, now, popen_group_kwargs, truncate
+
+
+def _with_venv(env: dict, cwd) -> None:
+    """Python repos: the .venv Relay prepared is the python, pip and pytest everyone uses in that worktree."""
+    vb = venv_bin(cwd) if cwd else ""
+    if vb and env is not None:
+        env["VIRTUAL_ENV"] = str(Path(vb).parent)
+        env["PATH"] = vb + os.pathsep + env.get("PATH", "")
 
 NOISE = (
     "failed to load skill", "hook: sessionstart", "hook: stop", "warning: unable to access",
@@ -211,7 +220,16 @@ class Runner:
         self.wait_if_paused()
         self.check_stop()
         ad = adapter(agent_name)
-        args, env, stdin_text, session = ad.build(prompt, Path(cwd), cfg, model, session, Path(run_dir), role, effort=effort or "")
+        sent_prompt = prompt
+        transcript = list((session or {}).get("transcript") or [])
+        if not ad.supports_resume and transcript:
+            # This CLI starts every turn with an empty memory, so replay the role's earlier turns.
+            sent_prompt = ("You are continuing a conversation, but this tool keeps no memory between turns. "
+                           "Here is everything said earlier in this session, oldest first:\n\n"
+                           + "\n\n".join(f"--- Relay said ---\n{t['prompt']}\n--- You replied ---\n{t['reply']}" for t in transcript)
+                           + "\n\n--- Relay now says ---\n" + prompt)
+        args, env, stdin_text, session = ad.build(sent_prompt, Path(cwd), cfg, model, session, Path(run_dir), role, effort=effort or "")
+        _with_venv(env, cwd)
         ctx = TurnContext()
         tool_msgs: dict = {}
         delta_msg = {"id": None, "buf": "", "last": 0.0}
@@ -286,9 +304,19 @@ class Runner:
         rc, elapsed = self._spawn(args, cwd, env, stdin_text, on_line, timeout, role, agent_name, label)
         flush_delta(final=delta_msg["buf"]) if delta_msg["id"] else None
         res = ad.finalize(ctx, rc, Path(run_dir), session)
+        if res.get("tools") and not tool_msgs:
+            # CLIs that only report their tool calls after the turn (Crush, Continue): show them anyway.
+            for t in res["tools"][:200]:
+                self.msg(role=role, agent=agent_name, kind="tool", tool=t.get("tool"), category=t.get("category"),
+                         summary=t.get("summary"), input="", status="error" if t.get("ok") is False else "ok", turn=turn)
         res["session"] = {**{k: v for k, v in session.items() if not k.startswith("_")},
                           "id": res.get("session_id") or session.get("id"),
                           "turns": int(session.get("turns", 0)) + 1, "agent": agent_name}
+        if not ad.supports_resume:
+            transcript.append({"prompt": truncate(prompt, 20000), "reply": truncate(res.get("text") or "", 12000)})
+            while len(transcript) > 1 and sum(len(t["prompt"]) + len(t["reply"]) for t in transcript) > 80000:
+                transcript.pop(0)  # keep the most recent turns within a sane prompt size
+            res["session"]["transcript"] = transcript
         res["elapsed"] = elapsed
         if log_lines:
             interesting = list(dict.fromkeys(l for l in log_lines if any(w in l.lower() for w in ("error", "fail", "denied", "cannot", "unable", "requires", "ignoring"))))
@@ -318,6 +346,7 @@ class Runner:
         env["CI"] = env.get("CI", "1")
         env["FORCE_COLOR"] = "0"
         env["NO_COLOR"] = "1"
+        _with_venv(env, cwd)
         try:
             rc, elapsed = self._spawn(args, cwd, env, None, on_line, timeout, role, None, cmd)
         except TurnTimeout as e:

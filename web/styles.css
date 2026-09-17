@@ -261,13 +261,16 @@ kbd { font-size: 10px; padding: 1px 5px; border-radius: 4px; background: var(--p
 
 /* avatars */
 .av { width: 26px; height: 26px; border-radius: 8px; display: inline-grid; place-items: center; font-size: 11px; font-weight: 800; color: #fff; flex: 0 0 auto; letter-spacing: -.02em; }
-.av.codex { background: var(--codex); }
-.av.claude { background: var(--claude); }
-.av.gemini { background: var(--gemini); }
+/* Agents show their own logo (web/agents/<id>.svg); the initials stay in the markup for screen readers and copy. */
+.av.has-logo, .av.codex, .av.claude, .av.gemini, .av.git, .av.github { color: transparent; background-position: center; background-size: cover; background-repeat: no-repeat; box-shadow: inset 0 0 0 1px rgba(128,128,128,.22); overflow: hidden; }
+.av.codex { background-image: url(agents/codex.svg); }
+.av.claude { background-image: url(agents/claude.svg); }
+.av.gemini { background-image: url(agents/gemini.svg); }
 .av.user { background: var(--text-2); }
 .av.orchestrator, .av.system { background: var(--panel-3); color: var(--text-2); }
 .av.verify { background: var(--amber); }
-.av.git, .av.github { background: var(--green); }
+.av.git { background-image: url(agents/git.svg); }
+.av.github { background-image: url(agents/github.svg); }
 .av.sm { width: 20px; height: 20px; font-size: 9px; border-radius: 6px; }
 .av.lg { width: 34px; height: 34px; font-size: 14px; border-radius: 10px; }
 
@@ -629,6 +632,11 @@ kbd { font-size: 10px; padding: 1px 5px; border-radius: 4px; background: var(--p
 .ah .who > span { color: var(--text-3); font-size: var(--fs-xs); display: block; overflow-wrap: anywhere; }
 .ah .who .err { color: var(--red); }
 .ah .who .hint { color: var(--amber); font-size: var(--fs-xs); }
+.ah-actions { flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.ah.ah-pack { grid-template-columns: auto minmax(0, 1fr); }
+.ah.ah-pack .ah-actions { grid-column: 2; justify-content: flex-start; }
+.ah.ah-off .av { filter: grayscale(.85); opacity: .7; }
+@media (max-width: 640px) { .ah { grid-template-columns: auto minmax(0, 1fr); } .ah-actions { grid-column: 1 / -1; justify-content: flex-start; } }
 .bars { display: grid; gap: 8px; }
 .bar-row { display: grid; grid-template-columns: 70px minmax(0, 1fr) 90px; gap: 10px; align-items: center; font-size: var(--fs-sm); }
 .bar-row .track { height: 8px; background: var(--panel-2); border-radius: 99px; overflow: hidden; }
@@ -666,9 +674,9 @@ kbd { font-size: 10px; padding: 1px 5px; border-radius: 4px; background: var(--p
 .role-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .role-box { border: 1px solid var(--border); border-radius: var(--r); padding: 12px; background: var(--bg); display: grid; gap: 8px; }
 .role-box .rt { font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-3); font-weight: 700; }
-.role-box .agent-pick { display: flex; gap: 4px; }
-.role-box .agent-pick button { flex: 1; border: 1px solid var(--border); background: var(--panel); border-radius: 6px; padding: 6px 4px; font-size: var(--fs-xs); font-weight: 700; display: grid; place-items: center; gap: 3px; color: var(--text-2); }
-.role-box .agent-pick button.active { border-color: var(--agent); color: var(--text); background: color-mix(in srgb, var(--agent) 12%, var(--panel)); }
+.role-box .agent-pick { display: flex; flex-wrap: wrap; gap: 4px; }
+.role-box .agent-pick button { flex: 1 1 64px; border: 1px solid var(--border); background: var(--panel); border-radius: 6px; padding: 6px 4px; font-size: var(--fs-xs); font-weight: 700; display: grid; place-items: center; gap: 3px; color: var(--text-2); }
+.role-box .agent-pick button.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; color: var(--text); background: color-mix(in srgb, var(--agent) 12%, var(--panel)); }
 .role-box .agent-pick button:disabled { opacity: .4; }
 .role-box input { width: 100%; border: 1px solid var(--border); background: var(--panel); border-radius: 6px; padding: 6px 8px; font-size: var(--fs-xs); }
 .env-table { display: grid; gap: 6px; }

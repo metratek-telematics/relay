@@ -1,6 +1,6 @@
 // Settings: workflow defaults, agents, verification, git/github, appearance, rules, about.
 import { $, $$, esc, icon, toast, confirm, debounce } from "../ui.js";
-import { S, agentLabel, agentInitial, bus } from "../state.js";
+import { S, agentLabel, agentInitial, agentIds, bus } from "../state.js";
 import { api } from "../api.js";
 import { workflowEditor } from "./newtask.js";
 import { NOTIFY_EVENTS, chime, permission, requestPermission, showDesktop } from "../notify.js";
@@ -103,13 +103,13 @@ export function mountSettings(main, section) {
           <div class="hint" style="margin-bottom:10px">Claude Code reports real cost per turn. Codex and Gemini report tokens only, so Relay estimates an API-equivalent cost from this table (shown with a <b>~</b>). With subscription plans nothing is billed per token; the estimate helps you compare agents and budget work.</div>
           <div class="field inline"><label>Show estimated cost for agents that report tokens only</label><span class="switch ${c.show_estimated_cost !== false ? "on" : ""}" data-sw-cfg="show_estimated_cost"></span></div>
           <div class="md-table"><table style="width:100%"><thead><tr><th>Agent</th><th>Input</th><th>Cached input</th><th>Output</th></tr></thead><tbody>
-            ${["codex", "claude", "gemini"].map((a) => { const p = (c.pricing || {})[a] || {}; return `<tr><td><span class="row"><span class="av sm ${a}">${esc(agentInitial(a))}</span>${esc(agentLabel(a))}</span></td>${["input", "cached", "output"].map((k) => `<td><input class="input" type="number" step="0.01" min="0" style="width:110px;padding:5px 8px" data-price="${a}.${k}" value="${esc(p[k] ?? 0)}"></td>`).join("")}</tr>`; }).join("")}
+            ${agentIds().map((a) => { const p = (c.pricing || {})[a] || {}; return `<tr><td><span class="row"><span class="av sm ${a}">${esc(agentInitial(a))}</span>${esc(agentLabel(a))}</span></td>${["input", "cached", "output"].map((k) => `<td><input class="input" type="number" step="0.01" min="0" style="width:110px;padding:5px 8px" data-price="${a}.${k}" value="${esc(p[k] ?? 0)}"></td>`).join("")}</tr>`; }).join("")}
           </tbody></table></div>
         </div></div>`;
       bindAuto();
       const saveEnv = debounce(() => {
         const out = {};
-        for (const a of ["codex", "claude", "gemini"]) {
+        for (const a of agentIds()) {
           out[a] = {};
           const ks = $$(`[data-env-k="${a}"]`, body), vs = $$(`[data-env-v="${a}"]`, body);
           ks.forEach((k, i) => { if (k.value.trim()) out[a][k.value.trim()] = vs[i].value; });

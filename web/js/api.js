@@ -34,6 +34,8 @@ export const api = {
   health: (force) => get(`/api/health${force ? "?force=1" : ""}`),
   agents: (force) => get(`/api/agents${force ? "?force=1" : ""}`),
   testAgent: (name, model) => post(`/api/agents/${name}/test`, { model }),
+  installAgent: (name, action) => post(`/api/agents/${name}/install`, { action }),
+  agentJobs: () => get("/api/agents/jobs"),
   settings: () => get("/api/settings"),
   saveSettings: (partial) => post("/api/settings", partial),
   presets: () => get("/api/presets"),

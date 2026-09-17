@@ -143,6 +143,23 @@ class Pipeline:
         nudges = 0
         failures = 0
         timeouts = 0
+        restarts = 0
+        original_prompt = prompt
+        max_failures = max(1, int(self.cfg.get("agent_failure_retries") or 6))
+
+        def fresh_session(reason):
+            # A crashed or wedged CLI session often keeps failing on resume (corrupt history, a stuck tool call).
+            # Start the role over on a new session with the original request; the worktree keeps all the work.
+            nonlocal sess, restarts
+            restarts += 1
+            sess = {"agent": agent, "turns": 0}
+            self.sessions[role] = sess
+            self.save()
+            self.r.timeline(role, "Starting a fresh session", f"{_label(agent)} ({role}): {truncate(reason, 160)}")
+            return (f"ORCHESTRATOR · your previous session for this role broke ({truncate(reason, 300)}), so this is a new session. "
+                    "Work already done is in the working tree: inspect it (git status, git diff) before acting, do not redo "
+                    "finished work, and end with the appropriate protocol envelope.\n\n" + original_prompt)
+
         while True:
             self.r.wait_if_paused()
             try:
@@ -159,9 +176,10 @@ class Pipeline:
                 if sess.get("id"):
                     sess["turns"] = int(sess.get("turns", 0)) + 1
                 self.r.msg(role=role, agent=agent, kind="error", content=str(e), turn=turn)
-                if timeouts > 1:
+                if timeouts > 3:
                     raise
-                prompt = protocol.timeout_note(int(self.cfg.get("agent_turn_timeout_minutes") or 0))
+                prompt = (protocol.timeout_note(int(self.cfg.get("agent_turn_timeout_minutes") or 0)) if timeouts == 1
+                          else fresh_session(str(e)))
                 continue
             sess = res["session"]
             self.sessions[role] = sess
@@ -169,11 +187,18 @@ class Pipeline:
             if not res.get("ok"):
                 failures += 1
                 self.r.msg(role=role, agent=agent, kind="error", content=truncate(res.get("error") or "Agent turn failed", 3000), turn=turn)
-                if failures > 2:
-                    raise RuntimeError(f"{_label(agent)} ({role}) failed repeatedly: {truncate(res.get('error') or '', 500)}")
-                self.r.timeline(role, "Agent turn failed · retrying", truncate(res.get("error") or "", 200))
-                time.sleep(8 * failures)
-                if sess.get("id"):
+                if failures > max_failures:
+                    raise RuntimeError(f"{_label(agent)} ({role}) failed {failures} times in a row, including on fresh sessions: {truncate(res.get('error') or '', 500)}")
+                self.r.timeline(role, f"Agent turn failed · retrying ({failures}/{max_failures})", truncate(res.get("error") or "", 200))
+                # Back off so rate limits and provider hiccups can clear: 10 s, 20 s, 40 s … capped at 3 minutes.
+                wait = min(180, 10 * 2 ** (failures - 1))
+                deadline = time.time() + wait
+                while time.time() < deadline:
+                    self.r.check_stop()
+                    time.sleep(1)
+                if failures % 2 == 0:
+                    prompt = fresh_session(res.get("error") or "the turn failed")
+                elif sess.get("id"):
                     prompt = ("ORCHESTRATOR · your previous turn ended with an error: "
                               + truncate(res.get("error") or "", 600)
                               + "\nContinue from the current working tree state and end with the appropriate protocol envelope.")
@@ -189,6 +214,10 @@ class Pipeline:
                 return res, env
             nudges += 1
             if nudges > int(self.cfg.get("envelope_retries") or 2):
+                if restarts < 2:
+                    nudges = 0
+                    prompt = fresh_session("it did not return a valid protocol envelope")
+                    continue
                 raise RuntimeError(f"{_label(agent)} ({role}) did not return a valid protocol envelope after {nudges} attempts.")
             self.r.timeline(role, "Missing protocol envelope", f"Asking {_label(agent)} to restate its reply ({nudges})")
             prompt = protocol.nudge(role)
@@ -288,6 +317,9 @@ class Pipeline:
         if info.get("command"):
             state = "installed" if info.get("ok") else ("already present" if info.get("skipped") else "FAILED, see blocked checks")
             lines.append(f"- Dependencies: Relay ran `{info['command']}` before you started ({state}). Do not install dependencies another way.")
+        if self.wt and environment.venv_bin(self.wt):
+            lines.append("- Python: Relay created `.venv` in the worktree with the requirements and pytest, and it is first on PATH, "
+                         "so `python`, `pip` and `python -m pytest` already use it. Do not create another environment.")
         dev = environment.dev_command(self.wt) if self.wt else ""
         if dev:
             lines.append(f"- Run the app with `{dev}` from the worktree (pick a free port; stop it before you report).")
@@ -629,7 +661,20 @@ class Pipeline:
             else:
                 prompt = protocol.reviewer_followup(rnd, vt, diff, self.state.get("pr_summary", ""))
             self.handoff("orchestrator", "reviewer", f"Independent review requested · round {rnd}", self.state.get("pr_summary", ""), subtype="review_request")
-            res, env = self.run_role("reviewer", prompt, f"Review round {rnd}")
+            try:
+                res, env = self.run_role("reviewer", prompt, f"Review round {rnd}")
+            except (Stopped, Interrupted):
+                raise
+            except Exception as e:
+                # The reviewer already retried with fresh sessions. A broken review tool must not throw away the
+                # team's finished work: deliver on the supervisor's approval and say plainly that review did not run.
+                self.r.msg(role="reviewer", agent=rev_agent, kind="error", content=f"Independent review could not run: {truncate(str(e), 1500)}", turn=self.state.get("turn"))
+                self.record_blocked([{"check": f"Independent review ({_label(rev_agent)})", "action_required": True,
+                                      "reason": truncate(str(e), 300), "impact": "the change was not independently reviewed; review it yourself before merging"}])
+                self.r.timeline("reviewer", "Review skipped after repeated failures", truncate(str(e), 200))
+                self.state["phase"] = "deliver"
+                self.save()
+                break
             verdict = str(env.get("verdict", "FAIL")).upper()
             findings = env.get("findings") if isinstance(env.get("findings"), list) else []
             text = env.get("_text") or env.get("text") or ""
