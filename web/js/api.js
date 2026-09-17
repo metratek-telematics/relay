@@ -6,7 +6,10 @@ function notifyConn() { for (const fn of conn.listeners) { try { fn(conn); } cat
 export async function request(url, options = {}) {
   let r;
   try {
-    r = await fetch(url, { cache: "no-store", ...options });
+    // The current project scopes lists the server builds (inbox, digest, repositories, connectors…); see views/org.
+    let project = "all";
+    try { project = localStorage.getItem("relay.project") || "all"; } catch {}
+    r = await fetch(url, { cache: "no-store", ...options, headers: { "X-Relay-Project": project, ...(options.headers || {}) } });
     if (!conn.online) { conn.online = true; notifyConn(); }
   } catch (err) {
     conn.online = false; conn.lastError = err.message; notifyConn();
@@ -129,6 +132,16 @@ export const api = {
   rejectLesson: (id) => post(`/api/lessons/${encodeURIComponent(id)}/reject`),
   updateLesson: (id, body) => patch(`/api/lessons/${encodeURIComponent(id)}`, body),
   deleteLesson: (id) => del(`/api/lessons/${encodeURIComponent(id)}`),
+  // Learning engine (web_learning.py)
+  learning: () => get("/api/learning"),
+  learningPreflight: (body) => post("/api/learning/preflight", body),
+  learningProposal: (id, action) => post(`/api/learning/proposals/${encodeURIComponent(id)}/${action}`),
+  learningRetire: (id, reason) => post(`/api/learning/lessons/${encodeURIComponent(id)}/retire`, { reason }),
+  learningPin: (repo, team_key) => post("/api/learning/pin", { repo, team_key }),
+  learningBackfill: () => post("/api/learning/backfill"),
+  playbookSeed: (repo, repo_path) => post("/api/learning/playbook/seed", { repo, repo_path }),
+  playbookRefresh: (repo) => post("/api/learning/playbook/refresh", { repo }),
+  playbookEdit: (body) => patch("/api/learning/playbook", body),
 };
 
 // ---------------------------------------------------------------------------- SSE

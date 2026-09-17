@@ -120,6 +120,7 @@ class Pipeline(design.DesignFlow, multirepo.MultiRepo):
         self.max_review_rounds = max(self.max_review_rounds, int(self.state.get("max_review_rounds") or 0))
         self._auto_choice = False
         self.lessons_text = ""
+        self.playbook_text = ""
         self.stack = None  # integration stack definition (orchestrator/stacks.py)
         self.related = []  # the task's other repositories (orchestrator/multirepo.py)
 
@@ -682,6 +683,19 @@ class Pipeline(design.DesignFlow, multirepo.MultiRepo):
         self.m.set_meta(self.tid, verify_commands=self.verify_cmds)
         # Approved lessons from earlier tasks on this repository, added to the kickoff prompts.
         self.lessons_text = lessons.kickoff_block(self.m, {**t, "github_repo": repo_full}, self.cfg)
+        self.learning_start({**t, "github_repo": repo_full})
+
+    def learning_start(self, t):
+        """Prompt/rule versions for the outcome dataset, and the repository's playbook for planning (learning_engine.py)."""
+        engine = getattr(getattr(self.m, "learning", None), "engine", None)
+        if not engine:
+            return
+        try:
+            names = sorted({n for r in ("supervisor", "worker", "reviewer") for n in protocol.rule_names_for(r, self.cfg, t.get("requirements") or "")})
+            engine.task_started(self.tid, names)
+            self.playbook_text = engine.playbook_for_task(t)
+        except Exception:  # learning must never stop a task
+            self.playbook_text = ""
 
     def kickoff(self):
         sup_agent, _ = self.role_agent("supervisor")
@@ -691,6 +705,7 @@ class Pipeline(design.DesignFlow, multirepo.MultiRepo):
         prompt = protocol.supervisor_kickoff(self.task, self.wt, self.branch, self.issue_text, self.refs_text, guidance, self.verify_cmds, self.cfg,
                                              self.env_text(), self.tools_text("supervisor"))
         prompt = protocol.with_lessons(prompt, self.lessons_text)
+        prompt = protocol.with_block(prompt, self.playbook_text)
         prompt = protocol.with_block(prompt, self.context_text("supervisor"))
         prompt = protocol.with_block(prompt, self.kickoff_design_note())
         res, env = self.supervisor_turn(prompt, f"{_label(sup_agent)} is inspecting the repository and planning", turn=0)

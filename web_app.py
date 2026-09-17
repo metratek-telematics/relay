@@ -69,6 +69,10 @@ def _refuse_agent_admin_calls():
         return None
     if request.path.startswith(_AGENT_API):
         return None
+    # The public API authenticates each call with a person's access token, so a valid token is allowed from
+    # anywhere; without one, loopback is still refused (the organisation guard checks the token's scopes).
+    if request.path.startswith("/api/v1/") and org_web.resolve() and org_web.g.get("org_via") == "token":
+        return None
     if (request.remote_addr or "") in ("127.0.0.1", "::1", "localhost"):
         return jsonify({"error": "Changes to Relay are not allowed from inside its container (agents cannot "
                                  "modify Relay). Use the web interface."}), 403
@@ -96,6 +100,12 @@ def broadcast(typ, payload):
 
 
 manager = Manager(broadcast)
+
+# People, projects, roles, audit, integrations, API tokens, usage and onboarding (orchestrator/org).
+from orchestrator.org import web as org_web  # noqa: E402
+org_web.install(app, manager, broadcast)
+import web_learning  # noqa: E402  learning engine API (recommendations, risk, proposals, playbooks)
+app.register_blueprint(web_learning.init(manager, broadcast))
 
 
 @app.after_request

@@ -26,6 +26,28 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   diff; long sessions are compacted into a fresh one from a Relay handoff; Codex runs with low verbosity. See
   docs/TOKEN_EFFICIENCY.md for the measured effect (−16% cost on a small A/B task, −64% to −95% on repeated
   supervisor and re-review prompts).
+- **Learning engine** (`orchestrator/learning_engine.py`, Learning page, `/api/learning`). Every finished run is recorded
+  in an append-only outcome dataset (`DATA_DIR/learning/outcomes.jsonl`): repositories, task type, request size, team
+  (agent, model, effort per role), prompt and rule version hashes, lessons injected, cost, judge events, verification
+  first pass, end-to-end results, human interventions, score, post-merge signal and the pre-flight forecast. On top of it:
+  - **Team recommendation** (`recommend.py`): a similarity-weighted Bayesian average per team with best, balanced and
+    cheapest-good-enough modes, explained in one line in the New task wizard. Autopilot can pick the team for tasks
+    nobody chose one for (`learning.auto_pick_team`, 10% exploration, never for urgent or critical tasks); a team can be
+    pinned per repository.
+  - **Pre-flight risk** (`risk.py`): low, medium or high with the factors behind it, mitigations (add a reviewer, use the
+    recommended team, split, attach a stack, apply the environment fix) and clarifying questions for thin or vague
+    requests. The forecast is stored on the task and compared with the outcome (per-level calibration, Brier score).
+  - **Autopsies and one-click fixes** (`autopsy.py`): failed, low-scoring and "delivered blind" runs (blocked checks or
+    unproven required criteria) get a root cause (environment, requirements, flaky checks, protocol, infrastructure,
+    agent capability) and concrete proposals: system packages, a lesson, a rule line, an optional check, a setting, or a
+    pinned team. Applied proposals show clean-run rates before and after.
+  - **Lessons that prove themselves** (`lesson_effect.py`): categories, effect of each lesson (runs with it vs without:
+    score, first pass, revisions) with retirement flags, relevance-based selection instead of every lesson, and support
+    counting across retrospectives with optional auto-approval (`learning.auto_approve_lessons`, off by default).
+  - **Playbooks** (`playbooks.py`): per repository, seeded from the system map, environment, lessons and outcomes,
+    refreshed by a cheap agent turn, editable (edited sections are kept), and added to the supervisor's planning prompt.
+  - Scorecards (version 2) detect a merged pull request reverted on its base branch within 14 days (−40, not a success).
+
 - **The supervisor judges against an acceptance contract.** The plan carries 2 to 6 checkable criteria (id, criterion,
   how to verify, required). They show on the task Overview as a checklist with status and evidence, can be edited
   there (or with `PATCH /api/tasks/<id>/acceptance`), and gate delivery: `done` is refused until every required

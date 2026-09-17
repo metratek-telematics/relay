@@ -9,6 +9,9 @@
 <link rel="stylesheet" href="/styles.css?v=14.1.0">
 <link rel="stylesheet" href="/connectors.css?v=14.1.0">
 <link rel="stylesheet" href="/tools.css?v=14.1.0">
+<link rel="stylesheet" href="/org.css?v=14.1.0">
+<link rel="stylesheet" href="/org-pages.css?v=14.1.0">
+<link rel="stylesheet" href="/learning.css?v=14.1.0">
 <script>
   try {
     // Carry over settings saved under the previous product name.
@@ -36,6 +39,7 @@
     <a class="rail-btn" href="#/github" data-nav="github" title="GitHub inbox (G H)"><i data-icon="github"></i></a>
     <a class="rail-btn" href="#/repos" data-nav="repos" title="Repositories (G R)"><i data-icon="folder"></i></a>
     <a class="rail-btn" href="#/lessons" data-nav="lessons" title="Lessons (G L)"><i data-icon="brain"></i><span class="rail-badge" id="lessonsBadge" hidden></span></a>
+    <a class="rail-btn" href="#/learning" data-nav="learning" title="Learning (G N)"><i data-icon="gauge"></i><span class="rail-badge" id="learningBadge" hidden></span></a>
     <div class="rail-spacer"></div>
     <button class="rail-btn" id="paletteBtn" title="Command palette (Ctrl+K)"><i data-icon="command"></i></button>
     <button class="rail-btn" id="shortcutsBtn" title="Keyboard shortcuts (?)"><i data-icon="keyboard"></i></button>
@@ -74,7 +78,7 @@
   </aside>
 
   <div class="main-col">
-    <div class="ap-bar" id="apBar" role="status" aria-live="polite" hidden></div>
+    <div class="org-top" id="orgTop"><div id="orgProject"></div><div class="ap-bar" id="apBar" role="status" aria-live="polite" hidden></div><div id="orgUser"></div></div>
     <main class="main" id="main"></main>
   </div>
 </div>

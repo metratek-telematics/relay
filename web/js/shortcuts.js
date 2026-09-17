@@ -5,7 +5,7 @@ const MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || 
 const MOD = MAC ? "⌘" : "Ctrl";
 
 // Two-key "go to" sequences: press G, then the letter.
-export const GOTO = { d: "#/", t: "#/tasks", a: "#/agents", h: "#/github", i: "#/issues", s: "#/settings", r: "#/repos", l: "#/lessons", y: "#/inbox", e: "#/digest" };
+export const GOTO = { d: "#/", t: "#/tasks", a: "#/agents", h: "#/github", i: "#/issues", s: "#/settings", r: "#/repos", l: "#/lessons", n: "#/learning", y: "#/inbox", e: "#/digest" };
 
 export const SHORTCUTS = [
   { id: "palette", group: "General", keys: [MOD, "K"], label: "Command palette" },
@@ -22,6 +22,7 @@ export const SHORTCUTS = [
   { id: "goSettings", group: "Go to", keys: ["G", "S"], label: "Settings", then: true },
   { id: "goRepos", group: "Go to", keys: ["G", "R"], label: "Repositories", then: true },
   { id: "goLessons", group: "Go to", keys: ["G", "L"], label: "Lessons", then: true },
+  { id: "goLearning", group: "Go to", keys: ["G", "N"], label: "Learning", then: true },
   { id: "goInbox", group: "Go to", keys: ["G", "Y"], label: "Needs you", then: true },
   { id: "goDigest", group: "Go to", keys: ["G", "E"], label: "Digest", then: true },
   { id: "next", group: "Task list", keys: ["J"], label: "Open the next task" },
