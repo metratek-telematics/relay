@@ -183,6 +183,7 @@ def state():
         "queue": manager.queue_state(),
         "notifications": manager.notifications[:30],
         "lessons_pending": lessons.pending_count(),
+        "autopilot": manager.autopilot.status(),
     })
 
 
@@ -309,8 +310,16 @@ def settings_get():
 
 @app.post("/api/settings")
 def settings_post():
-    cfg = C.update(body())
+    b = body()
+    was_paused = bool((manager.cfg().get("autopilot") or {}).get("paused"))
+    cfg = C.update(b)
     manager.config_changed()
+    wants = (b.get("autopilot") or {}).get("paused") if isinstance(b.get("autopilot"), dict) else None
+    if wants is not None and bool(wants) != was_paused:
+        manager.autopilot.set_paused(bool(wants))  # also pauses or resumes the running tasks
+        cfg = manager.cfg()
+    else:
+        manager.autopilot.emit_status(force=True)
     agents.invalidate_health()
     broadcast("config", C.public_view(cfg))
     return jsonify(C.public_view(cfg))
@@ -751,6 +760,38 @@ def queue_get():
     return jsonify(manager.queue_state())
 
 
+# ----------------------------------------------------------------------------- autopilot
+@app.get("/api/autopilot")
+def autopilot_status():
+    return jsonify(manager.autopilot.status())
+
+
+@app.post("/api/autopilot/<action>")
+def autopilot_action(action):
+    if action == "pause":
+        return jsonify(manager.autopilot.set_paused(True))
+    if action == "resume":
+        return jsonify(manager.autopilot.set_paused(False))
+    if action == "limits":
+        return jsonify({"limits": manager.autopilot.refresh_limits()})
+    return jsonify({"error": f"Unknown action {action}"}), 404
+
+
+@app.get("/api/autopilot/inbox")
+def autopilot_inbox():
+    return jsonify({"items": manager.autopilot.inbox()})
+
+
+@app.get("/api/digest")
+def digest():
+    hours = request.args.get("hours")
+    try:
+        hours = max(1.0, min(24 * 31, float(hours))) if hours else None
+    except ValueError:
+        hours = None
+    return jsonify(manager.autopilot.digest(hours=hours, since=request.args.get("since") or None))
+
+
 @app.post("/api/run")  # v13 compatibility
 def run_compat():
     return queue_start()
@@ -1010,6 +1051,7 @@ if __name__ == "__main__":
     except Exception as exc:  # never block startup on recovery
         app.logger.warning("Startup recovery failed: %s", exc)
     manager.learning.start()  # backfill scorecards, then keep pull request outcomes current
+    manager.autopilot.start()  # watchdog, quiet hours, morning digest
     shown = "127.0.0.1" if HOST in ("0.0.0.0", "") else HOST
     print(f"Relay {C.BUILD} · http://{shown}:{PORT}" + (" (inside Docker)" if IN_DOCKER else ""))
     serve(app, host=HOST, port=PORT, threads=16, channel_timeout=3600)

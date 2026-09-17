@@ -99,6 +99,7 @@ export function mountInspector(container, getTask) {
           ${roles.map((role) => `<div class="row between"><span class="row"><span class="av sm ${esc(roleAgent(t, role))}">${esc(agentInitial(roleAgent(t, role)))}</span><strong>${esc(agentLabel(roleAgent(t, role)))}</strong><span class="muted">${esc(ROLE_LABEL[role])}</span></span><span class="mono muted">${esc(roleModel(t, role) || "default model")}${roleEffort(t, role) ? ` · ${esc(roleEffort(t, role))} effort` : ""}</span></div>`).join("")}
           <div class="kv" style="margin-top:6px"><dt>Verification</dt><dd>${esc(wf.verify_mode || "each_report")}${(t.verify_commands || []).length ? ` · ${t.verify_commands.length} command(s)` : ""}</dd><dt>Approval gate</dt><dd>${wf.approval_before_delivery ? "before delivery" : "off"}</dd><dt>Agent questions</dt><dd>${wf.allow_agent_questions === false ? "disabled" : "allowed"}</dd><dt>Review rounds</dt><dd>${wf.max_review_rounds || "—"}</dd></div>
         </div></div>
+        ${autopilotCard(t)}
         ${plan.plan ? `<div class="card"><div class="card-head"><h3>Plan</h3>${plan.summary ? `<span class="muted truncate" style="max-width:220px">${esc(plan.summary)}</span>` : ""}</div><div class="card-body md">${md(plan.plan)}${packetHtml((t.acceptance || []).length ? { ...plan, acceptance: [] } : plan, { done: t.status === "done" })}</div></div>` : ""}
         <div class="card"><div class="card-head"><h3>Signals</h3></div><div class="card-body stack">
           <div class="row between"><span>Verification</span>${v ? `<span class="badge ${v.ok ? "green" : "red"}">${v.ok ? "passing" : "failing"}</span>` : '<span class="badge">not run</span>'}</div>
@@ -537,4 +538,21 @@ export function mountInspector(container, getTask) {
     },
     destroy() { clearInterval(logTimer); },
   };
+}
+
+// Autopilot facts about one task: what it waits for, agents switched for limits, automatic retries, cost cap.
+function autopilotCard(t) {
+  const deps = (t.depends_on || []).map((id) => S.tasks.get(id)).filter(Boolean);
+  const fb = t.fallbacks || [];
+  const parked = t.autopilot_parked;
+  if (!deps.length && !fb.length && !t.auto_retries && !t.waiting && !parked && !t.cost_cap_usd) return "";
+  const depRow = (d) => `<a href="#/task/${esc(d.id)}">#${esc(d.number || "")} ${esc(d.name)}</a> <span class="badge ${d.status === "done" ? "green" : ["failed", "stopped"].includes(d.status) ? "red" : "amber"}">${esc(statusOf(d).label)}</span>`;
+  return `<div class="card"><div class="card-head"><h3>Autopilot</h3>${t.number ? `<span class="badge outline">#${esc(t.number)}</span>` : ""}</div><div class="card-body stack">
+    ${t.waiting && t.status === "queued" ? `<div class="row">${icon("clock", "sm")}<span>${esc(t.waiting.text)}</span></div>` : ""}
+    ${parked ? `<div class="row">${icon("pause", "sm")}<span>${esc(parked.reason || "Paused by autopilot")}</span></div>` : ""}
+    ${deps.length ? `<div><div class="muted">Runs after</div><div class="stack" style="gap:4px;margin-top:4px">${deps.map(depRow).join("")}</div></div>` : ""}
+    ${fb.length ? `<div><div class="muted">Switched for limits</div>${fb.slice(-4).map((f) => `<div>${esc(f.role)}: ${esc(agentLabel(f.from.agent))} → ${esc(agentLabel(f.to.agent))}${f.to.model ? ` (${esc(f.to.model)})` : ""} <span class="muted">· ${esc(f.reason || "")}</span></div>`).join("")}</div>` : ""}
+    ${t.auto_retries ? `<div class="row between"><span>Automatic retries</span><span class="badge amber">${esc(t.auto_retries)}</span></div>` : ""}
+    ${t.cost_cap_usd ? `<div class="row between"><span>Cost cap</span><span>$${esc(t.cost_cap_usd)}</span></div>` : ""}
+  </div></div>`;
 }

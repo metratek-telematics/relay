@@ -6,7 +6,7 @@ import { workflowEditor } from "./newtask.js";
 import { NOTIFY_EVENTS, chime, permission, requestPermission, showDesktop } from "../notify.js";
 import { openShortcuts, keysFor } from "../shortcuts.js";
 
-const SECTIONS = [["workflow", "Workflow", "layers"], ["agents", "Agents", "bot"], ["budget", "Usage & budget", "gauge"], ["verification", "Verification", "shield"], ["git", "Git & GitHub", "github"], ["appearance", "Appearance", "sun"], ["notifications", "Notifications", "bell"], ["prompts", "Saved prompts", "message"], ["rules", "Rules", "docs"], ["about", "About", "info"]];
+const SECTIONS = [["workflow", "Workflow", "layers"], ["autopilot", "Autopilot", "clock"], ["agents", "Agents", "bot"], ["budget", "Usage & budget", "gauge"], ["verification", "Verification", "shield"], ["git", "Git & GitHub", "github"], ["appearance", "Appearance", "sun"], ["notifications", "Notifications", "bell"], ["prompts", "Saved prompts", "message"], ["rules", "Rules", "docs"], ["about", "About", "info"]];
 
 // Scorecards, retrospectives and lessons (orchestrator/learning.py).
 function learningCard(c) {
@@ -73,6 +73,10 @@ export function mountSettings(main, section) {
       bindAuto();
       // The model catalogue and efforts depend on the agent, so redraw once the new agent is saved.
       $("[data-cfg='retro_agent']", body).addEventListener("change", () => setTimeout(render, 300));
+    } else if (cur === "autopilot") {
+      body.innerHTML = autopilotSettings(c);
+      bindAutopilot(body, c, save, render);
+      bindAuto();
     } else if (cur === "agents") {
       const env = c.agent_env || {};
       const envRows = (a) => Object.entries(env[a] || {}).concat([["", ""]]).map(([k, v]) => `<div class="env-row"><input placeholder="VARIABLE" value="${esc(k)}" data-env-k="${a}"><input placeholder="value" value="${esc(v)}" data-env-v="${a}"><button type="button" class="btn xs" data-env-del="${a}" title="Remove">${icon("x")}</button></div>`).join("");
@@ -401,4 +405,86 @@ export function mountSettings(main, section) {
 
   render();
   return { update(reason) { if (reason === "route") { const s = S.route.section; if (s && s !== cur && SECTIONS.some(([k]) => k === s)) { cur = s; render(); } } }, destroy() {} };
+}
+
+// ---------------------------------------------------------------------------- autopilot (orchestrator/autopilot.py)
+const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+function autopilotSettings(c) {
+  const a = c.autopilot || {};
+  const q = a.quiet_hours || {};
+  const fb = a.fallbacks || {};
+  const win = a.windows || [];
+  const sw = (key, on) => `<span class="switch ${on ? "on" : ""}" data-ap-sw="${key}" role="switch" aria-checked="${!!on}" tabindex="0"></span>`;
+  const agentsList = agentIds().map((x) => `<option value="${esc(x)}">`).join("");
+  return `<div class="card"><div class="card-head"><div><h3>Running unattended</h3><p class="card-sub">Queue a stack of tasks and walk away. The status bar at the top shows what the autopilot is doing.</p></div></div><div class="card-body">
+      <div class="field inline"><label>Pause everything (nothing starts; running tasks stop after their current turn)</label>${sw("paused", a.paused)}</div>
+      <div class="field inline"><label>A task waiting for your answer frees its parallel slot, so independent tasks keep running</label>${sw("park_waiting_tasks", a.park_waiting_tasks !== false)}</div>
+      <div class="grid3">
+        <div class="field"><label>Parallel tasks</label><input type="number" min="1" max="8" data-cfg="max_parallel" value="${esc(c.max_parallel)}"></div>
+        <div class="field"><label>Automatic retries after an agent crash, hang or rate limit</label><input type="number" min="0" max="5" data-ap="retry_infra_failures" value="${esc(a.retry_infra_failures ?? 1)}"><div class="help">Resumes from the checkpoint. Judge outcomes (budget, review, verification) are never retried.</div></div>
+        <div class="field"><label>Time zone</label><input data-ap="timezone" value="${esc(a.timezone || "")}" placeholder="server time, e.g. Europe/Athens"><div class="help">For run windows, quiet hours and the digest.</div></div>
+      </div>
+    </div></div>
+    <div class="card"><div class="card-head"><div><h3>Run windows</h3><p class="card-sub">When new tasks may start. A running task always finishes its work.</p></div>
+      <select data-ap="schedule" aria-label="Schedule"><option value="always" ${a.schedule !== "windows" ? "selected" : ""}>Always</option><option value="windows" ${a.schedule === "windows" ? "selected" : ""}>Only in these windows</option></select></div>
+      <div class="card-body ${a.schedule === "windows" ? "" : "ap-dim"}">
+        <div class="ap-windows">${win.map((w, i) => `<div class="ap-window" data-win="${i}">
+          <div class="ap-days">${DAYS.map((d, k) => `<label class="ap-day"><input type="checkbox" data-win-day="${k}" ${(w.days || []).includes(k) ? "checked" : ""}><span>${d}</span></label>`).join("")}</div>
+          <div class="ap-times"><input type="time" data-win-start value="${esc(w.start || "00:00")}" aria-label="Start"><span>to</span><input type="time" data-win-end value="${esc(w.end || "23:59")}" aria-label="End"><button type="button" class="btn xs ghost" data-win-del="${i}" title="Remove window">${icon("trash")}</button></div>
+        </div>`).join("") || '<div class="empty small">No windows: nothing starts while the schedule is set to windows.</div>'}</div>
+        <button type="button" class="btn sm" id="apWinAdd">${icon("plus")}Add window</button>
+        <div class="help">An end earlier than the start runs past midnight (20:00 to 07:00).</div>
+      </div></div>
+    <div class="card"><div class="card-head"><div><h3>Quiet hours</h3><p class="card-sub">Nobody answers at night: judge decisions take their safe automatic choice instead of waiting. Agent questions still wait for you.</p></div>${sw("quiet_hours.enabled", q.enabled)}</div>
+      <div class="card-body"><div class="grid3"><div class="field"><label>From</label><input type="time" data-ap="quiet_hours.start" value="${esc(q.start || "22:00")}"></div><div class="field"><label>Until</label><input type="time" data-ap="quiet_hours.end" value="${esc(q.end || "08:00")}"></div></div></div></div>
+    <div class="card"><div class="card-head"><div><h3>Plan limits and fallbacks</h3><p class="card-sub">Before a task starts Relay reads each agent's sign-in, 5-hour and weekly limits and balance (Agents page). A blocked role switches to its fallback chain, or the task waits for the reset.</p></div>${sw("limit_check", a.limit_check !== false)}</div>
+      <div class="card-body">
+        <div class="grid3">
+          <div class="field"><label>Treat a limit as reached at (%)</label><input type="number" min="50" max="100" data-ap="limit_threshold_percent" value="${esc(a.limit_threshold_percent ?? 90)}"></div>
+          <div class="field"><label>When a role's agent is blocked</label><select data-ap="limit_action"><option value="fallback" ${a.limit_action !== "wait" ? "selected" : ""}>Use its fallback chain, else wait</option><option value="wait" ${a.limit_action === "wait" ? "selected" : ""}>Wait for the reset</option></select></div>
+        </div>
+        <datalist id="apAgents">${agentsList}</datalist>
+        ${["supervisor", "worker", "reviewer"].map((r) => `<div class="field"><label>${r[0].toUpperCase() + r.slice(1)} fallback chain</label><input data-ap-fb="${r}" list="apAgents" value="${esc((fb[r] || []).join(", "))}" placeholder="e.g. codex, kilo:kilo/some-model:free"><div class="help">Agents tried in order, comma separated; agent:model picks a model.</div></div>`).join("")}
+      </div></div>
+    <div class="card"><div class="card-head"><div><h3>Cost caps</h3><p class="card-sub">Estimated from token prices (Usage &amp; budget). 0 means no cap.</p></div></div><div class="card-body"><div class="grid3">
+      <div class="field"><label>Per task (USD)</label><input type="number" min="0" step="0.5" data-ap="task_cost_cap_usd" value="${esc(a.task_cost_cap_usd ?? 0)}"><div class="help">The task pauses after the turn that crosses it and appears under Needs you.</div></div>
+      <div class="field"><label>Per day (USD)</label><input type="number" min="0" step="1" data-ap="daily_cost_cap_usd" value="${esc(a.daily_cost_cap_usd ?? 0)}"><div class="help">No new task starts until tomorrow once reached.</div></div>
+    </div></div></div>
+    <div class="card"><div class="card-head"><div><h3>Watchdog and digest</h3></div></div><div class="card-body">
+      <div class="field inline"><label>Watchdog: resume tasks whose runner died or whose agent process vanished</label>${sw("watchdog", a.watchdog !== false)}</div>
+      <div class="grid3">
+        <div class="field"><label>Agent process gone for (minutes)</label><input type="number" min="2" data-ap="watchdog_silent_minutes" value="${esc(a.watchdog_silent_minutes ?? 20)}"></div>
+        <div class="field"><label>Morning digest at</label><input type="time" data-ap="digest_time" value="${esc(a.digest_time || "")}"><div class="help">A notification once a day; clear it to turn it off.</div></div>
+        <div class="field"><label>Digest covers (hours)</label><input type="number" min="1" max="168" data-ap="digest_hours" value="${esc(a.digest_hours ?? 24)}"></div>
+      </div>
+    </div></div>`;
+}
+
+function bindAutopilot(body, c, save, render) {
+  const cur = () => JSON.parse(JSON.stringify((S.config || c).autopilot || {}));
+  const put = async (a, redraw) => { await save({ autopilot: a }); if (redraw) render(); };
+  const setPath = (obj, path, v) => { const ks = path.split("."); let o = obj; ks.slice(0, -1).forEach((k) => { o[k] = { ...(o[k] || {}) }; o = o[k]; }); o[ks[ks.length - 1]] = v; };
+  $$("[data-ap]", body).forEach((i) => i.addEventListener("change", () => {
+    const a = cur();
+    const v = i.type === "number" ? Number(i.value) || 0 : i.value;
+    setPath(a, i.dataset.ap, v);
+    put(a, i.dataset.ap === "schedule");
+  }));
+  $$("[data-ap-sw]", body).forEach((s) => {
+    const flip = () => { s.classList.toggle("on"); const a = cur(); setPath(a, s.dataset.apSw, s.classList.contains("on")); put(a); };
+    s.onclick = flip;
+    s.onkeydown = (e) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); flip(); } };
+  });
+  $$("[data-ap-fb]", body).forEach((i) => i.addEventListener("change", () => {
+    const a = cur();
+    a.fallbacks = { ...(a.fallbacks || {}), [i.dataset.apFb]: i.value.split(",").map((x) => x.trim()).filter(Boolean) };
+    put(a);
+  }));
+  const readWindows = () => $$("[data-win]", body).map((w) => ({
+    days: $$("[data-win-day]", w).filter((x) => x.checked).map((x) => Number(x.dataset.winDay)),
+    start: $("[data-win-start]", w).value || "00:00", end: $("[data-win-end]", w).value || "23:59",
+  }));
+  $$("[data-win-day], [data-win-start], [data-win-end]", body).forEach((i) => i.addEventListener("change", () => { const a = cur(); a.windows = readWindows(); put(a); }));
+  $$("[data-win-del]", body).forEach((b) => (b.onclick = () => { const a = cur(); a.windows = readWindows().filter((_, k) => k !== Number(b.dataset.winDel)); put(a, true); }));
+  $("#apWinAdd", body).onclick = () => { const a = cur(); a.windows = [...readWindows(), { days: [0, 1, 2, 3, 4], start: "20:00", end: "07:00" }]; put(a, true); };
 }

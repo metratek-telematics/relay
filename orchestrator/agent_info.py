@@ -447,6 +447,9 @@ def _codex_rate_limits(env) -> dict | None:
 
 def _codex_account(cfg, out, refresh=False):
     chatgpt = _codex_chatgpt(cfg, refresh)
+    status_text = _cached_status("codex", lambda: {"text": _run("codex", ["login", "status"], cfg, timeout=20)}, refresh).get("text", "")
+    if re.search(r"not logged in", status_text, re.I):
+        out["plan"].append({"label": "Status", "value": "Not signed in"})
     rl = _codex_rate_limits(_env("codex", cfg))
     lim = (rl or {}).get("limits") or {}
     if lim.get("plan_type"):
