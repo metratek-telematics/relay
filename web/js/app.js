@@ -9,6 +9,7 @@ import { mountAgents } from "./views/agents.js";
 import { mountGithub } from "./views/github.js";
 import { mountIssues } from "./views/issues.js";
 import { mountRepos } from "./views/repos.js";
+import { mountLessons } from "./views/lessons.js";
 import { openNewTask } from "./views/newtask.js";
 import { TABS } from "./views/inspector.js";
 import { deliver, markSeen, renderAttention, permission, requestPermission } from "./notify.js";
@@ -130,7 +131,7 @@ function parseRoute() {
   if (parts[0] === "task" && parts[1]) return { view: "task", id: decodeURIComponent(parts[1]), tab: parts[2] || null, section: null };
   if (parts[0] === "settings") return { view: "settings", id: null, tab: null, section: parts[1] || "workflow" };
   if (parts[0] === "repos") return { view: "repos", id: null, tab: null, section: parts[1] || "list" };
-  if (["agents", "github", "issues", "tasks", "dashboard"].includes(parts[0])) return { view: parts[0] === "dashboard" ? "dashboard" : parts[0], id: null, tab: null, section: null };
+  if (["agents", "github", "issues", "tasks", "dashboard", "lessons"].includes(parts[0])) return { view: parts[0] === "dashboard" ? "dashboard" : parts[0], id: null, tab: null, section: null };
   return { view: "dashboard", id: null, tab: null, section: null };
 }
 function route() {
@@ -150,6 +151,7 @@ function route() {
   else if (r.view === "issues") view = mountIssues(main);
   else if (r.view === "repos") view = mountRepos(main, r.section);
   else if (r.view === "tasks") view = mountTasksHome();
+  else if (r.view === "lessons") view = mountLessons(main);
   else view = mountDashboard(main);
   renderSidebar();
   bus.emit("route");
@@ -279,6 +281,7 @@ function renderConn() {
 onConnection(renderConn);
 
 // ---------------------------------------------------------------------------- notifications
+function renderLessonsBadge() { const b = $("#lessonsBadge"); if (b) b.hidden = !S.lessonsPending; }
 function renderNotifBadge() { const unread = (S.notifications || []).filter((n) => !n.read).length; const b = $("#notifBadge"); b.hidden = !unread; }
 $("#notifBtn").onclick = () => {
   const p = $("#notifPanel");
@@ -356,6 +359,7 @@ function onEvent(ev) {
     case "github": S.github = { ...S.github, ...p }; view && view.update && view.update("github", p); break;
     case "config": S.config = p; applyTheme(p.ui_theme, p.ui_density); renderQueue(); break;
     case "queue": S.queue = { ...S.queue, ...p }; renderQueue(); break;
+    case "lessons": S.lessonsPending = p.pending || 0; renderLessonsBadge(); view && view.update && view.update("lessons"); break;
     case "agents": { const j = p.job; if (j) toast(j.state === "done" ? "success" : "error", `${agentLabel(p.agent)} ${j.action === "remove" ? "removal" : j.action} ${j.state === "done" ? "finished" : "failed"}`, j.error || ""); view && view.update && view.update("agents"); break; }
   }
 }
@@ -373,6 +377,7 @@ function paletteItems() {
     { group: "Navigate", label: "Issues", icon: "issue", hint: keysFor("goIssues"), keywords: "tickets github board", onClick: () => navigate("#/issues") },
     { group: "Navigate", label: "GitHub inbox", icon: "github", hint: keysFor("goGithub"), onClick: () => navigate("#/github") },
     { group: "Navigate", label: "Repositories", icon: "folder", hint: keysFor("goRepos"), keywords: "branches clone git", onClick: () => navigate("#/repos") },
+    { group: "Navigate", label: "Lessons", icon: "brain", hint: keysFor("goLessons"), keywords: "learning retrospective score success", onClick: () => navigate("#/lessons") },
     { group: "Navigate", label: "Worktrees", icon: "layers", keywords: "clean up repositories", onClick: () => navigate("#/repos/worktrees") },
     { group: "Navigate", label: "Settings", icon: "settings", hint: keysFor("goSettings"), onClick: () => navigate("#/settings") },
     { group: "Navigate", label: "Notification settings", icon: "bell", onClick: () => navigate("#/settings/notifications") },
@@ -477,10 +482,10 @@ async function bootstrap() {
   try { st = await api.state(); } catch (e) { main.innerHTML = `<div class="page"><div class="empty">${icon("alert", "lg")}<h3>Backend unreachable</h3><p>${esc(e.message)}</p></div></div>`; renderConn(); setTimeout(bootstrap, 3000); return; }
   S.build = st.build; S.config = st.config || {}; S.agents = st.agents || {}; S.agentMeta = st.agent_meta || {};
   paintAgentColors(); S.presets = st.presets || []; S.templates = st.templates || [];
-  S.github = st.github || {}; S.queue = st.queue || {}; S.notifications = st.notifications || [];
+  S.github = st.github || {}; S.queue = st.queue || {}; S.notifications = st.notifications || []; S.lessonsPending = st.lessons_pending || 0;
   S.tasks = new Map((st.tasks || []).map((t) => [t.id, t]));
   applyTheme(S.config.ui_theme, S.config.ui_density);
-  renderQueue(); renderNotifBadge(); renderConn(); renderAttention();
+  renderQueue(); renderNotifBadge(); renderLessonsBadge(); renderConn(); renderAttention();
   if (!S.ready) { S.ready = true; connectEvents(onEvent); route(); }
   else { renderSidebar(); view && view.update && view.update("task", {}); }
 }

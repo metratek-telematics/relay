@@ -134,12 +134,14 @@ class TaskStore:
             self.tasks.insert(0, t)
             self.save_now()
 
-    def update(self, tid: str, immediate=False, **kw):
+    def update(self, tid: str, immediate=False, touch=True, **kw):
+        # touch=False records derived data (scorecards) without making the task look recently active.
         with self.lock:
             for t in self.tasks:
                 if t["id"] == tid:
                     t.update(kw)
-                    t["updated_at"] = now()
+                    if touch:
+                        t["updated_at"] = now()
                     break
             if immediate:
                 self.save_now()

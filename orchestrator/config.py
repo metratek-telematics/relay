@@ -280,6 +280,17 @@ DEFAULTS = {
     "issues_pickup_label": "",           # Issues board: label added to an issue when a task is created from it
     "queue_stop_chain_on_failure": False,  # one-after-the-other chains keep going after a failed task
     "github_pr_body_template": "{summary}\n\n---\n{details}\n\n{issue_close}\n",
+    # learning: scorecards, retrospectives, lessons (orchestrator/learning.py)
+    "retro_enabled": True,             # one short agent turn after each task ends, proposing lessons for review
+    "retro_agent": "",                 # "" = the task's supervisor agent
+    "retro_model": "",                 # "" = the supervisor's model (or the agent's default model)
+    "retro_effort": "",                # "" = the agent's lowest effort
+    "retro_timeout_seconds": 300,
+    "retro_max_lessons": 3,
+    "lessons_inject": True,            # add approved lessons to supervisor and worker kickoff prompts
+    "lessons_max_in_prompt": 15,
+    "scorecard_refresh_minutes": 30,   # how often recent pull requests are re-checked (merged, closed, human commits)
+    "scorecard_refresh_days": 14,
     # ui
     "ui_theme": "system",
     "ui_density": "comfortable",
