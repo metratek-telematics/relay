@@ -285,6 +285,18 @@ function stepTask(delta) {
   if (next && next !== S.route.id) navigate(`#/task/${next}`);
 }
 
+// Tab strips move with the arrow keys, as ARIA tabs do.
+document.addEventListener("keydown", (e) => {
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+  const tab = e.target.closest?.('[role="tab"]');
+  const list = tab?.closest('[role="tablist"]');
+  if (!list) return;
+  const tabs = [...list.querySelectorAll('[role="tab"]')].filter((x) => !x.disabled && x.offsetParent !== null);
+  const i = tabs.indexOf(tab);
+  const next = e.key === "Home" ? tabs[0] : e.key === "End" ? tabs[tabs.length - 1] : tabs[(i + (e.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length];
+  if (next && next !== tab) { e.preventDefault(); next.focus(); next.click(); }
+}, true);
+
 document.addEventListener("keydown", (e) => {
   const a = document.activeElement;
   const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(a?.tagName) || a?.isContentEditable;
