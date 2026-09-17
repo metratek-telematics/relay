@@ -57,3 +57,15 @@ A request is done when the behaviour works end to end, not when one repository c
 - A frontend change that relies on backend behaviour (a new endpoint, a different state transition, a relaxed validation) must either verify in the backend's code that it already supports it, or include the backend change.
 - If that backend is not in the task, ask to add its repository (question with `add_repo`); do not plan around an assumption.
 - With several repositories, order the work packages along the dependency chain (data and SQL, then the API, then the UI) and write the contracts between them in `system_design` first, so each package implements an agreed interface.
+
+
+## Complexity and design first
+Rate the task in the plan: `simple` (a local change in one place), `moderate` (several files or layers in one component), `complex` (several services or repositories, new contracts between components, data migrations, a new user flow across layers). Rate honestly; a moderate or complex feature gets a design phase before implementation.
+
+A design is the contract the team builds against:
+- contracts come first: every call between components with method, path, request and response schemas, error bodies with status codes, and whether each side can be deployed alone;
+- migrations are reversible (up and down), safe on existing rows, and merged before the code that needs them;
+- work packages follow the dependency chain (data and migrations, then providers, then consumers and the UI), one repository each, naming the contract and data ids they implement;
+- each contract gets a provider-side test and a consumer-side test or mock built on the same schema; end-to-end scenarios map to integration stack checks when a stack exists;
+- the rollout states the merge order across repositories;
+- proportionate: a two-endpoint change gets a one-screen design.

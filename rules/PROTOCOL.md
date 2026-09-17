@@ -38,6 +38,22 @@ Text before the envelope is fine (reasoning, notes, evidence). The envelope is w
 - Proposal to add a repository the request depends on (the human accepts with one click; Relay clones it and adds a worktree on the task branch):
   `{"type":"question","to":"user","question":"why it is needed","add_repo":{"repo":"component id or owner/name","reason":"one line"},"options":["Add api to this task","Continue without it"]}`
 - Multi-repository plans add `"work_packages":[{"id":"W1","repo":"api","summary":"...","depends_on":[]}]` and `"system_design":{"summary":"...","api_contracts":[{"provider":"api","consumer":"web","endpoint":"POST /items/{id}/archive","request":"...","response":"..."}],"data_model":[{"component":"db","change":"..."}],"sequence":["..."]}`; instructions add `"package":"W1","repo":"api"`.
+- The plan also carries `"complexity":{"level":"simple|moderate|complex","reason":"one line"}`. It decides whether a design phase runs before implementation.
+- Design phase (Relay asks for it; `ORCHESTRATOR · DESIGN FIRST`): reply with ONE design envelope. It is reviewed independently and may need the human's approval before any code is written:
+  ```
+  {"type":"design","summary":"one line","goal":"…","scope":["…"],"non_goals":["…"],
+   "components":[{"name":"orders-api","reason":"…","change":"…"}],
+   "contracts":[{"id":"C1","provider":"catalog-api","consumer":"orders-api","method":"POST","path":"/reservations","request":{…},"response":{…},"errors":["409 {\"error\":\"insufficient_stock\"}"],"compatibility":"additive"}],
+   "data_model":[{"id":"D1","component":"catalog-api","change":"…","up":"…","down":"…","backfill":"…"}],
+   "sequence":["…"],"ui":[{"screen":"…","states":["empty: …","loading: …","error: …"]}],
+   "failure_modes":["…"],"security":["…"],"performance":["…"],
+   "rollout":{"merge_order":["catalog-api","orders-api","shop-web"],"feature_flags":[]},
+   "test_strategy":[{"repo":"…","strategy":"…"}],"e2e":[{"id":"E1","scenario":"…","stack_check":"…"}],
+   "acceptance":[{"id":"A1","criterion":"…","how_to_verify":"test: …","required":true}],
+   "work_packages":[{"id":"W1","repo":"catalog-api","layer":"data|backend|frontend","summary":"…","implements":["D1","C1"],"depends_on":[],"tests":"…","instruction":"…"}]}
+  ```
+  After review findings or a human change request, send the complete revised envelope with `"review_response":[{"finding":"F1","response":"fixed: … | rejected: …"}]`.
+- Design amendment: when an approved design has to change during implementation, add `"amendment":{"ref":"C1","change":"…","reason":"…"}` to your instruction, decision or report envelope. Relay records it on the design and shows it on the task and in every pull request.
 
 ## Envelopes the worker may send
 - Report when a work package is finished or cannot progress further:
@@ -50,6 +66,7 @@ Text before the envelope is fine (reasoning, notes, evidence). The envelope is w
   - `blocked_checks`: a check that could not run for an environment reason. Record it and keep implementing.
   - `blockers`: something that stops the implementation itself.
   - `action_required: true` only when the user alone can clear it (credentials, access, a product decision). The orchestrator then asks the user; otherwise nobody is interrupted.
+- A worker that cannot follow the approved design adds `"amendment":{"ref":"C1","change":"…","reason":"…"}` to its report instead of diverging silently.
 - Question to the supervisor or the human:
   `{"type":"question","to":"supervisor","question":"..."}`
   `{"type":"question","to":"user","question":"...","options":["..."]}`
@@ -58,6 +75,7 @@ Text before the envelope is fine (reasoning, notes, evidence). The envelope is w
 - `{"type":"review","verdict":"PASS","summary":"one line","findings":[]}`
 - `{"type":"review","verdict":"FAIL","summary":"one line","findings":[{"severity":"blocking","criterion":"A2","file":"path:line","problem":"...","fix":"..."},{"severity":"nit","file":"path","problem":"...","fix":"..."}]}`
 - `severity` is `blocking`, `should_fix` or `nit`. FAIL needs at least one blocking finding; the others become pull-request follow-ups.
+- Design review (a separate session, before implementation): the same review envelope; findings name the design section or id in `section` (`"section":"contracts C1"`).
 
 ## Messages you will receive
 - `MESSAGE FROM SUPERVISOR`, `REPORT FROM WORKER`, `REVIEW FROM REVIEWER`: messages from teammates.

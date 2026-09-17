@@ -1,8 +1,8 @@
-// Inspector tabs: overview, try it, history, timeline, changes, checks, review, repository, logs, sessions.
+// Inspector tabs: overview, try it, history, timeline, changes, design, checks, review, repository, logs, sessions.
 import { $, $$, el, esc, icon, md, fmtTime, fmtDateTime, fmtDur, fmtNum, fmtCost, timeAgo, diffHtml, copyText, toast, confirm, prompt, debounce, basename } from "../ui.js";
 import { S, agentLabel, agentInitial, ROLE_LABEL, roleAgent, roleModel, roleEffort, statusOf, taskElapsed } from "../state.js";
 import { api } from "../api.js";
-import { prStatus, PR_STATE, REVIEW_LABEL, checksDetail } from "../prstatus.js";
+import { prStatus, prCached, PR_STATE, REVIEW_LABEL, checksDetail } from "../prstatus.js";
 import { packetHtml, blockedHtml } from "../packet.js";
 import { acceptanceCardHtml, bindAcceptance } from "../acceptance.js";
 import { openTaskFolder } from "../ide.js";
@@ -12,7 +12,7 @@ import { attributionHtml } from "./org/attribution.js";
 
 export const TABS = [
   ["overview", "Overview", "layers"], ["result", "Try it", "play"], ["history", "History", "clock"], ["timeline", "Timeline", "activity"], ["changes", "Changes", "branch"],
-  ["checks", "Checks", "shield"], ["review", "Review", "eye"], ["repository", "Repository", "folder"],
+  ["design", "Design", "layers"], ["checks", "Checks", "shield"], ["review", "Review", "eye"], ["repository", "Repository", "folder"],
   ["logs", "Logs", "terminal"], ["sessions", "Sessions", "cpu"],
 ];
 
@@ -55,6 +55,7 @@ export function mountInspector(container, getTask) {
         case "changes": return await renderChanges(t);
         case "checks": return await renderArtifact(t, "verification", "No verification has run yet.", true);
         case "review": return await renderReview(t);
+        case "design": return await renderDesign(t);
         case "repository": return await renderRepository(t);
         case "logs": return await renderLogs(t);
         case "sessions": return renderSessions(t);
@@ -120,6 +121,7 @@ export function mountInspector(container, getTask) {
         ${scorecardCard(t)}
         ${stackCardHtml(t)}
         ${workCard(t)}
+        ${changeSetCard(t)}
         ${reposCard(t)}
         <div class="card"><div class="card-head"><h3>Team</h3><span class="badge outline">${esc(wf.preset || "custom")}</span></div><div class="card-body stack">
           ${roles.map((role) => `<div class="row between"><span class="row"><span class="av sm ${esc(roleAgent(t, role))}">${esc(agentInitial(roleAgent(t, role)))}</span><strong>${esc(agentLabel(roleAgent(t, role)))}</strong><span class="muted">${esc(ROLE_LABEL[role])}</span></span><span class="mono muted">${esc(roleModel(t, role) || "default model")}${roleEffort(t, role) ? ` · ${esc(roleEffort(t, role))} effort` : ""}</span></div>`).join("")}
@@ -350,6 +352,69 @@ export function mountInspector(container, getTask) {
     body.innerHTML = head + (a.text ? `<div class="doc md">${md(a.text)}</div>` : (r ? "" : '<div class="empty small">No independent review yet. The supervisor acts as the gate unless a reviewer is configured.</div>'));
   }
 
+  // ---------------------------------------------------------------- design (orchestrator/design.py)
+  const DESIGN_SECTIONS = [["goal", "Goal and scope"], ["components", "Affected components"], ["contracts", "API contracts"], ["data-model", "Data model and migrations"],
+    ["sequence", "Sequence of calls"], ["ui", "UI plan"], ["risks", "Failure modes, security, performance"], ["rollout", "Rollout and merge order"],
+    ["tests", "Test strategy"], ["acceptance", "Acceptance criteria"], ["packages", "Work packages"], ["amendments", "Amendments"], ["review", "Design review"]];
+  const DESIGN_STATUS = { drafting: ["Drafting", ""], in_review: ["In review", "blue"], changes_requested: ["Changes requested", "amber"], awaiting_approval: ["Waiting for your approval", "amber"], approved: ["Approved", "green"] };
+  async function renderDesign(t) {
+    const d = t.design;
+    if (!d || !d.version) {
+      const cx = t.complexity;
+      body.innerHTML = `<div class="empty small">${icon("layers", "lg")}<h3>${d ? "The supervisor is writing the design" : "No design step"}</h3><p>${d ? esc(d.trigger || "") : `This task went straight to implementation${cx?.level ? ` (assessed ${esc(cx.level)}${cx.reason ? `: ${esc(cx.reason)}` : ""})` : ""}. Multi-repository, complex and moderate feature tasks, or “Design first: always”, get a reviewed system design first.`}</p></div>${changeSetCard(t)}`;
+      return;
+    }
+    body.innerHTML = '<div class="empty small">Loading…</div>';
+    const a = await api.artifact(t.id, "design");
+    if (state.tab !== "design") return;
+    const [label, tone] = DESIGN_STATUS[d.status] || [d.status, ""];
+    const rv = d.review || {};
+    const pending = t.pending && t.pending.kind === "design_approval";
+    const findings = (rv.findings || []).map((f) => `<li class="${esc(f.severity || "blocking")}"><span class="badge ${f.severity === "blocking" ? "red" : "amber"}">${esc(f.severity || "")}</span> <code>${esc(f.section || f.file || "")}</code> ${esc(f.problem || "")}${f.fix ? `<div class="fix">Fix: ${esc(f.fix)}</div>` : ""}</li>`).join("");
+    const amendments = (d.amendments || []).map((x) => `<li><b>${esc(x.id)}</b> <code>${esc(x.ref || "design")}</code> ${esc(x.change)}<div class="muted">${esc(x.by || "")}${x.package ? ` · ${esc(x.package)}` : ""}${x.reason ? ` · ${esc(x.reason)}` : ""} · ${esc(timeAgo(x.time))}</div></li>`).join("");
+    body.innerHTML = `<div class="stack design-tab" style="gap:12px">
+      <div class="card"><div class="card-head"><h3>System design v${esc(d.version)}</h3><span class="badge ${tone}">${esc(label)}</span></div><div class="card-body stack" style="gap:8px">
+        ${d.goal ? `<div class="md">${md(d.goal)}</div>` : ""}
+        <div class="kv"><dt>Why a design</dt><dd>${esc(d.trigger || "—")}</dd>${d.complexity?.level ? `<dt>Complexity</dt><dd>${esc(d.complexity.level)}${d.complexity.reason ? ` · ${esc(d.complexity.reason)}` : ""}</dd>` : ""}
+          <dt>Contracts</dt><dd>${(d.contracts || []).length} · data changes ${(d.data_model || []).length} · work packages ${(d.work_packages || []).length}</dd>
+          <dt>Design review</dt><dd>${rv.verdict ? `<span class="badge ${rv.verdict === "PASS" ? "green" : rv.verdict === "FAIL" ? "red" : ""}">${esc(rv.verdict)}</span> round ${esc(rv.round)}${(d.review_history || []).length > 1 ? ` of ${d.review_history.length}` : ""} · ${esc(rv.summary || "")}` : "not yet"}</dd>
+          <dt>Approval</dt><dd>${d.approval ? `${d.approval.by === "human" ? "approved by you" : "approved automatically"} · ${esc(timeAgo(d.approval.time))}${d.approval.note ? ` · ${esc(d.approval.note)}` : ""}` : pending ? "waiting for you" : "—"}</dd></div>
+        ${pending ? `<div class="design-approve"><textarea class="input" rows="2" id="designNote" placeholder="What should change? (required to request changes)"></textarea><div class="row wrap"><button class="btn sm primary" id="designApprove">${icon("check")}Approve design</button><button class="btn sm" id="designReject">${icon("x")}Request changes</button></div></div>` : ""}
+      </div></div>
+      ${changeSetCard(t)}
+      ${findings ? `<div class="card"><div class="card-head"><h3>Design review findings</h3><span class="badge outline">round ${esc(rv.round)}</span></div><div class="card-body"><ul class="findings">${findings}</ul></div></div>` : ""}
+      ${amendments ? `<div class="card"><div class="card-head"><h3>Amendments</h3><span class="badge amber">${d.amendments.length}</span></div><div class="card-body"><ul class="amend-list">${amendments}</ul></div></div>` : ""}
+      <nav class="design-nav" aria-label="Design sections">${DESIGN_SECTIONS.map(([k, l]) => `<button type="button" class="chip" data-design-sec="${k}">${esc(l)}</button>`).join("")}</nav>
+      <div class="doc md design-doc">${md(a.text || "")}</div>
+    </div>`;
+    const doc = $(".design-doc", body);
+    for (const h of $$("h3", doc)) { const sec = DESIGN_SECTIONS.find(([, l]) => l === h.textContent.trim()); if (sec) h.id = `design-${sec[0]}`; }
+    $$("[data-design-sec]", body).forEach((b) => (b.onclick = () => { $(`#design-${b.dataset.designSec}`, body)?.scrollIntoView({ behavior: "smooth", block: "start" }); }));
+    const note = () => $("#designNote", body)?.value.trim() || "";
+    $("#designApprove", body) && ($("#designApprove", body).onclick = async () => { try { await api.action(t.id, "approve", { note: note() }); toast("success", "Design approved"); } catch (e) { toast("error", "Failed", e.message); } });
+    $("#designReject", body) && ($("#designReject", body).onclick = async () => { if (!note()) { toast("warning", "Say what should change"); $("#designNote", body).focus(); return; } try { await api.action(t.id, "reject", { note: note() }); toast("info", "Changes requested"); } catch (e) { toast("error", "Failed", e.message); } });
+  }
+
+  // Every pull request of the change, in the order they must merge.
+  function changeSetCard(t) {
+    const d = t.design || {};
+    const rows = [{ name: basename(t.repo), primary: true, branch: t.branch || t.branch_name, pr_url: t.pr_url, pr_number: t.pr_number, github: t.github_repo, changed: t.changed_count }]
+      .concat(Object.entries(t.repo_worktrees || {}).map(([name, w]) => ({ name, branch: w.branch, pr_url: w.pr_url, pr_number: w.pr_number, github: w.github_repo, changed: w.changed_count })));
+    if (rows.length < 2 && !d.version) return "";
+    const order = (d.merge_order || []).filter((n) => rows.some((r) => r.name === n));
+    const sorted = [...order.map((n) => rows.find((r) => r.name === n)), ...rows.filter((r) => !order.includes(r.name))];
+    const prState = (r) => {
+      if (r.pr_url) { const st = r.primary ? prCached(t.id)?.state : ""; return `<a class="badge ${st === "merged" ? "purple" : "green"}" href="${esc(r.pr_url)}" target="_blank" rel="noopener">PR #${esc(r.pr_number || "")}${st ? ` · ${esc(st)}` : ""}</a>`; }
+      if (t.status === "done") return `<span class="badge">${r.changed ? "branch only" : "no changes"}</span>`;
+      return '<span class="badge outline">not delivered yet</span>';
+    };
+    const doc = t.design_doc || {};
+    return `<div class="card changeset-card"><div class="card-head"><h3>Change set</h3><span class="badge outline">${sorted.length} repositor${sorted.length === 1 ? "y" : "ies"}</span></div><div class="card-body stack" style="gap:6px">
+      <ol class="merge-order">${sorted.map((r, i) => `<li><span class="step">${i + 1}</span><span class="min0 stack" style="gap:1px"><span class="row wrap" style="gap:6px"><strong>${esc(r.name)}</strong>${r.primary ? '<span class="badge outline">primary</span>' : ""}</span><code class="mono muted truncate">${esc(r.branch || "")}</code></span>${prState(r)}</li>`).join("")}</ol>
+      <div class="help">${order.length ? "Merge in this order; each pull request carries the same Change set section with this checklist." : "Merge order follows the work packages once a design exists."}${doc.path ? ` Design committed as <code>${esc(doc.path)}</code>.` : doc.mode === "comment" ? " The design is posted on the primary pull request." : ""}</div>
+    </div></div>`;
+  }
+
   // ---------------------------------------------------------------- repository
   async function renderRepository(t) {
     if (!t.worktree && !t.repo) { body.innerHTML = '<div class="empty small">No repository.</div>'; return; }
@@ -572,6 +637,7 @@ export function mountInspector(container, getTask) {
       if (reason === "event" && state.tab === "timeline") return render();
       if (reason === "artifact" && ["checks", "review", "overview"].includes(state.tab)) return render();
       if (reason === "task" && ["overview", "sessions"].includes(state.tab)) return render();
+      if (reason === "task" && state.tab === "design" && !document.activeElement?.closest?.(".design-approve")) return render();
       if (reason === "task" && state.tab === "result" && getTask()?.status === "done") return render();
       if (reason === "task" && state.tab === "changes" && !state.diffPath) return render();
       if (reason === "force") return render();

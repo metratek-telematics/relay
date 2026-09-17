@@ -10,6 +10,7 @@ import { mountGithub } from "./views/github.js";
 import { mountIssues } from "./views/issues.js";
 import { mountRepos } from "./views/repos.js";
 import { mountLessons } from "./views/lessons.js";
+import { mountLearning } from "./views/learning.js";
 import { mountDigest, mountInbox } from "./views/digest.js";
 import { openNewTask } from "./views/newtask.js";
 import { TABS } from "./views/inspector.js";
@@ -134,7 +135,7 @@ function parseRoute() {
   if (parts[0] === "settings") return { view: "settings", id: null, tab: null, section: parts[1] || "workflow" };
   if (parts[0] === "org") return parseOrgRoute(parts);
   if (parts[0] === "repos") return { view: "repos", id: null, tab: null, section: parts[1] || "list" };
-  if (["agents", "github", "issues", "tasks", "dashboard", "lessons", "digest", "inbox"].includes(parts[0])) return { view: parts[0] === "dashboard" ? "dashboard" : parts[0], id: null, tab: null, section: null };
+  if (["agents", "github", "issues", "tasks", "dashboard", "lessons", "learning", "digest", "inbox"].includes(parts[0])) return { view: parts[0] === "dashboard" ? "dashboard" : parts[0], id: null, tab: null, section: null };
   return { view: "dashboard", id: null, tab: null, section: null };
 }
 function route() {
@@ -155,6 +156,7 @@ function route() {
   else if (r.view === "repos") view = mountRepos(main, r.section);
   else if (r.view === "tasks") view = mountTasksHome();
   else if (r.view === "lessons") view = mountLessons(main);
+  else if (r.view === "learning") view = mountLearning(main);
   else if (r.view === "digest") view = mountDigest(main);
   else if (r.view === "inbox") view = mountInbox(main);
   else if (r.view === "org") view = mountOrg(main, r.section, r.tab);
@@ -408,6 +410,7 @@ function onEvent(ev) {
     case "queue": S.queue = { ...S.queue, ...p }; renderQueue(); break;
     case "autopilot": S.autopilot = p; renderAutopilot(); view && view.update && view.update("autopilot", p); break;
     case "lessons": S.lessonsPending = p.pending || 0; renderLessonsBadge(); view && view.update && view.update("lessons"); break;
+    case "learning": if (p.proposals !== undefined) { const b = $("#learningBadge"); if (b) b.hidden = !p.proposals; } if (p.error) toast("error", "Playbook refresh failed", p.error); view && view.update && view.update("learning"); break;
     case "agents": { const j = p.job; if (j) toast(j.state === "done" ? "success" : "error", `${agentLabel(p.agent)} ${j.action === "remove" ? "removal" : j.action} ${j.state === "done" ? "finished" : "failed"}`, j.error || ""); view && view.update && view.update("agents"); break; }
   }
 }
@@ -430,6 +433,7 @@ function paletteItems() {
     { group: "Navigate", label: "GitHub inbox", icon: "github", hint: keysFor("goGithub"), onClick: () => navigate("#/github") },
     { group: "Navigate", label: "Repositories", icon: "folder", hint: keysFor("goRepos"), keywords: "branches clone git", onClick: () => navigate("#/repos") },
     { group: "Navigate", label: "Lessons", icon: "brain", hint: keysFor("goLessons"), keywords: "learning retrospective score success", onClick: () => navigate("#/lessons") },
+    { group: "Navigate", label: "Learning", icon: "gauge", keywords: "recommendation team risk playbook autopsy proposals calibration", onClick: () => navigate("#/learning") },
     { group: "Navigate", label: "Worktrees", icon: "layers", keywords: "clean up repositories", onClick: () => navigate("#/repos/worktrees") },
     { group: "Navigate", label: "Settings", icon: "settings", hint: keysFor("goSettings"), onClick: () => navigate("#/settings") },
     { group: "Navigate", label: "Notification settings", icon: "bell", onClick: () => navigate("#/settings/notifications") },

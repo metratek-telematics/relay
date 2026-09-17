@@ -17,7 +17,7 @@ from flask import Flask, Response, jsonify, request, send_from_directory
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
-from orchestrator import agents, config as C, github, gitops, handoff, history, repo_env, repos  # noqa: E402
+from orchestrator import agents, config as C, design, github, gitops, handoff, history, repo_env, repos  # noqa: E402
 from orchestrator import issues, stacks  # noqa: E402
 from orchestrator import multirepo, systemmap  # noqa: E402
 from orchestrator import agent_info, installer, lessons  # noqa: E402
@@ -104,6 +104,8 @@ manager = Manager(broadcast)
 # People, projects, roles, audit, integrations, API tokens, usage and onboarding (orchestrator/org).
 from orchestrator.org import web as org_web  # noqa: E402
 org_web.install(app, manager, broadcast)
+import web_learning  # noqa: E402  learning engine API (recommendations, risk, proposals, playbooks)
+app.register_blueprint(web_learning.init(manager, broadcast))
 
 
 @app.after_request
@@ -518,6 +520,20 @@ def task_files(tid):
         # Tasks delivered before base-aware counts stored 0 files; correct them when they are looked at.
         manager.set_meta(tid, diffstat=stat, changed_count=len(files), base_commit=base)
     return jsonify({"files": files, "stat": stat})
+
+
+@app.get("/api/tasks/<tid>/changeset")
+def task_changeset(tid):
+    """The shared change set every pull request of the task carries (merge order, design link, evidence), rendered without pushing."""
+    t = task_or_404(tid)
+    run_dir = Path(t.get("run_dir") or "")
+    bodies = {}
+    if run_dir.is_dir():
+        if (run_dir / "PR_BODY.md").exists():
+            bodies[Path(t.get("repo") or "").name] = (run_dir / "PR_BODY.md").read_text(encoding="utf-8", errors="replace")
+        for f in sorted((run_dir / "repos").glob("*/PR_BODY.md")) if (run_dir / "repos").is_dir() else []:
+            bodies[f.parent.name] = f.read_text(encoding="utf-8", errors="replace")
+    return jsonify({**design.changeset(t), "markdown": design.changeset_md(t, manager.cfg()), "pr_bodies": bodies})
 
 
 @app.get("/api/tasks/<tid>/handoff")

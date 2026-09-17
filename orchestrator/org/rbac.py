@@ -52,6 +52,7 @@ RULES: list[tuple[tuple, re.Pattern, str, str]] = [(m, re.compile(rx), r, label)
     (("POST",), r"^/api/(queue/(start|stop)|run)$", "member", "run or halt the queue"),
     (("POST",), r"^/api/lessons$", "member", "propose a lesson"),
     (("POST",), r"^/api/org/onboarding/sample-task$", "member", "run the sample task"),
+    (("POST",), r"^/api/learning/preflight$", "member", "check a task's risk before creating it"),
     # ---- owners
     (W, r"^/api/org/users(/.*)?$", "owner", "manage people and roles"),
     (W, r"^/api/org/settings/auth$", "owner", "change sign-in and role mapping"),
