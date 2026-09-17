@@ -231,9 +231,9 @@ function renderCard(t, v) {
   const rows = services.map((s) => {
     const l = s.live, sst = up && l ? l.status : "stopped";
     return `<li class="stk-li">
-      <div class="stk-li-main"><span class="dot ${sst === "healthy" ? "on" : sst === "starting" ? "warn" : ["unhealthy", "exited"].includes(sst) ? "off" : ""}"></span>
-        <strong>${esc(s.name)}</strong>${s.role === "simulator" ? '<span class="badge outline">simulator</span>' : ""}
-        <span class="muted truncate" title="${esc(l?.source || s.repo || s.image)}">${esc(l?.source_kind || (s.repo ? basename(s.repo) : s.image))}</span></div>
+      <div class="stk-li-main"><div class="stk-li-name"><span class="dot ${sst === "healthy" ? "on" : sst === "starting" ? "warn" : ["unhealthy", "exited"].includes(sst) ? "off" : ""}"></span>
+        <strong>${esc(s.name)}</strong>${s.role === "simulator" ? '<span class="badge outline">simulator</span>' : ""}</div>
+        <span class="stk-src truncate" title="${esc(l?.source || s.repo || s.image)}">${esc(s.repo ? basename(s.repo) : s.image)}${up && l?.source_kind ? ` · ${esc({ "task worktree": "worktree", "repository checkout": "checkout" }[l.source_kind] || l.source_kind)}` : ""}</span></div>
       <div class="stk-li-side"><span class="badge ${STATUS_TONE[sst] ?? ""}">${esc(sst)}</span>
         ${up && l?.url ? `<a class="btn xs" href="/api/tasks/${encodeURIComponent(t.id)}/stack/open/${encodeURIComponent(s.name)}/" target="_blank" rel="noopener" title="Open through Relay (${esc(l.host_url || l.url)} on the host)">${icon("external", "sm")}Open</a>` : ""}
         <button class="btn xs" data-logs="${esc(s.name)}" ${l ? "" : "disabled"} title="Logs">${icon("terminal", "sm")}Logs</button>

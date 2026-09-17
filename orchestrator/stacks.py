@@ -1265,6 +1265,9 @@ def pipeline_teardown(p) -> None:
     try:
         down(p.tid, log=lambda s: p.r.timeline("system", "Integration stack stopped", s), logs_dir=Path(p.run_dir) / "stack-logs",
              reason="task ended")
+        summary = p.task_meta().get("stack")
+        if summary:
+            p.m.set_meta(p.tid, stack={**summary, "status": "down"})
     except Exception as e:  # stopping must never mask the task's own outcome
         try:
             p.r.timeline("system", "Integration stack teardown failed", str(e)[:200])
