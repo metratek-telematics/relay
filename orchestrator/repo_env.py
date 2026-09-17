@@ -7,6 +7,7 @@ it here, per repository, under its data folder, and hands it to every task in th
   * variables   exported to agents, setup, services and verification, and (optionally) written to
                 the worktree's `.env` so apps that load dotenv files see them too
   * files       written into the worktree at their relative path and excluded from git
+  * system_packages  apt packages Relay installs (once, cached) before setup, e.g. unixodbc for pyodbc
   * setup       replaces the detected dependency install when set
   * services    commands started before the team works (a database, a mock server) and stopped after
   * checks      the commands that prove the work; required ones block delivery, optional ones inform
@@ -53,7 +54,8 @@ def _path(repo) -> Path:
 
 
 def empty() -> dict:
-    return {"vars": [], "files": [], "write_dotenv": True, "setup": "", "services_up": "", "services_down": "", "checks": [], "stack": ""}
+    return {"vars": [], "files": [], "write_dotenv": True, "setup": "", "services_up": "", "services_down": "", "checks": [],
+            "system_packages": [], "stack": ""}
 
 
 def load(repo) -> dict:
@@ -102,6 +104,8 @@ def save(repo, incoming: dict) -> dict:
     out["write_dotenv"] = bool(incoming.get("write_dotenv", True))
     for k in ("setup", "services_up", "services_down", "stack"):
         out[k] = str(incoming.get(k) or "").strip()
+    from . import syspkgs
+    out["system_packages"] = syspkgs.parse(incoming.get("system_packages"))  # raises ValueError on a bad name
     for c in incoming.get("checks") or []:
         cmd = str(c.get("command") or "").strip()
         if cmd:
@@ -237,6 +241,9 @@ def describe(data: dict) -> str:
     if data["files"]:
         lines.append("- Local config files Relay placed in the worktree (git-ignored, never commit them): "
                      + ", ".join(f"`{f['path']}`" for f in data["files"]))
+    if data.get("system_packages"):
+        lines.append("- System packages Relay installed for this repository: " + ", ".join(f"`{p}`" for p in data["system_packages"])
+                     + ". If another one is missing, record it as a blocked check naming the package; never run apt-get yourself.")
     if data.get("services_up"):
         lines.append(f"- Services Relay started for this task: `{data['services_up']}`.")
     if data["checks"]:

@@ -66,7 +66,19 @@ def detect_setup(wt) -> str:
     steps = [c for c in (_node_setup(wt), _python_setup(wt), *_other_setup(wt)) if c]
     if _python_setup(wt):
         exclude_from_git(wt, ".venv/")
+    if is_python(wt):
+        exclude_python_artifacts(wt)
     return " && ".join(f"( {c} )" if len(steps) > 1 else c for c in steps)
+
+
+# Written by Relay's own setup and checks, never by the change: `pip install -e .` leaves *.egg-info, pytest leaves
+# __pycache__. Without a .gitignore entry Relay's `git add -A` committed them (a real run had to untrack an egg-info).
+PYTHON_ARTIFACTS = ("__pycache__/", "*.egg-info/", ".pytest_cache/")
+
+
+def exclude_python_artifacts(wt) -> None:
+    for pattern in PYTHON_ARTIFACTS:
+        exclude_from_git(Path(wt), pattern)
 
 
 def exclude_from_git(wt: Path, pattern: str) -> None:
