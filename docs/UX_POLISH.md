@@ -125,4 +125,7 @@ altogether would cost the sixth board column below 1560 px.
   by reading the code, not measured.
 - `#/task/…` still shows a skeleton for ~150 ms while its conversation loads; the shell is instant but the
   conversation is not yet streamed in behind the previous content.
+- Eleven "Loading…" strings remain inside task-page tabs (changes, checks, logs, the repository tree) and
+  the new-task dialog; they are small panels inside an already-drawn page, so they were left for a later
+  pass.
 - `#/org/people` takes ~500 ms to settle — that is the workspace API, not the front end.
