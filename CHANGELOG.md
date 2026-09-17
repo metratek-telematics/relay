@@ -121,6 +121,10 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Gemini shown as not signed in although it works.** Gemini CLI 0.60 keeps an API key or Google login in its own
+  encrypted `gemini-credentials.json`, which readiness detection did not recognise.
+- **Gemini logins lost on every container recreate.** The CLI derives that file's encryption key from the hostname,
+  and a container gets a random one. The compose files now give the Relay container a fixed hostname.
 - **A command stuck "running" forever after a restart.** A command or tool call interrupted by a Relay restart kept its
   spinner and a growing timer. At startup they are now marked "interrupted by a restart".
 - **Work committed to the wrong branch.** If the worktree was switched to another branch (for example in VS Code),

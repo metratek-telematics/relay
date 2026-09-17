@@ -22,6 +22,9 @@ services:
         GEMINI_VERSION: ${GEMINI_VERSION:-latest}
     image: relay:local
     container_name: relay
+    # Gemini CLI encrypts saved logins with a key derived from the hostname; a random container
+    # hostname would invalidate them on every recreate.
+    hostname: relay
     restart: unless-stopped
     init: false  # tini is the entrypoint already
 

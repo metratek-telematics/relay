@@ -577,6 +577,11 @@ class GeminiAdapter(AgentAdapter):
         # Vertex AI and Cloud Shell use ambient credentials once chosen in settings.json.
         if auth in ("vertex-ai", "cloud-shell", "compute-default-credentials"):
             return True
+        # Newer builds keep an API key or a Google login in their own encrypted file instead of
+        # oauth_creds.json or the environment. It is keyed to the hostname, so it only counts as
+        # signed in when it was written on this machine; the smoke test proves it either way.
+        if auth in ("gemini-api-key", "oauth-personal") and (home / "gemini-credentials.json").is_file():
+            return True
         # Builds that keep the Google token in the system keychain still record the account here.
         if auth == "oauth-personal":
             try:
