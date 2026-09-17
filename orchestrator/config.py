@@ -248,6 +248,16 @@ DEFAULTS = {
     "budget_verify_pass_quiet": True,   # on PASS send just the verdict, not the output
     "budget_file_list": 40,             # changed files listed back to the supervisor
     "budget_tool_output_chars": 8000,   # tool result stored per message
+    # Tools (orchestrator/toolbox.py): what agents may ask for, and whether Relay's MCP servers replace the user's own.
+    "tools_request_policy": "ask",      # ask | auto_catalog | auto_dev (catalog anywhere, anything in dev projects) | off
+    "tools_isolate_user_mcp": False,    # Claude: --strict-mcp-config, so only the task's tools load (fewer tool tokens)
+    # Token efficiency (orchestrator/tokens.py, docs/TOKEN_EFFICIENCY.md)
+    "token_prompt_deltas": True,        # do not re-send what a live session already has (contract, verification, reply help)
+    "token_failure_excerpts": True,     # failing checks: the lines that explain the failure, deduplicated
+    "token_diff_mode": "targeted",      # targeted: diffstat + hunks that fit + git command for the rest · full: truncated diff
+    "token_compact_threshold": 120000,  # fresh session with a Relay handoff once a session's context passes this (0 = off)
+    "token_codex_verbosity": "low",     # Codex model_verbosity for GPT-5 family models ("" = the CLI's default)
+    "token_claude_max_output_tokens": 0,  # CLAUDE_CODE_MAX_OUTPUT_TOKENS per response (0 = Claude Code's default)
     # verification
     "verification_commands": [],
     "auto_detect_verification": True,

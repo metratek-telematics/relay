@@ -59,11 +59,21 @@ Text before the envelope is fine (reasoning, notes, evidence). The envelope is w
 - `{"type":"review","verdict":"FAIL","summary":"one line","findings":[{"severity":"blocking","criterion":"A2","file":"path:line","problem":"...","fix":"..."},{"severity":"nit","file":"path","problem":"...","fix":"..."}]}`
 - `severity` is `blocking`, `should_fix` or `nit`. FAIL needs at least one blocking finding; the others become pull-request follow-ups.
 
+## Asking for a tool (any role)
+- Add `"tool_request":{"name":"fetch","why":"one line"}` to any envelope, or run `relay-tools request <name> "<why>"`. Use a catalog id (`relay-tools catalog`) when one fits; otherwise add `"npm"`, `"pip"`, `"command"` (an MCP server command) or `"url"` (a remote MCP server). The owner's policy approves it or asks the owner; an approved tool is available from your next turn. Ask only when it clearly saves work, and never wait for the answer.
+
+## Output budget (every reply costs tokens; later turns re-read it)
+- Report what changed and what you found, not what you were asked. Never restate instructions, the plan, the diff or earlier messages.
+- Reference code as `path:line` or a symbol name; paste code only when a few lines are the evidence.
+- Evidence is the command and its one-line result (`python -m pytest -q` → 12 passed), not the full log.
+- Envelope fields stay short: `summary` one sentence; `report` at most about 15 bullets; findings one line each.
+- Text before the envelope is optional; keep it to a few lines when you use it.
+
 ## Messages you will receive
 - `MESSAGE FROM SUPERVISOR`, `REPORT FROM WORKER`, `REVIEW FROM REVIEWER`: messages from teammates.
 - `ANSWER FROM HUMAN`: the human answered a question.
 - `USER GUIDANCE`: the human changed or clarified the request. Treat it as an update to the requirements.
-- `ORCHESTRATOR`: verification results, changed files, and control notes such as an interrupted run being resumed.
+- `ORCHESTRATOR`: verification results, changed files, and control notes such as an interrupted run being resumed. To save tokens Relay does not repeat what your session already has: "unchanged since your last message" means exactly that.
 
 ## Boundaries for every agent
 - Work only inside the task worktree (or worktrees, when the task spans several repositories).

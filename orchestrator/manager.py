@@ -230,6 +230,8 @@ class Manager:
             t["repos"] = repos
         if isinstance(payload.get("connectors"), list):  # None keeps the repository's default connectors
             t["connectors"] = [str(n) for n in payload["connectors"]][:50]
+        if isinstance(payload.get("tools"), list):  # None: the global and repository tools (orchestrator/toolbox.py)
+            t["tools"] = [str(n) for n in payload["tools"]][:50]
         self.store.add(t)
         C.remember_repo(repo)
         self.config_changed()
@@ -264,6 +266,8 @@ class Manager:
             allowed["cost_cap_usd"] = max(0.0, float(patch.get("cost_cap_usd") or 0))
         if "connectors" in patch and (patch["connectors"] is None or isinstance(patch["connectors"], list)):
             allowed["connectors"] = patch["connectors"]
+        if "tools" in patch and (patch["tools"] is None or isinstance(patch["tools"], list)):
+            allowed["tools"] = patch["tools"]
         if "workflow" in patch and isinstance(patch["workflow"], dict):
             wf = dict(t.get("workflow") or {})
             for k in ("max_turns", "max_review_rounds", "verify_mode", "approval_before_delivery", "allow_agent_questions"):
@@ -801,7 +805,7 @@ class Manager:
                 + out * float(price.get("output") or 0)) / 1_000_000
         return round(cost, 5), cost > 0
 
-    def metrics_add(self, tid, agent, role, usage, elapsed, tool_calls, turn=None):
+    def metrics_add(self, tid, agent, role, usage, elapsed, tool_calls, turn=None, extra=None):
         t = self.store.get(tid) or {}
         m = copy.deepcopy(t.get("metrics") or {})
         m.setdefault("agents", {})
@@ -812,7 +816,11 @@ class Manager:
         m["log"] = (list(m.get("log") or []) + [{
             "start": round(end - float(elapsed or 0), 1), "end": round(end, 1), "role": role, "agent": agent, "turn": turn,
             "input": int(usage.get("input") or 0), "output": int(usage.get("output") or 0), "cached": int(usage.get("cached") or 0),
-            "cost_usd": round(cost, 5), "estimated": estimated, "tool_calls": int(tool_calls or 0)}])[-MAX_TURN_LOG:]
+            "cost_usd": round(cost, 5), "estimated": estimated, "tool_calls": int(tool_calls or 0), **(extra or {})}])[-MAX_TURN_LOG:]
+        if extra and extra.get("sections"):  # prompt size by section, summed over the task (tokens.py)
+            sec = m.setdefault("sections", {})
+            for k, v in extra["sections"].items():
+                sec[k] = int(sec.get(k) or 0) + int(v or 0)
         for key, bucket in ((agent, m["agents"]), (role, m["roles"])):
             d = bucket.setdefault(key, {"turns": 0, "input": 0, "output": 0, "cached": 0, "cost_usd": 0.0, "seconds": 0.0, "tool_calls": 0, "estimated": False})
             d["turns"] += 1

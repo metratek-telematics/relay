@@ -3,6 +3,7 @@
 import { $, $$, esc, icon, toast, md, timeAgo, fmtDur, throttle } from "../ui.js";
 import { S, agentLabel, navigate } from "../state.js";
 import { api } from "../api.js";
+import { toolRequestActionsHtml, bindToolRequests } from "./tools.js";
 
 const KIND = {
   question: ["Question", "amber", "question"],
@@ -10,6 +11,7 @@ const KIND = {
   approval: ["Approval", "purple", "shield"],
   parked: ["Paused", "amber", "pause"],
   blocked: ["Blocked", "red", "alert"],
+  tool_request: ["Tool request", "blue", "package"],
 };
 const ROLE = { supervisor: "supervisor", worker: "worker", reviewer: "reviewer", orchestrator: "Relay's judge" };
 const clock = (ts) => (ts ? new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "");
@@ -24,7 +26,7 @@ const taskRef = (x) => `<a class="nx-task" href="#/task/${esc(x.task_id)}">${x.n
 // ---------------------------------------------------------------------------- inbox items
 export function inboxItemHtml(x) {
   const [kindLabel, tone, ic] = KIND[x.kind] || KIND.question;
-  const who = x.kind === "question" ? `${esc(agentLabel(x.agent))} (${esc(ROLE[x.from] || x.from || "agent")}) asks` : x.kind === "escalation" ? "Relay's judge needs a decision" : x.kind === "approval" ? "Ready to deliver" : "";
+  const who = x.kind === "tool_request" ? `${esc(agentLabel(x.agent))} (${esc(ROLE[x.from] || x.from || "agent")}) asks for a tool` : x.kind === "question" ? `${esc(agentLabel(x.agent))} (${esc(ROLE[x.from] || x.from || "agent")}) asks` : x.kind === "escalation" ? "Relay's judge needs a decision" : x.kind === "approval" ? "Ready to deliver" : "";
   const opts = (x.options || []).map((o) => `<button type="button" class="btn sm nx-opt" data-answer-opt="${esc(o)}">${esc(o)}</button>`).join("");
   let actions = "";
   if (x.kind === "question" || x.kind === "escalation") {
@@ -38,6 +40,8 @@ export function inboxItemHtml(x) {
       <div class="nx-opts"><button type="button" class="btn sm primary" data-approve>${icon("check")}Approve delivery</button><button type="button" class="btn sm" data-reject>${icon("x")}Request changes</button></div>`;
   } else if (x.kind === "parked") {
     actions = `<div class="nx-opts"><button type="button" class="btn sm primary" data-resume>${icon("play")}Resume</button><button type="button" class="btn sm danger" data-stop>${icon("stop")}Stop</button></div>`;
+  } else if (x.kind === "tool_request") {
+    actions = toolRequestActionsHtml(x);
   } else if (x.kind === "blocked" && x.blocker) {
     actions = `<div class="nx-opts"><button type="button" class="btn sm primary" data-retry-dep="${esc(x.blocker.id)}">${icon("retry")}Retry ${esc(x.blocker.label)}</button><button type="button" class="btn sm" data-drop-dep="${esc(x.blocker.id)}">${icon("x")}Run without it</button></div>`;
   }
@@ -52,6 +56,7 @@ export function inboxItemHtml(x) {
 }
 
 export function bindInbox(root, items, onDone) {
+  bindToolRequests(root, onDone);
   const find = (el) => items.find((x) => x.id === el.closest("[data-inbox]")?.dataset.inbox);
   const run = async (btn, fn, ok) => {
     const card = btn.closest(".nx-item");

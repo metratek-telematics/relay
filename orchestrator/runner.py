@@ -12,6 +12,7 @@ import threading
 import time
 from pathlib import Path
 
+from . import tokens, toolbox
 from .agents import TurnContext, adapter
 from .environment import venv_bin
 from .util import IS_WINDOWS, kill_tree, new_id, now, popen_group_kwargs, truncate
@@ -107,9 +108,10 @@ class Runner:
         self._mask = fn
 
     def _m(self, value):
-        fn = getattr(self, "_mask", None)
-        if not fn:
+        fns = [f for f in (getattr(self, "_mask", None), getattr(self, "_tool_mask", None)) if f]
+        if not fns:
             return value
+        fn = fns[0] if len(fns) == 1 else (lambda s: fns[1](fns[0](s)))
         if isinstance(value, str):
             return fn(value)
         if isinstance(value, list):
@@ -301,6 +303,12 @@ class Runner:
         _with_stack(env, self.tid)
         # Agent CLIs run their shell tools as login shells (`bash -lc`), which rebuild PATH from /etc/profile and
         # drop the .venv: workers hit `python: command not found`. The image's /etc/profile.d/relay-path.sh restores this.
+        # The task's tools: MCP servers in this CLI's own per-run config, tool binaries on PATH, secrets in env only.
+        tinfo = toolbox.prepare_turn(self.m.store.get(self.tid) or {"id": self.tid}, agent_name, args, env, cfg, run_dir, role, cwd)
+        args = tinfo["argv"]
+        if tinfo["mask"]:
+            self._tool_mask = tinfo["mask"]
+        tool_chars = [0]
         if env is not None and env.get("PATH"):
             env["RELAY_PATH"] = env["PATH"]
         ctx = TurnContext()
@@ -349,10 +357,21 @@ class Runner:
                         inp_s = inp if isinstance(inp, str) else _j.dumps(inp, ensure_ascii=False, indent=2)
                     except Exception:
                         inp_s = str(inp)
-                    m = self.msg(role=role, agent=agent_name, kind="tool", tool=ev.get("tool"), category=ev.get("category"),
-                                 summary=ev.get("summary"), input=truncate(inp_s, 6000), status="running", turn=turn)
+                    tool_label, extra = ev.get("tool"), {}
+                    try:
+                        hit = toolbox.classify(ev.get("tool"), ev.get("category"), ev.get("summary"), tinfo["tools"])
+                        if hit:
+                            extra["relay_tool"] = hit[0]
+                            if ev.get("category") == "mcp" or hit[0] in tinfo["servers"]:
+                                tool_label, extra["category"] = hit[1], "mcp"
+                            toolbox.record_use(hit[0], self.tid, role, agent_name, hit[1])
+                    except Exception as e:
+                        self.rawlog(f"tool usage: {e}", "system")
+                    m = self.msg(role=role, agent=agent_name, kind="tool", tool=tool_label, category=extra.pop("category", ev.get("category")),
+                                 summary=ev.get("summary"), input=truncate(inp_s, 6000), status="running", turn=turn, **extra)
                     tool_msgs[ev.get("id")] = m["id"]
                 elif k == "tool_result":
+                    tool_chars[0] += len(ev.get("output") or "")
                     mid = tool_msgs.get(ev.get("id"))
                     if mid:
                         cap = int(cfg.get("budget_tool_output_chars") or 12000)
@@ -395,7 +414,17 @@ class Runner:
             interesting = list(dict.fromkeys(l for l in log_lines if any(w in l.lower() for w in ("error", "fail", "denied", "cannot", "unable", "requires", "ignoring"))))
             if interesting:
                 self.msg(role=role, agent=agent_name, kind="notice", content=truncate("\n".join(interesting[-12:]), 3000), turn=turn)
-        self.m.metrics_add(self.tid, agent_name, role, res.get("usage") or {}, elapsed, res.get("tool_calls", 0), turn)
+        # Where this turn's prompt went (tokens.py), and how large the session's context now is (for compaction).
+        usage = res.get("usage") or {}
+        sections = {k: tokens.est(v) for k, v in tokens.sections_of(prompt).items()}
+        if len(sent_prompt) > len(prompt):
+            sections["transcript"] = tokens.est(len(sent_prompt) - len(prompt))
+        prev_ctx = int(session.get("context_tokens") or 0) if int(session.get("turns", 0)) > 0 else 0
+        estimate = prev_ctx + tokens.est(len(sent_prompt) + tool_chars[0] + len(res.get("text") or "")) + int(usage.get("output") or 0)
+        res["session"]["context_tokens"] = int(usage.get("context") or 0) or estimate
+        self.m.metrics_add(self.tid, agent_name, role, usage, elapsed, res.get("tool_calls", 0), turn,
+                           extra={"sections": sections, "prompt_est": tokens.est(len(sent_prompt)), "context": res["session"]["context_tokens"],
+                                  "cache_write": int(usage.get("cache_write") or 0), "mcp": tinfo["servers"]})
         if rc not in (0, None) and not res.get("text"):
             tail = "\n".join(log_lines[-15:])
             res["ok"] = False
