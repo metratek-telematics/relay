@@ -50,7 +50,7 @@ export const orgApi = {
 };
 
 // ---------------------------------------------------------------------------- who am I
-export const ORG = { me: null, projects: [], loaded: false };
+export const ORG = { me: null, projects: [], people: [], loaded: false };
 const LEVEL = { anonymous: 0, viewer: 10, member: 20, admin: 30, owner: 40 };
 export const can = (role) => (LEVEL[ORG.me?.role] || 0) >= (LEVEL[role] || 0);
 
@@ -59,6 +59,7 @@ export async function loadMe() {
     ORG.me = await orgApi.me();
     ORG.projects = ORG.me.projects || [];
     ORG.loaded = true;
+    orgApi.users().then((r) => { ORG.people = r.users || []; }).catch(() => {});
     document.documentElement.dataset.role = ORG.me.role;
     const p = currentProject();
     if (p && !ORG.projects.some((x) => x.id === p)) setProject("all", { silent: true });

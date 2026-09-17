@@ -8,6 +8,7 @@ import { acceptanceCardHtml, bindAcceptance } from "../acceptance.js";
 import { openTaskFolder } from "../ide.js";
 import { scorecardCard, bindScorecard } from "./success.js";
 import { stackCardHtml, bindStackCard } from "./stacks.js";
+import { attributionHtml } from "./org/attribution.js";
 
 export const TABS = [
   ["overview", "Overview", "layers"], ["result", "Try it", "play"], ["history", "History", "clock"], ["timeline", "Timeline", "activity"], ["changes", "Changes", "branch"],
@@ -112,6 +113,7 @@ export function mountInspector(container, getTask) {
           <div class="stat"><b>${fmtNum((m.input || 0) + (m.output || 0))}</b><span>tokens</span></div>
           <div class="stat" title="${m.estimated ? "Estimated at API-equivalent rates; subscription usage is not billed per token" : "Reported by the CLI"}"><b>${fmtCost(m.cost_usd, m.estimated)}</b><span>${m.estimated ? "est. cost" : "cost"}</span></div>
         </div>
+        ${attributionHtml(t)}
         ${t.error ? `<div class="ecard"><strong>Failure</strong>${esc(t.error)}</div>` : ""}
         ${t.summary ? `<div class="card"><div class="card-head"><h3>Summary</h3></div><div class="card-body md">${md(t.summary)}</div></div>` : ""}
         ${acceptanceCardHtml(t, { editing: bindAcceptance.editing })}
