@@ -77,3 +77,28 @@ the redesign moves things; the redesign itself is described at the end.
 6. **One design system**: the house palette (marine teal primary, warm paper light theme, deep teal-navy dark theme,
    state colours reserved for status), Hanken Grotesk and JetBrains Mono self-hosted, a type and spacing scale,
    elevation tokens, motion gated behind `prefers-reduced-motion`, and visible focus rings.
+
+## 6. Visual QA after the redesign
+
+`tools/ui_qa.mjs` walks 46 screens (Mission Control and its ranges, Work, every task view, the review cockpit and
+status page, every Knowledge tab, Agents, every Settings section, every workspace page, the user and project menus,
+the new-task dialog and the palette) at 1440, 1024, 768 and 420 px in both themes, takes a screenshot of each and
+checks automatically for:
+
+- horizontal page scroll;
+- text clipped by `overflow: hidden` without an ellipsis;
+- text below WCAG AA contrast against its real background (4.5:1, or 3:1 for large text), which also catches text
+  the same colour as its background;
+- avatars, counters, step dots and icon tiles whose content sits more than 2 px off centre, and names containing
+  zero-width or mis-decoded characters;
+- buttons whose label wrapped.
+
+Found and fixed in the pass: state labels on tinted backgrounds below AA in the light theme (state colours now have
+darker "ink" variants for text, bright variants stay for dots, bars and rings); avatars in People and Usage sitting
+9 px high because a blanket `span { display: block }` rule overrode their grid centring; the `.outline` class of
+the task outline colliding with `.badge.outline` and pushing badges up in card headers; step numbers in Getting
+started unreadable in the dark theme; the connection line truncating beside the user button; the file list in
+Changes squeezed to one row on phones; settings and workspace navigation taking a whole phone screen; a 502 console
+error when GitHub's CLI is signed out. Names arriving from the identity provider are now decoded as UTF-8 and
+stripped of zero-width and control characters before they become display names or initials, so
+"Andreas<zero-width space> Sakellariou" shows as "AS", not "AÂ". The final run reports no findings.

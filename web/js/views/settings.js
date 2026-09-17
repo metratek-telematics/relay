@@ -338,7 +338,7 @@ export function mountSettings(main, section) {
         <div class="field"><label>Density</label><select data-cfg="ui_density">${["comfortable", "compact"].map((x) => `<option ${c.ui_density === x ? "selected" : ""}>${x}</option>`).join("")}</select></div></div>
       </div></div>
       <div class="card"><div class="card-head"><h3>Keyboard</h3><button type="button" class="btn sm" id="showKeys">${icon("keyboard")}All shortcuts <kbd>?</kbd></button></div><div class="card-body hint">
-        <kbd>${esc(keysFor("palette"))}</kbd> command palette · <kbd>N</kbd> new task · <kbd>/</kbd> search · <kbd>J</kbd> <kbd>K</kbd> next and previous task · <kbd>G</kbd> then <kbd>D</kbd> <kbd>T</kbd> <kbd>A</kbd> <kbd>H</kbd> <kbd>S</kbd> go to a page · <kbd>T</kbd> Try it · <kbd>.</kbd> guidance · <kbd>Esc</kbd> close.
+        <kbd>${esc(keysFor("palette"))}</kbd> command palette · <kbd>N</kbd> new task · <kbd>/</kbd> search · <kbd>J</kbd> <kbd>K</kbd> next and previous task · <kbd>G</kbd> then <kbd>H</kbd> <kbd>W</kbd> <kbd>K</kbd> <kbd>A</kbd> <kbd>S</kbd> go to Mission Control, Work, Knowledge, Agents, Settings · <kbd>T</kbd> Try it · <kbd>.</kbd> guidance · <kbd>Esc</kbd> close.
       </div></div>`;
       bindAuto();
       $$("[data-cfg='ui_theme'],[data-cfg='ui_density']", body).forEach((s) => s.addEventListener("change", () => bus.emit("theme", { theme: $("[data-cfg='ui_theme']", body).value, density: $("[data-cfg='ui_density']", body).value })));
