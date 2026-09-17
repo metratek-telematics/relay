@@ -25,11 +25,12 @@ export function agentHealthRow(name, h, { compact = false, job = null } = {}) {
   const actions = compact ? "" : pack
     ? (h.installed
       ? `${signedOut ? `<button class="btn sm primary" data-signin="${esc(name)}" ${busy ? "disabled" : ""}>${icon("shield")}Sign in</button>` : ""}
+         <button class="btn sm" data-models="${esc(name)}">${icon("layers")}Models &amp; usage</button>
          <button class="btn sm" data-configure="${esc(name)}">${icon("settings")}Configure</button>
          <button class="btn sm" data-test="${esc(name)}" ${busy ? "disabled" : ""}>${icon("zap")}Test</button>
          <button class="btn sm ghost" data-more="${esc(name)}" title="Update or remove" ${busy ? "disabled" : ""}>${icon("more")}</button>`
       : `<button class="btn sm primary" data-install="${esc(name)}" ${busy ? "disabled" : ""}>${icon("download")}Install</button>`)
-    : `<button class="btn sm" data-test="${esc(name)}" ${h.installed ? "" : "disabled"}>${icon("zap")}Test</button>`;
+    : `<button class="btn sm" data-models="${esc(name)}" ${h.installed ? "" : "disabled"}>${icon("layers")}Models</button><button class="btn sm" data-test="${esc(name)}" ${h.installed ? "" : "disabled"}>${icon("zap")}Test</button>`;
   return `<div class="ah ${pack && !compact ? "ah-pack" : ""} ${pack && !h.installed ? "ah-off" : ""}" data-agent="${esc(name)}">
     <span class="av lg ${esc(name)}">${esc(agentInitial(name))}</span>
     <div class="who"><strong>${esc(agentLabel(name))} <span class="muted" style="font-weight:500">· ${esc(meta.vendor || "")}</span>${meta.edit_only ? ` <span class="badge" title="Edits files but cannot run commands or tests">edits only</span>` : ""}</strong>
@@ -52,7 +53,7 @@ function openSignIn(name) {
   const ide = (S.config || {}).ide_url;
   const keys = (meta.auth || {}).env || [];
   const m = modal(`<h2><span class="av sm ${esc(name)}">${esc(agentInitial(name))}</span> Sign in to ${esc(meta.label || name)}</h2>
-    <p class="hint">Sign-ins are saved in Relay's home folder, which the browser VS Code shares, so a login done there is used by every task.</p>
+    <p class="hint">Sign-ins are saved in Relay's home folder, which the browser VS Code shares, so a login done there is used by every task. A login run directly in the server's own shell is saved somewhere Relay cannot see.</p>
     <h3>Option 1: log in from a terminal</h3>
     <p class="hint">${ide ? `Open <a href="${esc(ide)}" target="_blank" rel="noopener">VS Code</a>, then Terminal → New Terminal, and run:` : "On the server, run:"}</p>
     ${commandBlock(ide ? [meta.login] : [`docker exec -it relay ${meta.login}`])}
@@ -63,6 +64,73 @@ function openSignIn(name) {
   bindCopy(m.body);
   const go = $("#goConfigure", m.body);
   if (go) go.onclick = () => { m.close(); openConfigure(name); };
+}
+
+const fmtPrice = (v) => (v == null ? "?" : `$${Number(v) < 1 ? Number(v).toFixed(2) : Number(v).toFixed(Number(v) % 1 ? 2 : 0)}`);
+const fmtCtx = (n) => (!n ? "" : n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : `${Math.round(n / 1000)}k`);
+
+export function openModels(name) {
+  const meta = S.agentMeta[name] || {};
+  const cfg = S.config || {};
+  let picked = [...((cfg.models || {})[name] || [])];
+  let def = ((cfg.agent_defaults || {})[name] || {}).model || "";
+  let rows = [], source = "", freeOnly = false, query = "";
+  const m = modal(`<h2><span class="av sm ${esc(name)}">${esc(agentInitial(name))}</span> ${esc(meta.label || name)}: models &amp; usage</h2>
+    <div id="mAcct" class="acct"><span class="muted">Loading account…</span></div>
+    <div class="row" style="gap:8px;margin:12px 0 8px;flex-wrap:wrap">
+      <input id="mQ" placeholder="Search models" style="flex:1;min-width:180px">
+      <label class="row" style="gap:6px"><input type="checkbox" id="mFree"> Free only</label>
+      <button class="btn sm" id="mRefresh">${icon("refresh")}Refresh</button></div>
+    <p class="hint" id="mHint">Loading models…</p>
+    <div class="model-list" id="mList"></div>
+    <p class="hint">★ adds a model to the pickers when you build a team. Prices are per million tokens (input / output) as the CLI reports them.</p>
+    <div class="modal-actions"><button class="btn primary" data-close>Done</button></div>`, { wide: true });
+  const list = $("#mList", m.body);
+  const save = async (patch) => { try { S.config = await api.saveSettings(patch); } catch (e) { toast("error", "Could not save", e.message); } };
+  const draw = () => {
+    const q = query.toLowerCase();
+    const shown = rows.filter((r) => (!freeOnly || r.free) && (!q || r.id.toLowerCase().includes(q) || (r.name || "").toLowerCase().includes(q)));
+    $("#mHint", m.body).textContent = source === "settings"
+      ? `${meta.label || name} does not list its models, so these are the ones saved in settings. Type any model id under Configure.`
+      : `${shown.length} of ${rows.length} models · ${rows.filter((r) => r.free).length} free`;
+    list.innerHTML = shown.slice(0, 400).map((r) => `<div class="model-row ${def === r.id ? "is-default" : ""}">
+      <button class="btn xs ghost star ${picked.includes(r.id) ? "on" : ""}" data-star="${esc(r.id)}" title="${picked.includes(r.id) ? "Remove from pickers" : "Add to pickers"}">${picked.includes(r.id) ? "★" : "☆"}</button>
+      <div class="mr-name"><code>${esc(r.id)}</code>${r.name && r.name !== r.id ? `<span class="muted">${esc(r.name)}</span>` : ""}</div>
+      <div class="mr-meta">${r.free ? '<span class="badge green">free</span>' : r.input != null ? `<span class="price">${fmtPrice(r.input)} / ${fmtPrice(r.output)}</span>` : ""}${r.context ? `<span class="muted">${fmtCtx(r.context)} ctx</span>` : ""}${r.reasoning ? '<span class="muted">reasoning</span>' : ""}</div>
+      <button class="btn xs ${def === r.id ? "primary" : ""}" data-def="${esc(r.id)}">${def === r.id ? "Default" : "Set default"}</button></div>`).join("") || '<div class="empty small">No models match.</div>';
+    $$("[data-star]", list).forEach((b) => (b.onclick = async () => {
+      const id = b.dataset.star;
+      picked = picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id];
+      await save({ models: { [name]: picked } }); draw();
+    }));
+    $$("[data-def]", list).forEach((b) => (b.onclick = async () => {
+      def = def === b.dataset.def ? "" : b.dataset.def;
+      if (def && !picked.includes(def)) picked = [...picked, def];
+      await save({ agent_defaults: { [name]: { model: def } }, models: { [name]: picked } }); draw();
+      toast("success", def ? `${meta.label || name} now defaults to ${def}` : "Default cleared");
+    }));
+  };
+  const load = async (refresh) => {
+    $("#mHint", m.body).textContent = "Loading models…";
+    try {
+      const r = await api.agentModels(name, refresh);
+      rows = r.models || []; source = r.source;
+      if (r.error) $("#mHint", m.body).textContent = r.error;
+      draw();
+      if (r.error) $("#mHint", m.body).textContent = r.error;
+    } catch (e) { $("#mHint", m.body).textContent = e.message; }
+  };
+  $("#mQ", m.body).oninput = (e) => { query = e.target.value; draw(); };
+  $("#mFree", m.body).onchange = (e) => { freeOnly = e.target.checked; draw(); };
+  $("#mRefresh", m.body).onclick = () => load(true);
+  load(false);
+  api.agentAccount(name).then((a) => {
+    const chips = (items) => items.map((i) => `<span class="acct-item"><span class="muted">${esc(i.label)}</span><strong>${esc(i.value)}</strong></span>`).join("");
+    const pick = (a.usage || []).filter((u) => /sessions|total cost|input|output|avg cost/i.test(u.label));
+    $("#mAcct", m.body).innerHTML = (a.profile || []).length || pick.length
+      ? `${(a.profile || []).length ? `<div class="acct-row"><span class="acct-h">Account</span>${chips(a.profile)}</div>` : ""}${pick.length ? `<div class="acct-row"><span class="acct-h">Usage on this server</span>${chips(pick)}</div>` : ""}`
+      : `<span class="muted">${esc(meta.label || name)} does not report account balance or usage through its CLI${a.error ? ` (${esc(a.error)})` : ""}.</span>`;
+  }).catch(() => { $("#mAcct", m.body).innerHTML = '<span class="muted">Account details unavailable.</span>'; });
 }
 
 function openConfigure(name, onSaved) {
@@ -157,6 +225,7 @@ export function mountAgents(main) {
     $$("[data-test]", main).forEach((b) => (b.onclick = () => runTest(b.dataset.test)));
     $$("[data-install]", main).forEach((b) => (b.onclick = () => runJob(b.dataset.install, "install")));
     $$("[data-signin]", main).forEach((b) => (b.onclick = () => openSignIn(b.dataset.signin)));
+    $$("[data-models]", main).forEach((b) => (b.onclick = () => openModels(b.dataset.models)));
     $$("[data-configure]", main).forEach((b) => (b.onclick = () => openConfigure(b.dataset.configure, () => render(true))));
     $$("[data-log]", main).forEach((a) => (a.onclick = (e) => { e.preventDefault(); const j = jobs[a.dataset.log] || {}; modal(`<h2>${esc(agentLabel(a.dataset.log))}: ${esc(j.action || "")} log</h2><pre class="ho-cmds" style="max-height:60vh;overflow:auto;white-space:pre-wrap">${esc(j.log || "(empty)")}</pre><div class="modal-actions"><button class="btn primary" data-close>Close</button></div>`, { wide: true }); }));
     $$("[data-more]", main).forEach((b) => (b.onclick = () => {

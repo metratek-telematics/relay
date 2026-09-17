@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 from orchestrator import agents, config as C, github, gitops, handoff, history, repos  # noqa: E402
-from orchestrator import installer  # noqa: E402
+from orchestrator import agent_info, installer  # noqa: E402
 
 # Agents installed from the Agents page must be found by health checks, runs and verification alike.
 installer.extend_path()
@@ -238,6 +238,20 @@ def agent_install(name):
         return jsonify(installer.start({"id": name, **spec}, action, on_done=done))
     except ValueError as e:
         return jsonify({"error": str(e)}), 409
+
+
+@app.get("/api/agents/<name>/models")
+def agent_models(name):
+    if name not in C.AGENTS:
+        return jsonify({"error": f"Unknown agent {name}"}), 404
+    return jsonify(agent_info.models(name, manager.cfg(), refresh=request.args.get("refresh") == "1"))
+
+
+@app.get("/api/agents/<name>/account")
+def agent_account(name):
+    if name not in C.AGENTS:
+        return jsonify({"error": f"Unknown agent {name}"}), 404
+    return jsonify(agent_info.account(name, manager.cfg()))
 
 
 @app.get("/api/agents/jobs")
