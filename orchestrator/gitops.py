@@ -121,6 +121,11 @@ def snapshot_source(source, wt, run_dir, cfg, runner):
             runner.timeline("git", "Untracked files copied", f"{copied} file(s)")
     if cfg.get("copy_ignored_root_files", True):
         copy_ignored_root_files(source, wt, runner)
+    # The repository's saved environment (Repositories → Environment) wins over whatever the clone had.
+    from . import repo_env
+    written = repo_env.apply_to_worktree(wt, repo_env.load(source))
+    if written:
+        runner.timeline("git", "Repository environment applied", ", ".join(written))
 
 
 def copy_ignored_root_files(source, wt, runner=None) -> list[str]:
