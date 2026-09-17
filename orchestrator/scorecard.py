@@ -24,6 +24,8 @@ Score, 0 to 100
     verification        first verification run passed +5 · last run failed -10
     independent review  passed in round 1 +5 · every further round -4 (max -12)
     revisions           each supervisor revision request -3 (max -12)
+    unproven delivery   each required acceptance criterion delivered unproven -15 (max -30),
+                        each action-required blocked check at delivery -5 (max -15)
     human steering      each guidance message or interrupt -3 (max -9)
     questions           each question a human had to answer -1 (max -4)
     approvals           each delivery approval the human rejected -5 (max -10)
@@ -206,6 +208,9 @@ def compute(task: dict, messages: list[dict], pr: dict | None = None) -> dict:
                          "final_ok": bool(verifs[-1].get("ok")) if verifs else None},
         "revisions": revisions,
         "blocked_checks": len(blocked), "blocked_action_required": sum(1 for b in blocked if b.get("action_required")),
+        # Required acceptance criteria that were delivered without proof (waived by the human counts as proven).
+        "unproven_required": sum(1 for c in (task.get("acceptance") or []) if isinstance(c, dict) and c.get("required", True)
+                                 and c.get("status") not in ("met", "waived")),
         "cost_usd": round(float(total.get("cost_usd") or 0), 4), "cost_estimated": bool(total.get("estimated")),
         "tokens": {"input": int(total.get("input") or 0), "output": int(total.get("output") or 0),
                    "cached": sum(int(v.get("cached") or 0) for v in roles_m.values())},
@@ -247,6 +252,11 @@ def score(card: dict) -> tuple[int, list[dict]]:
             add(f"{pr['human_commits']} human commit(s) after delivery", -10)
         if pr.get("reverted"):
             add("Reverted on the base branch after merging", -40)
+    # Delivering without proof is not a clean success: a required criterion left unproven, or a check
+    # that needs a human to act, means nobody knows the change works.
+    if card["outcome"] in ("delivered_pr", "done_no_pr"):
+        add(f"{card.get('unproven_required', 0)} required criteria delivered unproven", -15 * int(card.get("unproven_required") or 0), -30)
+        add(f"{card.get('blocked_action_required', 0)} check(s) needing action at delivery", -5 * int(card.get("blocked_action_required") or 0), -15)
     v = card["verification"]
     if v["first_ok"]:
         add("Verification passed first time", 5)
