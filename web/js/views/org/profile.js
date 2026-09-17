@@ -1,7 +1,7 @@
 // You: profile and notification preferences (per event, per channel), with test-send and the delivery log.
 import { $, $$, esc, icon, toast, timeAgo, fmtDateTime } from "../../ui.js";
 import { bus } from "../../state.js";
-import { ORG, loadMe, orgApi, avatar, roleBadge, xicon, can } from "./org.js";
+import { ORG, loadMe, orgApi, avatar, roleBadge, xicon, can, copyButton, bindCopy } from "./org.js";
 
 const MASK = "••••••••";
 const SOURCE = { manual: "assigned by an owner", groups: "from your groups", bootstrap: "first person to sign in", env: "set by the server", default: "default role", local: "local mode" };
@@ -108,7 +108,8 @@ export function mountNotifications(body) {
           <div class="help">Messages link back to the item in Relay${av.team_slack ? "; without your own webhook they go to the team channel" : ""}.</div><div>${testBtn("slack")}</div></div>
         <div class="org-channel"><div class="org-channel-head"><span class="org-ch-ic">${xicon("telegram")}</span><strong>Telegram</strong>${status(av.telegram && c.telegram.chat_id, !av.telegram ? "no bot yet" : me.user.telegram_linked ? "linked" : c.telegram.chat_id ? "chat set" : "not set")}</div>
           <div class="field"><label>Chat id</label><input data-chan="telegram.chat_id" placeholder="123456789" value="${esc(c.telegram.chat_id || "")}" ${av.telegram ? "" : "disabled"}></div>
-          <div class="help">${av.telegram ? `Send <b>/start</b> to the bot to get your chat id. Then send <code class="org-inline-code">/link ${esc(me.telegram_link_code || "")}</code> so Approve and answer buttons act as you.` : "Ask an admin to add the team bot under Integrations."}</div><div>${testBtn("telegram")}</div></div>
+          <div class="help">${av.telegram ? (me.user.telegram_linked ? `Linked. Reply to Relay's messages in Telegram to answer or steer tasks, or ask the assistant; send <b>/help</b> to the bot for commands.` : `Open the bot in Telegram, send <b>/start</b>, then send this line (it links your account, fills in the chat and turns on Telegram for questions, approvals, deliveries and failures):`) : "Ask an admin to add the team bot under Integrations."}</div>
+          ${av.telegram && !me.user.telegram_linked && me.telegram_link_code ? `<div class="row" style="gap:6px"><code class="org-inline-code" style="flex:1">/link ${esc(me.telegram_link_code)}</code>${copyButton(`/link ${me.telegram_link_code}`, "Copy")}</div>` : ""}<div>${testBtn("telegram")}</div></div>
         <div class="org-channel"><div class="org-channel-head"><span class="org-ch-ic">${xicon("discord")}</span><strong>Discord</strong>${status(c.discord.has_webhook_url || av.team_discord, c.discord.has_webhook_url ? "personal webhook" : av.team_discord ? "team channel" : "not set")}</div>
           ${secretField("Webhook (optional)", "discord", "webhook_url", "https://discord.com/api/webhooks/…", "has_webhook_url")}<div>${testBtn("discord")}</div></div>
         <div class="org-channel"><div class="org-channel-head"><span class="org-ch-ic">${xicon("webhook")}</span><strong>Webhook</strong>${status(!!c.webhook.url, c.webhook.url ? "set" : "not set")}</div>
@@ -156,6 +157,7 @@ export function mountNotifications(body) {
   };
 
   function bind() {
+    bindCopy(body);
     $("#nSave", body).onclick = async () => { if (await save()) draw(); };
     $("#nRefresh", body).onclick = load;
     $("#nQuiet", body).onclick = () => { collect(); draft.quiet_hours.enabled = !draft.quiet_hours.enabled; draw(); };

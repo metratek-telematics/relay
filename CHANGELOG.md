@@ -8,6 +8,14 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Telegram assistant** (`orchestrator/org/telegram.py`, `concierge.py`, `voice.py`). Long polling by default (nothing
+  exposed; offset persisted, backoff, single-poller lock), webhook mode still available. Notifications carry the task, the
+  actual question, design summary, findings or error, with buttons and a link; a plain reply answers that pending question
+  or becomes guidance (resuming ended tasks). Commands for status, needs-you, tasks, logs, steering, approvals, new tasks
+  (confirmed with repository, team and risk), autopilot pause/resume, digest, merge and follow. Free text goes to a
+  tool-less concierge turn that answers from live context and only suggests actions as confirm buttons. Actions run as
+  the linked person with the web role matrix and are audited via telegram. Integrations shows mode, live status, setup
+  steps and a test send.
 - **Mission Control** (`web/js/views/mission.js`, `/api/mission`). The home screen answers what the agent teams are doing,
   what needs you and how it is going: live agent cards (repositories, phase, the tool call running now, elapsed, cost,
   work-package progress), Needs you with questions, approvals and design approvals answered in place, the queue lane with

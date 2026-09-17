@@ -34,7 +34,12 @@ DEFAULTS = {
     "integrations": {
         "public_url": "",
         "smtp": {"host": "", "port": 587, "security": "starttls", "username": "", "password": "", "from": ""},
-        "telegram": {"bot_token": "", "api_base": "https://api.telegram.org", "webhook_secret": ""},
+        # mode: polling (default; nothing exposed), webhook (Telegram calls Relay's public URL) or off (send only).
+        "telegram": {"bot_token": "", "api_base": "https://api.telegram.org", "webhook_secret": "", "mode": "polling",
+                     "groups_enabled": False, "rate_limit_per_minute": 30, "progress_throttle_seconds": 60,
+                     "concierge": {"enabled": True, "agent": "", "model": "", "effort": "", "timeout_seconds": 90,
+                                   "max_context_chars": 14000, "daily_turn_limit": 200, "per_minute": 6, "memory_turns": 8},
+                     "voice": {"enabled": True}},
         "slack": {"webhook_url": ""},
         "discord": {"webhook_url": ""},
         "webhooks": [],               # [{id, name, url, secret, events: [], projects: [], enabled}]
@@ -153,6 +158,19 @@ def save(partial: dict) -> dict:
         i = cur["integrations"]
         i["rate_limit_per_minute"] = max(1, min(600, int(i.get("rate_limit_per_minute") or 20)))
         i["max_attempts"] = max(1, min(10, int(i.get("max_attempts") or 5)))
+        tg = i["telegram"]
+        if tg.get("mode") not in ("polling", "webhook", "off"):
+            raise ValueError("Telegram mode must be polling, webhook or off.")
+        tg["rate_limit_per_minute"] = max(1, min(600, int(tg.get("rate_limit_per_minute") or 30)))
+        tg["progress_throttle_seconds"] = max(10, min(3600, int(tg.get("progress_throttle_seconds") or 60)))
+        cc = tg["concierge"]
+        if cc.get("agent") not in ("", "claude", "codex"):
+            raise ValueError("The Telegram assistant runs on Claude or Codex (or leave it on automatic).")
+        cc["timeout_seconds"] = max(10, min(600, int(cc.get("timeout_seconds") or 90)))
+        cc["max_context_chars"] = max(2000, min(60000, int(cc.get("max_context_chars") or 14000)))
+        cc["daily_turn_limit"] = max(1, min(5000, int(cc.get("daily_turn_limit") or 200)))
+        cc["per_minute"] = max(1, min(60, int(cc.get("per_minute") or 6)))
+        cc["memory_turns"] = max(0, min(30, int(cc.get("memory_turns") if cc.get("memory_turns") is not None else 8)))
         return cur
     _store.update(apply)
     return load()

@@ -326,7 +326,17 @@ def link_telegram(username: str, telegram_user_id: str):
             _save_user(u)
 
 
+def unlink_telegram(username: str):
+    with _store.lock:
+        u = get(username)
+        if u and u.get("telegram_user_id"):
+            u.pop("telegram_user_id", None)
+            _save_user(u)
+
+
 def by_telegram(telegram_user_id) -> dict | None:
+    if telegram_user_id in (None, ""):
+        return None
     for u in users():
         if str(u.get("telegram_user_id") or "") == str(telegram_user_id) and not u.get("disabled"):
             return u
