@@ -597,8 +597,8 @@ def mcp_for_turn(agent: str, tools: list[dict], ctx: dict, cfg: dict | None = No
         p = _write_run_file(ctx, f"mcp-{role}-claude.json", {"mcpServers": _json_servers(servers, "claude")})
         res["files"].append(str(p))
         res["args"] += ["--mcp-config", str(p)]
-        if cfg.get("tools_isolate_user_mcp"):
-            res["args"].append("--strict-mcp-config")
+        if cfg.get("tools_isolate_user_mcp") and not cfg.get("token_lean_agent_context", True):
+            res["args"].append("--strict-mcp-config")  # lean agent context already passes it
         if cfg.get("claude_permission", "bypass") == "acceptEdits":
             res["args"] += ["--allowedTools", " ".join(f"mcp__{s['name']}" for s in servers)]
     elif agent == "codex":

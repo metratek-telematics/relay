@@ -288,6 +288,8 @@ class ClaudeAdapter(AgentAdapter):
             env.pop("ANTHROPIC_AUTH_TOKEN", None)
         env.pop("CLAUDECODE", None)  # allow nesting when launched from inside Claude Code
         env.pop("CLAUDE_CODE_ENTRYPOINT", None)
+        if cfg.get("token_lean_agent_context", True):
+            env["ENABLE_CLAUDEAI_MCP_SERVERS"] = "false"
         cap = int(cfg.get("token_claude_max_output_tokens") or 0)
         if cap > 0:  # per-response output cap (Claude Code's own setting)
             env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(cap)
@@ -321,6 +323,11 @@ class ClaudeAdapter(AgentAdapter):
         for d in cfg.get("extra_dirs") or []:  # a multi-repository task's other worktrees
             args += ["--add-dir", str(d)]
         srcs = (cfg.get("claude_setting_sources") or "").strip()
+        if cfg.get("token_lean_agent_context", True):
+            # The user's personal plugins, skills, slash commands and MCP connectors (claude.ai, user settings) add
+            # thousands of tokens to every API call and nothing to a coding turn; the task's own tools come from Relay.
+            srcs = srcs or "project,local"
+            args += ["--strict-mcp-config", "--disable-slash-commands"]
         if srcs:
             args += ["--setting-sources", srcs]
         args += list(cfg.get("claude_extra_args") or [])

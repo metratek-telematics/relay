@@ -252,6 +252,7 @@ DEFAULTS = {
     "tools_request_policy": "ask",      # ask | auto_catalog | auto_dev (catalog anywhere, anything in dev projects) | off
     "tools_isolate_user_mcp": False,    # Claude: --strict-mcp-config, so only the task's tools load (fewer tool tokens)
     # Token efficiency (orchestrator/tokens.py, docs/TOKEN_EFFICIENCY.md)
+    "token_lean_agent_context": True,   # Claude: skip the user's plugins, skills, slash commands and personal MCP connectors
     "token_prompt_deltas": True,        # do not re-send what a live session already has (contract, verification, reply help)
     "token_failure_excerpts": True,     # failing checks: the lines that explain the failure, deduplicated
     "token_diff_mode": "targeted",      # targeted: diffstat + hunks that fit + git command for the rest · full: truncated diff
@@ -273,6 +274,12 @@ DEFAULTS = {
     # git
     # Design gate: enforced checks on what agents add (token colours, fonts, forbidden terms); see orchestrator/designcheck.py.
     "design_gate": True,
+    # Design step (orchestrator/design.py): a reviewed system design before implementation on complex and multi-repository tasks.
+    "design_mode": "auto",               # auto (multi-repo, complex, or a feature/refactor rated moderate) | always | never
+    "design_approval": "auto",           # auto (complex or multi-repo, when questions are allowed and not quiet hours) | on | off
+    "design_max_revisions": 2,           # design revisions after blocking review findings before the human decides
+    "design_auto_templates": ["feature", "refactor"],
+    "design_doc_mode": "commit",         # commit docs/designs/<date>-<slug>.md to the primary repository | comment on the PR | off
     # Relay installs a task's dependencies itself before agents start (npm ci and friends).
     "env_prepare": True,
     "env_prepare_timeout_minutes": 20,

@@ -624,6 +624,11 @@ class MultiRepo:
                 marker = "Part of a multi-repo change:"
                 body = "\n".join(line for line in body.splitlines() if not line.startswith(marker)).rstrip()
                 body += f"\n\n{marker} " + ", ".join(others) + "\n"
+                section = self.changeset_text() if hasattr(self, "changeset_text") else ""
+                if section:
+                    # The shared change set now knows every pull request, so the merge order links them.
+                    from . import design as _design
+                    body = _design.replace_changeset(body, section)
                 f = Path(self.run_dir) / f"PR_LINK_{safe_slug(pr['github_repo'])}.md"
                 write_text(f, body)
                 self.r.run_shell_args(["gh", "pr", "edit", str(pr["number"]), "--repo", pr["github_repo"], "--body-file", str(f)],

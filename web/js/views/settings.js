@@ -69,9 +69,15 @@ export function mountSettings(main, section) {
           </div>
           <div class="field"><label>Parallel tasks</label><input type="number" min="1" max="8" data-cfg="max_parallel" value="${esc(c.max_parallel)}" style="width:100px"></div>
         </div></div>
+        <div class="card"><div class="card-head"><h3>Design step</h3></div><div class="card-body">
+          <div class="grid2">
+            <div class="field"><label>Design revisions before you decide</label><input type="number" min="0" max="5" data-cfg="design_max_revisions" value="${esc(c.design_max_revisions ?? 2)}"><div class="help">Blocking design-review findings send the design back to the supervisor this many times; then the design review asks you.</div></div>
+            <div class="field"><label>Design document in pull requests</label><select data-cfg="design_doc_mode">${[["commit", "Commit docs/designs/<date>-<slug>.md to the primary repository"], ["comment", "Post it as a comment on the primary pull request"], ["off", "Keep it in Relay only"]].map(([v, l]) => `<option value="${v}" ${(c.design_doc_mode || "commit") === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select><div class="help">Every pull request links it from its Change set section, with the merge order across repositories.</div></div>
+          </div>
+        </div></div>
         ${learningCard(c)}`;
-      const wf = { preset: c.workflow_preset, roles: JSON.parse(JSON.stringify(c.roles || {})), max_turns: c.max_turns, max_review_rounds: c.max_review_rounds, verify_mode: c.verify_mode, approval_before_delivery: c.approval_before_delivery, allow_agent_questions: c.allow_agent_questions, verification_commands: c.verification_commands || [], auto_detect_verification: c.auto_detect_verification };
-      const persist = debounce((w) => save({ workflow_preset: w.preset, roles: JSON.parse(JSON.stringify(w.roles)), max_turns: w.max_turns, max_review_rounds: w.max_review_rounds, verify_mode: w.verify_mode, approval_before_delivery: w.approval_before_delivery, allow_agent_questions: w.allow_agent_questions, verification_commands: w.verification_commands, auto_detect_verification: w.auto_detect_verification }), 400);
+      const wf = { preset: c.workflow_preset, roles: JSON.parse(JSON.stringify(c.roles || {})), max_turns: c.max_turns, max_review_rounds: c.max_review_rounds, verify_mode: c.verify_mode, approval_before_delivery: c.approval_before_delivery, allow_agent_questions: c.allow_agent_questions, verification_commands: c.verification_commands || [], auto_detect_verification: c.auto_detect_verification, design_mode: c.design_mode, design_approval: c.design_approval };
+      const persist = debounce((w) => save({ workflow_preset: w.preset, roles: JSON.parse(JSON.stringify(w.roles)), max_turns: w.max_turns, max_review_rounds: w.max_review_rounds, verify_mode: w.verify_mode, approval_before_delivery: w.approval_before_delivery, allow_agent_questions: w.allow_agent_questions, verification_commands: w.verification_commands, auto_detect_verification: w.auto_detect_verification, design_mode: w.design_mode, design_approval: w.design_approval }), 400);
       workflowEditor($("#wfEd", body), wf, { agents: S.agentMeta, presets: S.presets, onChange: persist });
       bindAuto();
       // The model catalogue and efforts depend on the agent, so redraw once the new agent is saved.

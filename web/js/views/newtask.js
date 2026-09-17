@@ -36,6 +36,10 @@ export function workflowEditor(host, wf, { agents, presets, showAdvanced = true,
         <div class="field"><label>Verification</label><select data-wf="verify_mode"><option value="each_report" ${wf.verify_mode === "each_report" ? "selected" : ""}>After every worker report</option><option value="before_review" ${wf.verify_mode === "before_review" ? "selected" : ""}>Only before review / delivery</option><option value="off" ${wf.verify_mode === "off" ? "selected" : ""}>Off</option></select></div>
       </div>
       <div class="grid2">
+        <div class="field"><label>Design first</label><select data-wf="design_mode">${[["auto", "Auto: multi-repository, complex, or a moderate feature/refactor"], ["always", "Always: design, review, then build"], ["never", "Never: plan and build directly"]].map(([v, l]) => `<option value="${v}" ${(wf.design_mode || "auto") === v ? "selected" : ""}>${l}</option>`).join("")}</select><div class="help">A system design (contracts, data model, rollout, work packages) reviewed independently before any code is written.</div></div>
+        <div class="field"><label>Pause for my design approval</label><select data-wf="design_approval">${[["auto", "Auto: complex or multi-repository designs, unless unattended"], ["on", "Always ask me"], ["off", "Never: approve after the design review passes"]].map(([v, l]) => `<option value="${v}" ${(wf.design_approval || "auto") === v ? "selected" : ""}>${l}</option>`).join("")}</select><div class="help">Appears in Needs you with the design and Approve / Request changes. Quiet hours and disabled questions approve automatically.</div></div>
+      </div>
+      <div class="grid2">
         <div class="field inline"><label>Require my approval before commit & PR</label><span class="switch ${wf.approval_before_delivery ? "on" : ""}" data-sw="approval_before_delivery"></span></div>
         <div class="field inline"><label>Agents may ask me questions</label><span class="switch ${wf.allow_agent_questions !== false ? "on" : ""}" data-sw="allow_agent_questions"></span></div>
       </div>
@@ -70,7 +74,7 @@ export function defaultWorkflow() {
   const roles = {};
   for (const r of ["supervisor", "worker", "reviewer"]) roles[r] = { agent: p ? (p.roles[r]?.agent || "") : (cfg.roles?.[r]?.agent || ""), model: cfg.roles?.[r]?.model || "", effort: cfg.roles?.[r]?.effort || "" };
   return { preset: cfg.workflow_preset || "custom", roles, max_turns: cfg.max_turns || 12, max_review_rounds: cfg.max_review_rounds || 3, verify_mode: cfg.verify_mode || "each_report",
-    approval_before_delivery: !!cfg.approval_before_delivery, allow_agent_questions: cfg.allow_agent_questions !== false, verification_commands: [], auto_detect_verification: cfg.auto_detect_verification !== false };
+    approval_before_delivery: !!cfg.approval_before_delivery, allow_agent_questions: cfg.allow_agent_questions !== false, design_mode: cfg.design_mode || "auto", design_approval: cfg.design_approval || "auto", verification_commands: [], auto_detect_verification: cfg.auto_detect_verification !== false };
 }
 
 // A follow-up is a new task on a delivered task's branch, with the same repository and team.
@@ -305,6 +309,7 @@ export function openNewTask(prefill = {}) {
           <div><b>Request</b>${esc((data.requirements || `Issue #${data.issue}`).slice(0, 400))}${data.requirements.length > 400 ? "…" : ""}</div>
           <div><b>Team</b>${["supervisor", "worker", "reviewer"].filter((x) => r[x].agent).map((x) => `${esc(agentLabel(r[x].agent))} (${x}${r[x].model ? `, ${esc(r[x].model)}` : ", CLI default model"}${r[x].effort ? `, ${esc(r[x].effort)} effort` : ""})`).join(" · ")}</div>
           <div><b>Budget</b>${data.workflow.max_turns} work packages · ${data.workflow.max_review_rounds} review rounds · verification ${esc(data.workflow.verify_mode)}${data.workflow.approval_before_delivery ? " · approval gate on" : ""}</div>
+          <div><b>Design first</b>${esc({ auto: "auto", always: "always", never: "never" }[data.workflow.design_mode || "auto"])}${checkedRelated().length && (data.workflow.design_mode || "auto") === "auto" ? " · this multi-repository task gets a reviewed design before implementation" : ""} · design approval ${esc(data.workflow.design_approval || "auto")}</div>
           <div><b>Delivery</b>isolated branch → ${S.config.github_auto_create_pr ? "draft PR" : "branch only"} (never merges)</div>
         </div>
         ${warn.length ? `<div class="modal-error" style="margin-top:12px">${warn.map(esc).join("<br>")}<br><a href="#/agents" data-close>Open Agents page</a></div>` : ""}

@@ -8,7 +8,7 @@ import { openNewTask, openFollowUp } from "./newtask.js";
 import { prStatus, prCached, prPill } from "../prstatus.js";
 import { openTaskFolder } from "../ide.js";
 
-const PHASES = [["kickoff", "Plan"], ["dialogue", "Work"], ["review", "Review"], ["deliver", "Deliver"], ["done", "Done"]];
+const PHASES = [["kickoff", "Plan"], ["design", "Design"], ["dialogue", "Work"], ["review", "Review"], ["deliver", "Deliver"], ["done", "Done"]];
 
 export function mountTask(main, id) {
   const getTask = () => S.tasks.get(id);
@@ -179,13 +179,14 @@ export function mountTask(main, id) {
     const host = $("#composer", main);
     const pending = t.pending;
     const answerMode = pending && pending.kind === "question";
-    const approvalMode = pending && pending.kind === "approval";
+    const approvalMode = pending && (pending.kind === "approval" || pending.kind === "design_approval");
+    const designApproval = pending && pending.kind === "design_approval";
     const terminal = ["done", "failed", "stopped", "interrupted", "draft"].includes(t.status);
     const draft = host.querySelector("textarea")?.value || "";
     host.classList.toggle("answer-mode", !!answerMode);
     host.innerHTML = `
       ${answerMode ? `<div class="mode-note">${icon("question", "sm")}Answering ${esc(agentLabel(pending.agent))}'s question — your message is delivered immediately.</div>` : ""}
-      ${approvalMode ? `<div class="mode-note" style="color:var(--green)">${icon("shield", "sm")}Delivery is waiting for your approval. Use the card above, or approve here.</div>` : ""}
+      ${approvalMode ? `<div class="mode-note" style="color:var(--green)">${icon("shield", "sm")}${designApproval ? `The system design is waiting for your approval. <button class="btn xs" data-open-tab="design">Read it in the Design tab</button>, then approve or request changes here.` : "Delivery is waiting for your approval. Use the card above, or approve here."}</div>` : ""}
       <div class="box">
         <textarea id="guidance" rows="1" placeholder="${answerMode ? "Type your answer…" : terminal ? "Add guidance for when this task resumes…" : "Guide the team… e.g. “use the existing DateService instead of a new helper”"}">${esc(draft)}</textarea>
         <div class="bar">
@@ -219,7 +220,7 @@ export function mountTask(main, id) {
     $("#sendBtn", host) && ($("#sendBtn", host).onclick = send);
     ta.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); if (approvalMode) $("#approveBtn", host).click(); else send(); } });
     if (approvalMode) {
-      $("#approveBtn", host).onclick = async () => { try { await api.action(t.id, "approve", { note: ta.value.trim() }); toast("success", "Approved"); } catch (e) { toast("error", "Failed", e.message); } };
+      $("#approveBtn", host).onclick = async () => { try { await api.action(t.id, "approve", { note: ta.value.trim() }); toast("success", designApproval ? "Design approved" : "Approved"); } catch (e) { toast("error", "Failed", e.message); } };
       $("#rejectBtn", host).onclick = async () => { const note = ta.value.trim(); if (!note) { toast("warning", "Add a note", "Describe the changes you want."); ta.focus(); return; } try { await api.action(t.id, "reject", { note }); toast("info", "Changes requested"); ta.value = ""; } catch (e) { toast("error", "Failed", e.message); } };
     }
   }
