@@ -315,6 +315,8 @@ class ClaudeAdapter(AgentAdapter):
             args += ["--session-id", session["id"]]
             args += ["--name", f"Relay {role} {session['id'][:8]}"]
         args.append("--forward-subagent-text")
+        for d in cfg.get("extra_dirs") or []:  # a multi-repository task's other worktrees
+            args += ["--add-dir", str(d)]
         srcs = (cfg.get("claude_setting_sources") or "").strip()
         if srcs:
             args += ["--setting-sources", srcs]
@@ -418,6 +420,8 @@ class CodexAdapter(AgentAdapter):
             common.append("--dangerously-bypass-approvals-and-sandbox")
         else:
             common += ["-c", "sandbox_mode=\"workspace-write\"", "-c", "approval_policy=\"never\""]
+            if cfg.get("extra_dirs"):  # a multi-repository task's other worktrees are writable too
+                common += ["-c", "sandbox_workspace_write.writable_roots=" + json.dumps([str(d) for d in cfg["extra_dirs"]])]
         if model:
             common += ["-m", model]
         eff = (effort or cfg.get("codex_reasoning_effort") or "").strip()
@@ -625,6 +629,8 @@ class GeminiAdapter(AgentAdapter):
             args += ["-y"]
         if model:
             args += ["-m", model]
+        if cfg.get("extra_dirs"):  # a multi-repository task's other worktrees
+            args += ["--include-directories", ",".join(str(d) for d in cfg["extra_dirs"])]
         if session.get("id") and session.get("turns", 0) > 0:
             args += ["--resume", "latest"]
         args += list(cfg.get("gemini_extra_args") or [])

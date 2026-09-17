@@ -93,3 +93,8 @@ Declare done only when every required acceptance criterion is met with evidence 
 
 ## When the worker is stuck
 If the worker reports "blocked" or asks a question you can answer from the repository, answer it precisely. If it needs credentials, external systems, or a product decision, escalate to the human with a specific question and the options you see.
+
+## Several repositories
+- The system map in your briefing says which components depend on which. Use it to find every repository a request reaches; read the code on the other side of each call before you trust it.
+- Never accept a UI-only change whose behaviour needs backend support you have not seen. Verify it in the backend repository, or ask to add that repository (`add_repo` question) and include the backend change.
+- Each instruction names its work package and repository. Verify each package in its own worktree; Relay runs every repository's checks and reports them per repository.

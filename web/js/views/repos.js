@@ -4,8 +4,9 @@ import { S, statusOf, navigate } from "../state.js";
 import { api } from "../api.js";
 import { openNewTask } from "./newtask.js";
 import { openRepoEnv } from "./repoenv.js";
+import { renderSystemMap } from "./systemmap.js";
 
-const TABS = [["list", "Repositories", "folder"], ["worktrees", "Worktrees", "layers"], ["graph", "Branch graph", "branch"]];
+const TABS = [["list", "Repositories", "folder"], ["worktrees", "Worktrees", "layers"], ["graph", "Branch graph", "branch"], ["system", "System map", "globe"]];
 const FILTERS = [["all", "All"], ["orphaned", "Orphaned"], ["uncommitted", "Uncommitted"], ["merged", "Merged"], ["missing", "Missing"]];
 // Sizes survive re-renders and tab switches; walking a worktree with node_modules is the slow part of this page.
 const sizes = new Map();
@@ -74,8 +75,14 @@ export function mountRepos(main, section) {
 
   function render() {
     if (!alive) return;
+    if (tab !== "system") delete body.dataset.view;
     if (tab === "list") renderList();
     else if (tab === "worktrees") renderWorktrees();
+    else if (tab === "system") {
+      // The map loads its own data; repository refreshes (task events) must not redraw it under the person's hands.
+      if (body.dataset.view !== "system") { body.dataset.view = "system"; renderSystemMap(body, { isAlive: () => alive && tab === "system" }); }
+      return;
+    }
     else renderGraphTab();
     $$("[data-retry]", body).forEach((b) => (b.onclick = () => { body.innerHTML = skeleton(); refresh(); }));
   }

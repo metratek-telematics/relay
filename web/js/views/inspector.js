@@ -1,5 +1,5 @@
 // Inspector tabs: overview, try it, history, timeline, changes, checks, review, repository, logs, sessions.
-import { $, $$, el, esc, icon, md, fmtTime, fmtDateTime, fmtDur, fmtNum, fmtCost, timeAgo, diffHtml, copyText, toast, confirm, prompt, debounce } from "../ui.js";
+import { $, $$, el, esc, icon, md, fmtTime, fmtDateTime, fmtDur, fmtNum, fmtCost, timeAgo, diffHtml, copyText, toast, confirm, prompt, debounce, basename } from "../ui.js";
 import { S, agentLabel, agentInitial, ROLE_LABEL, roleAgent, roleModel, roleEffort, statusOf, taskElapsed } from "../state.js";
 import { api } from "../api.js";
 import { prStatus, PR_STATE, REVIEW_LABEL, checksDetail } from "../prstatus.js";
@@ -70,6 +70,26 @@ export function mountInspector(container, getTask) {
   }
 
   // ---------------------------------------------------------------- overview
+  // A multi-repository task: every repository, why it is part of the task, and the agreed system design.
+  function reposCard(t) {
+    const repos = (t.repos || []);
+    const design = t.system_design;
+    if (repos.length < 2 && !design) return "";
+    const rt = t.repo_worktrees || {};
+    const rows = repos.map((r) => {
+      const w = Object.values(rt).find((x) => x.repo === r.repo) || (r.role === "primary" ? { branch: t.branch, pr_url: t.pr_url, pr_number: t.pr_number, worktree: t.worktree } : {});
+      return `<div class="row between wrap" style="gap:6px"><span class="row wrap min0" style="gap:6px">${icon("folder", "sm")}<strong>${esc(basename(r.repo))}</strong>${r.role === "primary" ? '<span class="badge outline">primary</span>' : ""}${r.reason ? `<span class="muted truncate" title="${esc(r.reason)}">${esc(r.reason)}</span>` : ""}</span>
+        <span class="row" style="gap:6px">${w.pr_url ? `<a class="badge outline" href="${esc(w.pr_url)}" target="_blank" rel="noopener">PR #${esc(w.pr_number || "")}</a>` : ""}${w.worktree ? `<code class="mono muted truncate" style="max-width:220px" title="${esc(w.worktree)}">${esc(w.worktree)}</code>` : '<span class="muted">worktree when the task starts</span>'}</span></div>`;
+    }).join("");
+    const contracts = (design?.api_contracts || []).map((c) => `<li><code>${esc(c.endpoint || "")}</code> ${esc(c.consumer || "?")} → ${esc(c.provider || "?")}${c.request ? ` · request ${esc(c.request)}` : ""}${c.response ? ` · response ${esc(c.response)}` : ""}</li>`).join("");
+    const packages = (t.plan?.work_packages || []).map((p) => `<li><b>${esc(p.id)}</b>${p.repo ? ` <span class="badge outline">${esc(p.repo)}</span>` : ""} ${esc(p.summary)}${(p.depends_on || []).length ? ` <span class="muted">after ${esc(p.depends_on.join(", "))}</span>` : ""}${(t.packages_done || []).includes(p.id) ? ` <span class="badge green">done</span>` : ""}</li>`).join("");
+    return `<div class="card"><div class="card-head"><h3>Repositories</h3><span class="badge outline">${repos.length || 1}</span></div><div class="card-body stack" style="gap:8px">
+      ${rows}
+      ${design ? `<div class="md"><strong>System design</strong>${design.summary ? `<p>${esc(design.summary)}</p>` : ""}${contracts ? `<ul>${contracts}</ul>` : ""}${(design.sequence || []).length ? `<ol>${design.sequence.map((x) => `<li>${esc(x)}</li>`).join("")}</ol>` : ""}</div>` : ""}
+      ${packages ? `<div class="md"><strong>Work packages</strong><ul>${packages}</ul></div>` : ""}
+    </div></div>`;
+  }
+
   function renderOverview(t) {
     // Delivered tasks from older builds stored 0 changed files; asking for the file list corrects the count.
     if (t.status === "done" && !(t.diffstat && t.diffstat.files) && t.worktree && !state.statFixed) { state.statFixed = true; api.files(t.id).catch(() => {}); }
@@ -95,6 +115,7 @@ export function mountInspector(container, getTask) {
         ${acceptanceCardHtml(t, { editing: bindAcceptance.editing })}
         ${scorecardCard(t)}
         ${workCard(t)}
+        ${reposCard(t)}
         <div class="card"><div class="card-head"><h3>Team</h3><span class="badge outline">${esc(wf.preset || "custom")}</span></div><div class="card-body stack">
           ${roles.map((role) => `<div class="row between"><span class="row"><span class="av sm ${esc(roleAgent(t, role))}">${esc(agentInitial(roleAgent(t, role)))}</span><strong>${esc(agentLabel(roleAgent(t, role)))}</strong><span class="muted">${esc(ROLE_LABEL[role])}</span></span><span class="mono muted">${esc(roleModel(t, role) || "default model")}${roleEffort(t, role) ? ` · ${esc(roleEffort(t, role))} effort` : ""}</span></div>`).join("")}
           <div class="kv" style="margin-top:6px"><dt>Verification</dt><dd>${esc(wf.verify_mode || "each_report")}${(t.verify_commands || []).length ? ` · ${t.verify_commands.length} command(s)` : ""}</dd><dt>Approval gate</dt><dd>${wf.approval_before_delivery ? "before delivery" : "off"}</dd><dt>Agent questions</dt><dd>${wf.allow_agent_questions === false ? "disabled" : "allowed"}</dd><dt>Review rounds</dt><dd>${wf.max_review_rounds || "—"}</dd></div>
@@ -454,15 +475,27 @@ export function mountInspector(container, getTask) {
         ${h.diffstat ? `<div class="muted">${esc(h.diffstat)} vs <code>${esc(h.base)}</code></div>` : ""}
         <div class="row wrap muted" style="gap:6px">${icon("folder", "sm")}<code class="mono truncate" title="${esc(h.worktree)}">${esc(h.worktree)}</code><button class="btn xs ghost" data-copy="${esc(h.worktree)}" title="Copy worktree path">${icon("copy", "sm")}</button>${h.ide ? `<a class="btn xs" href="${esc(h.ide)}" target="_blank" rel="noopener">${icon("code", "sm")}Open in VS Code</a>` : ""}${h.worktree_exists ? "" : '<span class="badge amber">worktree removed</span>'}</div>
       </div></div>
-      ${h.sections.map((s, i) => `<section class="ho-step">
-        <div class="row between"><h3><span class="ho-n ${s.merged ? "ok" : ""}">${s.merged ? icon("check", "sm") : i + 1}</span>${esc(s.title)}</h3>${s.commands.length ? `<button class="btn xs" data-copy-sec="${i}">${icon("copy", "sm")}Copy</button>` : '<span class="badge purple">merged</span>'}</div>
+      ${h.repos ? `<h3 class="ho-repo">${icon("folder", "sm")}${esc(h.repo_name || "Primary repository")} <span class="badge outline">primary</span></h3>` : ""}
+      ${stepsHtml(h.sections, 0)}
+      ${(h.repos || []).map((r, gi) => `<div class="card ho-repo-card"><div class="card-body stack" style="gap:8px">
+        <h3 class="ho-repo">${icon("folder", "sm")}${esc(r.name)}${r.github_repo ? ` <span class="badge outline">${esc(r.github_repo)}</span>` : ""}${r.pr_url ? ` <a class="btn xs" href="${esc(r.pr_url)}" target="_blank" rel="noopener">${icon("external", "sm")}PR #${esc(r.pr_number)}</a>` : ` <span class="badge ${r.pushed ? "green" : ""}">${r.pushed ? "pushed" : "on this machine only"}</span>`}</h3>
+        ${r.reason ? `<div class="muted">${esc(r.reason)}</div>` : ""}
+        ${r.diffstat ? `<div class="muted">${esc(r.diffstat)} vs <code>${esc(r.base)}</code></div>` : ""}
+        <div class="row wrap muted" style="gap:6px">${icon("folder", "sm")}<code class="mono truncate" title="${esc(r.worktree)}">${esc(r.worktree)}</code><button class="btn xs ghost" data-copy="${esc(r.worktree)}" title="Copy worktree path">${icon("copy", "sm")}</button>${r.ide ? `<a class="btn xs" href="${esc(r.ide)}" target="_blank" rel="noopener">${icon("code", "sm")}Open in VS Code</a>` : ""}</div>
+      </div></div>${stepsHtml(r.sections, gi + 1)}`).join("")}
+    </div>`;
+    const groups = [h.sections, ...(h.repos || []).map((r) => r.sections)];
+    $$("[data-copy]", body).forEach((b) => (b.onclick = () => copyText(b.dataset.copy)));
+    $$("[data-copy-sec]", body).forEach((b) => (b.onclick = () => { const [g, i] = b.dataset.copySec.split(":").map(Number); copyText(cmds(groups[g][i])); }));
+    bindPrCard(t);
+  }
+
+  function stepsHtml(sections, group) {
+    return sections.map((s, i) => `<section class="ho-step">
+        <div class="row between"><h3><span class="ho-n ${s.merged ? "ok" : ""}">${s.merged ? icon("check", "sm") : i + 1}</span>${esc(s.title)}</h3>${s.commands.length ? `<button class="btn xs" data-copy-sec="${group}:${i}">${icon("copy", "sm")}Copy</button>` : '<span class="badge purple">merged</span>'}</div>
         <p class="muted">${esc(s.text).replace(/`([^`]+)`/g, "<code>$1</code>")}</p>${s.link ? `<p><a class="btn sm" href="${esc(s.link)}" target="_blank" rel="noopener">${icon("external")}${esc(s.link_label || "Open")}</a></p>` : ""}
         ${s.commands.length ? `<pre class="ho-cmds">${s.commands.map((c) => `<span class="ho-line"><span>${esc(c)}</span><button class="btn xs ghost" data-copy="${esc(c)}" title="Copy this line">${icon("copy", "sm")}</button></span>`).join("")}</pre>` : ""}
-      </section>`).join("")}
-    </div>`;
-    $$("[data-copy]", body).forEach((b) => (b.onclick = () => copyText(b.dataset.copy)));
-    $$("[data-copy-sec]", body).forEach((b) => (b.onclick = () => copyText(cmds(h.sections[Number(b.dataset.copySec)]))));
-    bindPrCard(t);
+      </section>`).join("");
   }
 
   function prCardInner(t, pr) {

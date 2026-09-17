@@ -9,7 +9,7 @@ import time
 import traceback
 from pathlib import Path
 
-from . import agents, config as C, github, gitops, judge
+from . import agents, config as C, github, gitops, judge, multirepo
 from .autopilot import Autopilot
 from .learning import Learning
 from .pipeline import TurnBudget, orchestrate
@@ -192,6 +192,9 @@ class Manager:
         parent = str(payload.get("follow_up_of") or "").strip()
         if parent and not self.store.get(parent):
             raise ValueError("The task this follows up no longer exists.")
+        # Related repositories: given explicitly, or inherited from the task this follows up.
+        wanted = payload.get("repos") if "repos" in payload else ((self.store.get(parent) or {}).get("repos") if parent else None)
+        repos = multirepo.normalize_repos(repo, wanted)
         tid = new_task_id()
         depends_on = self.clean_dependencies(tid, payload.get("depends_on"))
         name = (payload.get("name") or "").strip() or (gitops.auto_task_name(requirements) or requirements[:60] if requirements else f"Issue #{issue}")
@@ -221,12 +224,16 @@ class Manager:
             t["cost_cap_usd"] = max(0.0, float(payload.get("cost_cap_usd") or 0))
         if parent:
             t["follow_up_of"] = parent
+        if repos:
+            t["repos"] = repos
         if isinstance(payload.get("connectors"), list):  # None keeps the repository's default connectors
             t["connectors"] = [str(n) for n in payload["connectors"]][:50]
         self.store.add(t)
         C.remember_repo(repo)
         self.config_changed()
         self.timeline(tid, "user", "Task created", f"{C.AGENTS[wf['roles']['supervisor']['agent']]['label']} supervises {C.AGENTS[wf['roles']['worker']['agent']]['label']}")
+        if repos:
+            self.timeline(tid, "user", "Multi-repository task", ", ".join(Path(r["repo"]).name for r in repos))
         if parent:
             self.timeline(tid, "user", "Follow-up", f"Builds on {(self.store.get(parent) or {}).get('name', parent)} · {branch}")
         self.emit_task(tid)
@@ -240,6 +247,12 @@ class Manager:
         for k in ("name", "requirements", "priority", "tags", "archived"):
             if k in patch:
                 allowed[k] = patch[k]
+        if "repos" in patch:
+            repos = multirepo.normalize_repos(t["repo"], patch["repos"]) or None
+            if [r["repo"] for r in repos or []] != [r["repo"] for r in t.get("repos") or []]:
+                if tid in self.runners or t["status"] in ACTIVE:
+                    raise ValueError("Stop the task before changing its repositories; a running team adds one by asking you.")
+                allowed["repos"] = repos
         if "depends_on" in patch:
             allowed["depends_on"] = self.clean_dependencies(tid, patch["depends_on"])
             allowed["waiting"] = None
@@ -266,7 +279,8 @@ class Manager:
         return self.get(tid)
 
     def taken_branches(self, repo) -> set:
-        return {t.get("branch_name") or t.get("branch") for t in self.store.list() if t.get("repo") == repo} - {None}
+        return {t.get("branch_name") or t.get("branch") for t in self.store.list()
+                if t.get("repo") == repo or repo in multirepo.task_repo_paths(t)} - {None}
 
     def branch_for(self, payload, repo, name, requirements, issue) -> str:
         wanted = (payload.get("branch") or "").strip()
@@ -290,7 +304,7 @@ class Manager:
             raise KeyError("Task not found")
         payload = {"repo": t["repo"], "requirements": t["requirements"], "issue": t.get("issue"), "name": t["name"] + " (copy)",
                    "template": t.get("template"), "priority": t.get("priority"), "tags": t.get("tags"),
-                   "workflow": t.get("workflow"), "queue": False}
+                   "workflow": t.get("workflow"), "queue": False, "repos": t.get("repos") or []}
         return self.create_task(payload)
 
     def archive(self, tid, archived=True):
@@ -322,8 +336,10 @@ class Manager:
                     break
                 time.sleep(0.25)
 
-        if delete_worktree and t.get("worktree"):
-            gitops.remove_worktree(t.get("repo"), t["worktree"])
+        if delete_worktree:
+            # Every repository of a multi-repository task has its own worktree.
+            for w in multirepo.task_worktrees(t):
+                gitops.remove_worktree(w["repo"], w["worktree"])
         # Remove conversation, artifacts and logs, as the delete dialog promises.
         shutil.rmtree(RUNTIME_DIR / tid, ignore_errors=True)
 
@@ -615,7 +631,8 @@ class Manager:
             if t.get("started_at"):
                 # A new run: elapsed time, the work chart and the signals describe it alone.
                 patch.update({"started_at": None, "runs": int(t.get("runs") or 1) + 1, "blocked_checks": None, "design_gate": None,
-                              "environment": None, "diffstat": None, "changed_count": 0, "base_commit": None, "summary": ""})
+                              "environment": None, "diffstat": None, "changed_count": 0, "base_commit": None, "summary": "",
+                              "repo_worktrees": None, "system_design": None, "packages_done": None})
         else:
             patch["detail"] = "Queued · resuming from checkpoint"
             if str(t.get("error") or "").startswith("Turn budget exhausted"):
