@@ -128,7 +128,13 @@ export function mountTask(main, id) {
     const repos = [{ name: basename(t.repo), pr_url: t.pr_url, pr_number: t.pr_number, primary: true }, ...Object.entries(t.repo_worktrees || {}).map(([name, w]) => ({ name, pr_url: w.pr_url, pr_number: w.pr_number }))];
     $("#tpCrumbs", page).innerHTML = `<a href="#/work">${icon("kanban", "sm")}Work</a><span class="sep" aria-hidden="true">/</span>${t.number ? `<span class="mono">#${esc(t.number)}</span><span class="sep" aria-hidden="true">/</span>` : ""}${repoChips(t, 4)}${t.branch ? `<span class="branch-chip" title="${esc(t.branch)}">${icon("branch", "sm")}<span class="mono">${esc(t.branch)}</span><button type="button" class="icon-btn" data-copy-branch aria-label="Copy branch name">${icon("copy", "sm")}</button></span>` : ""}`;
     $("[data-copy-branch]", page)?.addEventListener("click", () => copyText(t.branch));
-    $("#tpTitle", page).innerHTML = `<span class="tp-name">${esc(t.name)}</span><span class="status-chip lg tone-${esc(st.tone || "none")} ${st.attention ? "attn" : ""}" title="${esc(t.detail || "")}">${live ? '<span class="live-dot sm"></span>' : ""}${esc(st.label)}</span>`;
+    $("#tpTitle", page).innerHTML = `<span class="tp-name" title="Click to rename" data-rename>${esc(t.name)}</span><span class="status-chip lg tone-${esc(st.tone || "none")} ${st.attention ? "attn" : ""}" title="${esc(t.detail || "")}">${live ? '<span class="live-dot sm"></span>' : ""}${esc(st.label)}</span>`;
+    const nameEl = $("[data-rename]", page);
+    if (nameEl) nameEl.onclick = async () => {
+      const next = (window.prompt("Rename task", t.name) || "").trim();
+      if (!next || next === t.name) return;
+      try { await api.updateTask(t.id, { name: next }); } catch (e) { toast("error", "Could not rename", e.message); }
+    };
     const active = live || t.status === "needs_input" || t.status === "paused";
     const paused = t.status === "paused" || t.pause_requested;
     const primary = t.pending ? `<button type="button" class="btn sm primary" data-jump-pending>${icon(t.pending.kind === "question" ? "send" : "check")}${t.pending.kind === "question" ? "Answer" : "Approve…"}</button>`

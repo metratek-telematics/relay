@@ -86,7 +86,7 @@ def initials(name: str, username: str = "") -> str:
 
 def avatar_color(key: str) -> str:
     h = int(hashlib.sha256((key or "?").encode()).hexdigest()[:6], 16)
-    return f"hsl({h % 360}, 48%, 46%)"
+    return f"hsl({h % 360}, 50%, 36%)"  # dark enough for white initials in both themes (WCAG AA)
 
 
 def users() -> list[dict]:
