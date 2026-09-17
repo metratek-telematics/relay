@@ -481,6 +481,7 @@ def inbox_items(tasks: list, settings: dict | None = None) -> list[dict]:
             items.append({**base, "id": p.get("id"), "kind": kind, "from": p.get("from"), "agent": p.get("agent"),
                           "question": p.get("question") or "", "options": list(p.get("options") or []),
                           "summary": p.get("summary") or "", "diffstat": p.get("diffstat") or "", "auto": p.get("auto") or "",
+                          "design_md": p.get("design_md") or "", "design_version": p.get("design_version"),
                           "time": p.get("time") or t.get("updated_at"), "blocks": dependents})
             continue
         ap = t.get("autopilot_parked") or {}

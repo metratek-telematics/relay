@@ -307,6 +307,9 @@ Inspect the repository enough to plan: the files the request touches, existing l
 - optional: improvements you would suggest but the user did not ask for (they never block done);
 - known_files (primary, supporting), findings (file + what you saw), constraints, unknowns;
 - summary, a short markdown plan listing the work packages in order, and the first work package as instruction.
+- complexity: {{"level":"simple|moderate|complex","reason":"one line"}}. complex: several services or repositories, new contracts
+  between components, data migrations, or a new user flow across layers; simple: a local change in one place. Rate honestly: the
+  assessment decides whether a reviewed system design comes before implementation.
 Rule files describe how to work; never copy their checklists into requirements or acceptance.
 Keep the instruction short: name the concern, the files, the expected result. The packet already carries the context.
 """
@@ -496,7 +499,12 @@ def guidance_only(guidance) -> str:
     return f"USER GUIDANCE\n{guidance}\n\nIncorporate this into your work and end your reply with the appropriate protocol envelope."
 
 
-def nudge(role) -> str:
+def nudge(role, types=None) -> str:
+    if types and "design" in types:
+        return ("ORCHESTRATOR · your last reply did not end with a valid JSON envelope. Do not redo the inspection. "
+                'Reply now with ONLY the {"type":"design",...} envelope inside a fenced ```json block, reflecting the design you worked out.')
+    if types and "review" in types and role != "reviewer":
+        role = "reviewer"
     expect = {"supervisor": 'a "plan", "instruction", "decision" or "question" envelope',
               "worker": 'a "report" or "question" envelope',
               "reviewer": 'a "review" envelope with verdict PASS or FAIL'}.get(role, "a protocol envelope")

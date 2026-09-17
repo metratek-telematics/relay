@@ -274,12 +274,12 @@ export function renderMessage(m, t, prevInfo) {
     const ds = m.diffstat ? `<span class="diffstat">${m.diffstat.files} files <span class="a">+${m.diffstat.insertions}</span> <span class="d">−${m.diffstat.deletions}</span></span>` : "";
     const files = (m.files || []).length ? `<div class="files" style="margin-top:8px">${m.files.slice(0, 30).map((f) => `<code>${esc(f)}</code>`).join("")}</div>` : "";
     const reply = pending ? (isApproval
-      ? `<div class="reply"><textarea data-answer placeholder="Optional note for the team (required if requesting changes)…"></textarea><div class="stack"><button class="btn primary" data-approve="1">${icon("check")}Approve & deliver</button><button class="btn danger" data-approve="0">Request changes</button></div></div>`
+      ? `<div class="reply"><textarea data-answer placeholder="Optional note for the team (required if requesting changes)…"></textarea><div class="stack"><button class="btn primary" data-approve="1">${icon("check")}${m.subject === "design" ? "Approve design" : "Approve & deliver"}</button>${m.subject === "design" ? `<button class="btn" data-open-tab="design">${icon("layers")}Open design</button>` : ""}<button class="btn danger" data-approve="0">Request changes</button></div></div>`
       : `<div class="reply"><textarea data-answer placeholder="Type your answer… (Ctrl+Enter to send)"></textarea><button class="btn primary" data-send-answer>${icon("send")}Answer</button></div>`) : "";
     const answered = m.answered ? `<div class="answered"><b>${isApproval ? (m.approved === false ? "Changes requested" : "Approved") : "You answered"}:</b> ${esc(m.answer || "(no text)")}</div>` : "";
     return `<div class="m" ${idAttr}>
       <div class="qcard ${isApproval ? "approval" : ""} ${pending ? "pending" : ""}">
-        <div class="qcard-head">${whoAv(m, "sm")}<span>${isApproval ? "Approval required before delivery" : `${esc(agentLabel(m.agent))} (${esc(ROLE_LABEL[m.role] || m.role)}) asks you`}</span>${pending ? '<span class="badge amber">waiting</span>' : '<span class="badge green">answered</span>'}</div>
+        <div class="qcard-head">${whoAv(m, "sm")}<span>${isApproval ? (m.subject === "design" ? "System design approval" : "Approval required before delivery") : `${esc(agentLabel(m.agent))} (${esc(ROLE_LABEL[m.role] || m.role)}) asks you`}</span>${pending ? '<span class="badge amber">waiting</span>' : '<span class="badge green">answered</span>'}</div>
         <div class="qcard-body">
           <div class="md">${md(m.content || "")}</div>
           ${ds}${files}${opts}${reply}${answered}

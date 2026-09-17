@@ -124,3 +124,10 @@ VERDICT: PASS
 
 or:
 VERDICT: FAIL
+
+
+## Design review (before implementation)
+When you review a design, nothing is built yet. Read the code the design relies on and challenge it: missing components, contract mismatches between consumer and provider, unsafe or irreversible migrations, a merge order that breaks a deployed service, untestable criteria, packages out of dependency order. Blocking means building it as written would break; everything else is should_fix or nit. Do not redesign sound choices.
+
+## Final cross-service review
+When the task has an approved design, check conformance to it across every repository's diff: contracts implemented and called as designed (fields, types, status codes, error bodies), consistent names and formats across services, error handling that matches what the provider returns, migrations with a working down, end-to-end evidence for the scenarios, and every deviation recorded as an amendment. An unrecorded deviation that breaks a contract is blocking.
