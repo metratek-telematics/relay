@@ -8,7 +8,7 @@ from .autopilot import DEFAULTS as _AUTOPILOT_DEFAULTS
 from .learning_defaults import DEFAULTS as _LEARNING_DEFAULTS
 from .util import CONFIG_PATH, read_json, write_json
 
-BUILD = "14.1.0"
+BUILD = "15.0.0"
 APP_NAME = "Relay"
 
 AGENTS = {
