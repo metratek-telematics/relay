@@ -25,6 +25,11 @@ BRANCH_REUSABLE = {"done", "failed", "stopped"}
 QUEUE_PRIORITY = {"urgent": 0, "high": 1, "normal": 2, "low": 3}
 
 
+
+def _choice(value, allowed, default):
+    v = str(value or "").strip().lower()
+    return v if v in allowed else (default if default in allowed else allowed[0])
+
 class Manager:
     def __init__(self, emit):
         self._emit = emit
@@ -177,6 +182,9 @@ class Manager:
             "setup_command": str(wf_in.get("setup_command") or "").strip(),
             # Integration stack id for this task ("none" disables it); empty uses the repository's stack.
             "stack": str(wf_in.get("stack") or "").strip(),
+            # Design step (orchestrator/design.py): auto | always | never, and the approval gate auto | on | off.
+            "design_mode": _choice(wf_in.get("design_mode"), ("auto", "always", "never"), cfg.get("design_mode") or "auto"),
+            "design_approval": _choice(wf_in.get("design_approval"), ("auto", "on", "off"), cfg.get("design_approval") or "auto"),
         }
         return wf
 
@@ -230,6 +238,17 @@ class Manager:
             t["repos"] = repos
         if isinstance(payload.get("connectors"), list):  # None keeps the repository's default connectors
             t["connectors"] = [str(n) for n in payload["connectors"]][:50]
+        if payload.get("critical"):
+            t["critical"] = True  # autopilot never explores other teams on it
+        if payload.get("team_locked"):
+            t["team_locked"] = True  # the team was chosen by hand: autopilot's auto-pick leaves it alone
+        if payload.get("team_source") in ("manual", "recommended"):
+            t["team_source"] = payload["team_source"]
+        try:
+            # Pre-flight forecast (risk + recommended team), compared with the outcome later (orchestrator/learning_engine.py).
+            t["preflight"] = self.learning.engine.preflight_record(t, payload)
+        except Exception:
+            traceback.print_exc()
         self.store.add(t)
         C.remember_repo(repo)
         self.config_changed()

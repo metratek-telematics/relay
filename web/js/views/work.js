@@ -215,7 +215,9 @@ export function mountWork(main, tab) {
   async function createFromIssues(list, mode) {
     if (!list.length) return;
     try {
-      const res = await api.createIssueTasks({ issues: list.map((x) => ({ repo: x.repo, number: x.number })), mode, stop_on_failure: false, template: "feature", priority: "normal", workflow: defaultWorkflow(), comment: false, label: "", related_repos: true });
+      const cfg = S.config || {};
+      // Issues are queued in the order they were selected, with the pickup comment and label from Settings → Git and GitHub.
+      const res = await api.createIssueTasks({ issues: list.map((x) => ({ repo: x.repo, number: x.number })), mode, stop_on_failure: !!cfg.queue_stop_chain_on_failure, template: "feature", priority: "normal", workflow: defaultWorkflow(), comment: !!cfg.issues_comment_on_pickup, label: cfg.issues_pickup_label || "", related_repos: true });
       if (res.created?.length) toast("success", `${res.created.length} task${res.created.length === 1 ? "" : "s"} ${mode === "draft" ? "created as drafts" : "queued"}`, res.created.map((c) => c.name).slice(0, 3).join(" · "));
       for (const p of [...(res.skipped || []), ...(res.errors || [])]) toast("warning", String(p.issue || "Issue"), p.reason || p.error || "");
       for (const x of list) selected.delete(issueKey(x));

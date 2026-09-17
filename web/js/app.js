@@ -70,6 +70,7 @@ function redirectOf(parts) {
   if (a === "issues") return "#/work/issues";
   if (a === "github") return "#/knowledge/github";
   if (a === "lessons") return "#/knowledge/lessons";
+  if (a === "learning") return "#/knowledge/learning";
   if (a === "repos") return `#/knowledge/${{ list: "repositories", worktrees: "worktrees", graph: "graph", system: "system" }[b] || "repositories"}`;
   if (a === "settings" && b === "connectors") return "#/knowledge/connectors";
   if (a === "task" && b && c && c in TASK_VIEW_OF_TAB) return `#/task/${b}${TASK_VIEW_OF_TAB[c] ? `/${TASK_VIEW_OF_TAB[c]}` : ""}`;
@@ -123,7 +124,8 @@ function renderCounts() {
   const set = (id, n, title) => { const b = $(id); if (!b) return; b.hidden = !n; b.textContent = n > 99 ? "99+" : String(n); if (title) b.title = title; };
   set("#navLive", live, `${live} running`);
   set("#navNeeds", needs, `${needs} need you`);
-  set("#navLessons", S.lessonsPending || 0, `${S.lessonsPending} lessons to review`);
+  const toReview = (S.lessonsPending || 0) + (S.learningProposals || 0);
+  set("#navLessons", toReview, `${S.lessonsPending || 0} lessons and ${S.learningProposals || 0} learning proposals to review`);
   $("#tabLive").hidden = !live; $("#tabNeeds").hidden = !needs;
 }
 
@@ -259,6 +261,7 @@ function onEvent(ev) {
     case "queue": S.queue = { ...S.queue, ...p }; view?.update?.("queue", p); break;
     case "autopilot": S.autopilot = p; renderAutopilot(); view?.update?.("autopilot", p); break;
     case "lessons": S.lessonsPending = p.pending || 0; renderCounts(); view?.update?.("lessons"); break;
+    case "learning": if (p.proposals !== undefined) { S.learningProposals = p.proposals || 0; renderCounts(); } if (p.error) toast("error", "Playbook refresh failed", p.error); view?.update?.("learning"); break;
     case "agents": { const j = p.job; if (j) toast(j.state === "done" ? "success" : "error", `${agentLabel(p.agent)} ${j.action === "remove" ? "removal" : j.action} ${j.state === "done" ? "finished" : "failed"}`, j.error || ""); view?.update?.("agents"); break; }
   }
 }

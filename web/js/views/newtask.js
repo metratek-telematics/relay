@@ -3,6 +3,7 @@ import { $, $$, esc, icon, modal, toast, basename } from "../ui.js";
 import { S, agentLabel, agentInitial, navigate, defaultModelLabel } from "../state.js";
 import { api } from "../api.js";
 import { connectorPicker } from "./connectors.js";
+import { mountTeamAdvice, mountRiskCheck } from "./advice.js";
 
 export function workflowEditor(host, wf, { agents, presets, showAdvanced = true, onChange }) {
   const health = S.agents || {};
@@ -33,6 +34,10 @@ export function workflowEditor(host, wf, { agents, presets, showAdvanced = true,
         <div class="field"><label>Max work packages</label><input type="number" min="1" max="60" data-wf="max_turns" value="${esc(wf.max_turns)}"><div class="help">Turn budget for the supervisor ↔ worker loop.</div></div>
         <div class="field"><label>Max review rounds</label><input type="number" min="1" max="10" data-wf="max_review_rounds" value="${esc(wf.max_review_rounds)}"></div>
         <div class="field"><label>Verification</label><select data-wf="verify_mode"><option value="each_report" ${wf.verify_mode === "each_report" ? "selected" : ""}>After every worker report</option><option value="before_review" ${wf.verify_mode === "before_review" ? "selected" : ""}>Only before review / delivery</option><option value="off" ${wf.verify_mode === "off" ? "selected" : ""}>Off</option></select></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Design first</label><select data-wf="design_mode">${[["auto", "Auto: multi-repository, complex, or a moderate feature/refactor"], ["always", "Always: design, review, then build"], ["never", "Never: plan and build directly"]].map(([v, l]) => `<option value="${v}" ${(wf.design_mode || "auto") === v ? "selected" : ""}>${l}</option>`).join("")}</select><div class="help">A system design (contracts, data model, rollout, work packages) reviewed independently before any code is written.</div></div>
+        <div class="field"><label>Pause for my design approval</label><select data-wf="design_approval">${[["auto", "Auto: complex or multi-repository designs, unless unattended"], ["on", "Always ask me"], ["off", "Never: approve after the design review passes"]].map(([v, l]) => `<option value="${v}" ${(wf.design_approval || "auto") === v ? "selected" : ""}>${l}</option>`).join("")}</select><div class="help">Appears in Needs you with the design and Approve / Request changes. Quiet hours and disabled questions approve automatically.</div></div>
       </div>
       <div class="grid2">
         <div class="field inline"><label>Require my approval before commit & PR</label><span class="switch ${wf.approval_before_delivery ? "on" : ""}" data-sw="approval_before_delivery"></span></div>
@@ -69,7 +74,7 @@ export function defaultWorkflow() {
   const roles = {};
   for (const r of ["supervisor", "worker", "reviewer"]) roles[r] = { agent: p ? (p.roles[r]?.agent || "") : (cfg.roles?.[r]?.agent || ""), model: cfg.roles?.[r]?.model || "", effort: cfg.roles?.[r]?.effort || "" };
   return { preset: cfg.workflow_preset || "custom", roles, max_turns: cfg.max_turns || 12, max_review_rounds: cfg.max_review_rounds || 3, verify_mode: cfg.verify_mode || "each_report",
-    approval_before_delivery: !!cfg.approval_before_delivery, allow_agent_questions: cfg.allow_agent_questions !== false, verification_commands: [], auto_detect_verification: cfg.auto_detect_verification !== false };
+    approval_before_delivery: !!cfg.approval_before_delivery, allow_agent_questions: cfg.allow_agent_questions !== false, design_mode: cfg.design_mode || "auto", design_approval: cfg.design_approval || "auto", verification_commands: [], auto_detect_verification: cfg.auto_detect_verification !== false };
 }
 
 // A follow-up is a new task on a delivered task's branch, with the same repository and team.
@@ -92,7 +97,11 @@ export function openNewTask(prefill = {}) {
     depends_on: edit?.depends_on ? [...edit.depends_on] : parent && parent.status !== "done" ? [parent.id] : [],
     retry: edit?.retry_policy?.infra ?? "", cost_cap: edit?.cost_cap_usd || "",
     connectors: edit?.connectors || parent?.connectors || null, // null: the repository's default connectors
+    // Learning: who chose the team (default · recommended · manual). A hand-picked team is never replaced by autopilot's auto-pick.
+    teamSource: edit || parent ? "manual" : "default",
   };
+  // What the learning advice (views/advice.js) reads: the draft as it would be created.
+  const adviceDraft = () => ({ repo: data.repo, template: data.template, requirements: data.requirements, issue: data.issue, repos: checkedRelated(), workflow: data.workflow });
   let step = edit || parent ? 2 : (prefill.step && data.repo ? prefill.step : 0);
   const parentNote = parent ? `<div class="followup-note">${icon("retry", "sm")}<div><strong>Follows up <a href="#/task/${encodeURIComponent(parent.id)}">${esc(parent.name)}</a></strong>
     <span>Builds on <code>${esc(data.branch)}</code> where it left off, with the same team.</span>
@@ -158,7 +167,7 @@ export function openNewTask(prefill = {}) {
       <div class="field"><label>Add another repository</label>
         <div class="clone-row"><select id="relLocal"><option value="">Loading local repositories…</option></select><button type="button" class="btn" id="relAdd">${icon("plus")}Add</button></div>
         <div class="clone-row" style="margin-top:6px"><input id="relClone" placeholder="or clone owner/repository" autocomplete="off"><button type="button" class="btn" id="relCloneBtn">${icon("download")}Clone and add</button></div>
-        <div class="help">Suggestions come from dependencies in the <a href="#/repos/system" data-close>system map</a>; approved ones are ticked.</div></div>
+        <div class="help">Suggestions come from dependencies in the <a href="#/knowledge/system" data-close>system map</a>; approved ones are ticked.</div></div>
       ${nav("Back", "Next: describe the request")}`;
     $$("[data-close]", body).forEach((b) => b.addEventListener("click", m.close));
     $("#wBack", body).onclick = () => go(0);
@@ -288,8 +297,13 @@ export function openNewTask(prefill = {}) {
       $("#wBack", body).onclick = () => { collect1(); go(1); };
       $("#wNext", body).onclick = () => { collect1(); if (!data.requirements.trim() && !data.issue.trim()) { toast("warning", "Describe the task or give an issue number"); return; } go(3); };
     } else if (step === 3) {
-      body.innerHTML = `<h2>Team & workflow</h2><p class="hint">One agent supervises: it plans, delegates, verifies and decides. The other implements. Optionally a third reviews independently before delivery.</p><div id="wfEditor"></div>${nav("Back", "Next: review")}`;
-      workflowEditor($("#wfEditor", body), data.workflow, { agents: S.agentMeta, presets: S.presets });
+      body.innerHTML = `<h2>Team & workflow</h2><p class="hint">One agent supervises: it plans, delegates, verifies and decides. The other implements. Optionally a third reviews independently before delivery.</p><div id="teamAdvice"></div><div id="wfEditor"></div>${nav("Back", "Next: review")}`;
+      const editor = workflowEditor($("#wfEditor", body), data.workflow, { agents: S.agentMeta, presets: S.presets, onChange: (wf) => { const k = JSON.stringify(wf.roles); if (k !== rolesKey) { rolesKey = k; data.teamSource = "manual"; } } });
+      let rolesKey = JSON.stringify(data.workflow.roles);
+      const advice = mountTeamAdvice($("#teamAdvice", body), adviceDraft, { onUse: (roles) => {
+        Object.assign(data.workflow.roles, roles); data.workflow.preset = "custom"; data.teamSource = "recommended"; rolesKey = JSON.stringify(data.workflow.roles);
+        editor.redraw(); advice.refresh(); toast("success", "Recommended team selected");
+      } });
       $("#wBack", body).onclick = () => go(2);
       $("#wNext", body).onclick = () => { const r = data.workflow.roles; if (!r.supervisor.agent || !r.worker.agent) { toast("warning", "Pick a supervisor and a worker"); return; } go(4); };
     } else {
@@ -304,9 +318,11 @@ export function openNewTask(prefill = {}) {
           <div><b>Request</b>${esc((data.requirements || `Issue #${data.issue}`).slice(0, 400))}${data.requirements.length > 400 ? "…" : ""}</div>
           <div><b>Team</b>${["supervisor", "worker", "reviewer"].filter((x) => r[x].agent).map((x) => `${esc(agentLabel(r[x].agent))} (${x}${r[x].model ? `, ${esc(r[x].model)}` : ", CLI default model"}${r[x].effort ? `, ${esc(r[x].effort)} effort` : ""})`).join(" · ")}</div>
           <div><b>Budget</b>${data.workflow.max_turns} work packages · ${data.workflow.max_review_rounds} review rounds · verification ${esc(data.workflow.verify_mode)}${data.workflow.approval_before_delivery ? " · approval gate on" : ""}</div>
+          <div><b>Design first</b>${esc({ auto: "auto", always: "always", never: "never" }[data.workflow.design_mode || "auto"])}${checkedRelated().length && (data.workflow.design_mode || "auto") === "auto" ? " · this multi-repository task gets a reviewed design before implementation" : ""} · design approval ${esc(data.workflow.design_approval || "auto")}</div>
           <div><b>Delivery</b>isolated branch → ${S.config.github_auto_create_pr ? "draft PR" : "branch only"} (never merges)</div>
         </div>
         ${warn.length ? `<div class="modal-error" style="margin-top:12px">${warn.map(esc).join("<br>")}<br><a href="#/agents" data-close>Open Agents page</a></div>` : ""}
+        ${!edit && S.config.learning?.risk_check !== false ? '<div id="riskCheck" style="margin-top:12px"></div>' : ""}
         ${!edit ? `<div class="field" style="margin-top:14px"><label>Branch</label><input id="tbranch" class="mono" value="${esc(data.branch)}" placeholder="suggesting…" spellcheck="false"><div class="help">${parent && data.branch === (parent.branch || parent.branch_name) ? `The branch ${esc(parent.name)} delivered; this task adds commits on top of it.` : "Suggested from the task name. Edit it freely; an existing branch is built on."}</div></div>` : ""}
         ${autopilotOptions(data, edit)}
         <details class="field conn-task" id="connBox" style="margin-top:14px"><summary class="field-label">Advanced · connectors <span class="muted" id="connSum">loading…</span></summary>
@@ -314,6 +330,11 @@ export function openNewTask(prefill = {}) {
         ${!edit ? `<div class="field inline" style="margin-top:14px"><label>Queue immediately (and start the queue if idle)</label><span class="switch ${data.queue ? "on" : ""}" id="qSwitch"></span></div>` : ""}
         <div class="modal-actions"><button type="button" class="btn" id="wBack">Back</button><span style="flex:1"></span><button type="button" class="btn primary" id="wCreate">${icon(edit ? "save" : "sparkles")}${edit ? "Save" : data.queue ? "Create & queue" : "Create draft"}</button></div>`;
       $("#wBack", body).onclick = () => go(3);
+      if ($("#riskCheck", body)) mountRiskCheck($("#riskCheck", body), adviceDraft, { onChange: (patch) => {
+        if (patch.workflow) { if (JSON.stringify(patch.workflow.roles) !== JSON.stringify(data.workflow.roles)) data.teamSource = "manual"; data.workflow = patch.workflow; }
+        if (patch.requirements !== undefined) data.requirements = patch.requirements;
+        const box = $(".summary-box", body); if (box && (patch.workflow || patch.requirements !== undefined)) { collectAp(); render(); }
+      } });
       api.connectorsForRepo(data.repo).then((r) => {
         const host = $("#connPick", body); if (!host) return;
         const sum = (names) => { const s = $("#connSum", body); if (s) s.textContent = `· ${names.length ? names.join(", ") : "none"}${data.connectors ? "" : " (repository default)"}`; };
@@ -340,7 +361,8 @@ export function openNewTask(prefill = {}) {
           const payload = { repo: data.repo, name: data.name, requirements: data.requirements, issue: data.issue, template: data.template, priority: data.priority,
             tags: data.tags.split(",").map((x) => x.trim()).filter(Boolean), workflow: data.workflow, queue: data.queue, branch: edit ? undefined : data.branch, follow_up_of: parent?.id,
             repos: checkedRelated().map((r) => ({ repo: r.repo, reason: r.reason, component: r.component })),
-            depends_on: data.depends_on, cost_cap_usd: Number(data.cost_cap) || 0 };
+            depends_on: data.depends_on, cost_cap_usd: Number(data.cost_cap) || 0,
+            team_locked: data.teamSource !== "default", team_source: data.teamSource === "default" ? undefined : data.teamSource };
           if (String(data.retry).trim() !== "") payload.retry_policy = { infra: Math.max(0, Number(data.retry) || 0) };
           if (data.connectors) payload.connectors = data.connectors; // untouched: the repository's defaults apply when the task starts
           if (edit) { await api.updateTask(edit.id, payload); toast("success", "Task updated"); m.close(); return; }

@@ -256,4 +256,4 @@ export function graphSvg(map) {
     ${paths}${nodes}</svg>`;
 }
 
-export function openSystemMap() { navigate("#/repos/system"); }
+export function openSystemMap() { navigate("#/knowledge/system"); }

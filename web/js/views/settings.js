@@ -29,7 +29,7 @@ function learningCard(c) {
   const agent = c.retro_agent || "";
   const efforts = agent ? (S.agentMeta[agent] || {}).efforts || [] : [];
   const cat = agent ? (c.models || {})[agent] || [] : [...new Set(Object.values(c.models || {}).flat())];
-  return `<div class="card" id="learning"><div class="card-head"><div><h3>Learning from finished tasks</h3><p class="card-sub">Every finished task gets a scorecard. A retrospective then proposes lessons for you to review on the <a href="#/lessons">Lessons</a> page.</p></div></div><div class="card-body">
+  return `<div class="card" id="learning"><div class="card-head"><div><h3>Learning from finished tasks</h3><p class="card-sub">Every finished task gets a scorecard. A retrospective then proposes lessons for you to review in <a href="#/knowledge/lessons">Knowledge → Lessons</a>.</p></div></div><div class="card-body">
     <div class="field inline"><label>Run a short retrospective after each task</label><span class="switch ${c.retro_enabled !== false ? "on" : ""}" data-sw-cfg="retro_enabled"></span></div>
     <div class="grid3">
       <div class="field"><label>Retrospective agent</label><select data-cfg="retro_agent"><option value="">The task's supervisor</option>${agentIds().map((a) => `<option value="${esc(a)}" ${agent === a ? "selected" : ""}>${esc(agentLabel(a))}</option>`).join("")}</select><div class="help">One turn with no tools, run in the background after the result is recorded.</div></div>
@@ -96,9 +96,15 @@ export function mountSettings(main, section) {
           </div>
           <div class="field"><label>Parallel tasks</label><input type="number" min="1" max="8" data-cfg="max_parallel" value="${esc(c.max_parallel)}" style="width:100px"></div>
         </div></div>
+        <div class="card"><div class="card-head"><h3>Design step</h3></div><div class="card-body">
+          <div class="grid2">
+            <div class="field"><label>Design revisions before you decide</label><input type="number" min="0" max="5" data-cfg="design_max_revisions" value="${esc(c.design_max_revisions ?? 2)}"><div class="help">Blocking design-review findings send the design back to the supervisor this many times; then the design review asks you.</div></div>
+            <div class="field"><label>Design document in pull requests</label><select data-cfg="design_doc_mode">${[["commit", "Commit docs/designs/<date>-<slug>.md to the primary repository"], ["comment", "Post it as a comment on the primary pull request"], ["off", "Keep it in Relay only"]].map(([v, l]) => `<option value="${v}" ${(c.design_doc_mode || "commit") === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select><div class="help">Every pull request links it from its Change set section, with the merge order across repositories.</div></div>
+          </div>
+        </div></div>
         ${learningCard(c)}`;
-      const wf = { preset: c.workflow_preset, roles: JSON.parse(JSON.stringify(c.roles || {})), max_turns: c.max_turns, max_review_rounds: c.max_review_rounds, verify_mode: c.verify_mode, approval_before_delivery: c.approval_before_delivery, allow_agent_questions: c.allow_agent_questions, verification_commands: c.verification_commands || [], auto_detect_verification: c.auto_detect_verification };
-      const persist = debounce((w) => save({ workflow_preset: w.preset, roles: JSON.parse(JSON.stringify(w.roles)), max_turns: w.max_turns, max_review_rounds: w.max_review_rounds, verify_mode: w.verify_mode, approval_before_delivery: w.approval_before_delivery, allow_agent_questions: w.allow_agent_questions, verification_commands: w.verification_commands, auto_detect_verification: w.auto_detect_verification }), 400);
+      const wf = { preset: c.workflow_preset, roles: JSON.parse(JSON.stringify(c.roles || {})), max_turns: c.max_turns, max_review_rounds: c.max_review_rounds, verify_mode: c.verify_mode, approval_before_delivery: c.approval_before_delivery, allow_agent_questions: c.allow_agent_questions, verification_commands: c.verification_commands || [], auto_detect_verification: c.auto_detect_verification, design_mode: c.design_mode, design_approval: c.design_approval };
+      const persist = debounce((w) => save({ workflow_preset: w.preset, roles: JSON.parse(JSON.stringify(w.roles)), max_turns: w.max_turns, max_review_rounds: w.max_review_rounds, verify_mode: w.verify_mode, approval_before_delivery: w.approval_before_delivery, allow_agent_questions: w.allow_agent_questions, verification_commands: w.verification_commands, auto_detect_verification: w.auto_detect_verification, design_mode: w.design_mode, design_approval: w.design_approval }), 400);
       workflowEditor($("#wfEd", body), wf, { agents: S.agentMeta, presets: S.presets, onChange: persist });
       bindAuto();
       // The model catalogue and efforts depend on the agent, so redraw once the new agent is saved.
@@ -312,13 +318,13 @@ export function mountSettings(main, section) {
       <div class="card"><div class="card-head"><h3>GitHub intake</h3></div><div class="card-body">
         <div class="field inline"><label>Watch repositories for eligible issues</label><span class="switch ${c.github_intake_enabled ? "on" : ""}" data-sw-cfg="github_intake_enabled"></span></div>
         <div class="field"><label>Poll interval (seconds)</label><input type="number" min="15" data-cfg="github_poll_seconds" value="${esc(c.github_poll_seconds)}" style="width:120px"></div>
-        <a class="btn sm" href="#/github">${icon("github")}Manage watched repositories</a>
+        <a class="btn sm" href="#/knowledge/github">${icon("github")}Manage watched repositories</a>
       </div></div>
       <div class="card"><div class="card-head"><h3>Issues board</h3></div><div class="card-body">
         <div class="field inline"><label>Comment “Relay picked this up” on an issue when a task is created from it</label><span class="switch ${c.issues_comment_on_pickup ? "on" : ""}" data-sw-cfg="issues_comment_on_pickup"></span></div>
         <div class="grid2"><div class="field"><label>Label to add to picked-up issues (blank = none)</label><input data-cfg="issues_pickup_label" value="${esc(c.issues_pickup_label || "")}" placeholder="in-progress"></div></div>
         <div class="field inline"><label>Stop a one-after-the-other chain when one of its tasks fails</label><span class="switch ${c.queue_stop_chain_on_failure ? "on" : ""}" data-sw-cfg="queue_stop_chain_on_failure"></span></div>
-        <div class="help">These are the defaults of the Create tasks dialog on the <a href="#/issues">Issues</a> page; you can change them there each time.</div>
+        <div class="help">Used when you queue GitHub issues from the <a href="#/work/issues">Work board</a>.</div>
       </div></div>`;
       bindAuto();
     } else if (cur === "appearance") {

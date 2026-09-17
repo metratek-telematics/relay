@@ -5,6 +5,7 @@ import copy
 import threading
 
 from .autopilot import DEFAULTS as _AUTOPILOT_DEFAULTS
+from .learning_defaults import DEFAULTS as _LEARNING_DEFAULTS
 from .util import CONFIG_PATH, read_json, write_json
 
 BUILD = "14.1.0"
@@ -263,6 +264,12 @@ DEFAULTS = {
     # git
     # Design gate: enforced checks on what agents add (token colours, fonts, forbidden terms); see orchestrator/designcheck.py.
     "design_gate": True,
+    # Design step (orchestrator/design.py): a reviewed system design before implementation on complex and multi-repository tasks.
+    "design_mode": "auto",               # auto (multi-repo, complex, or a feature/refactor rated moderate) | always | never
+    "design_approval": "auto",           # auto (complex or multi-repo, when questions are allowed and not quiet hours) | on | off
+    "design_max_revisions": 2,           # design revisions after blocking review findings before the human decides
+    "design_auto_templates": ["feature", "refactor"],
+    "design_doc_mode": "commit",         # commit docs/designs/<date>-<slug>.md to the primary repository | comment on the PR | off
     # Relay installs a task's dependencies itself before agents start (npm ci and friends).
     "env_prepare": True,
     "env_prepare_timeout_minutes": 20,
@@ -303,6 +310,9 @@ DEFAULTS = {
     "lessons_max_in_prompt": 15,
     "scorecard_refresh_minutes": 30,   # how often recent pull requests are re-checked (merged, closed, human commits)
     "scorecard_refresh_days": 14,
+    # Learning engine: outcome dataset, team recommendation, pre-flight risk, autopsies and proposals, lesson effects,
+    # playbooks. Keys and meaning: orchestrator/learning_defaults.py.
+    "learning": copy.deepcopy(_LEARNING_DEFAULTS),
     # ui
     "ui_theme": "system",
     "ui_density": "comfortable",

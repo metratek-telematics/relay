@@ -5,7 +5,7 @@ const MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || 
 const MOD = MAC ? "⌘" : "Ctrl";
 
 // Two-key "go to" sequences: press G, then the letter.
-export const GOTO = { h: "#/", d: "#/", w: "#/work", t: "#/work", i: "#/work/issues", k: "#/knowledge", r: "#/knowledge/repositories", l: "#/knowledge/lessons", m: "#/knowledge/system", a: "#/agents", s: "#/settings", y: "#/home/needs", e: "#/home/24h" };
+export const GOTO = { h: "#/", d: "#/", w: "#/work", t: "#/work", i: "#/work/issues", k: "#/knowledge", r: "#/knowledge/repositories", l: "#/knowledge/lessons", n: "#/knowledge/learning", m: "#/knowledge/system", a: "#/agents", s: "#/settings", y: "#/home/needs", e: "#/home/24h" };
 
 export const SHORTCUTS = [
   { id: "palette", group: "General", keys: [MOD, "K"], label: "Search, jump anywhere, run a command or “create task: …”" },
@@ -22,6 +22,7 @@ export const SHORTCUTS = [
   { id: "goMap", group: "Go to", keys: ["G", "M"], label: "System map", then: true },
   { id: "goRepos", group: "Go to", keys: ["G", "R"], label: "Repositories", then: true },
   { id: "goLessons", group: "Go to", keys: ["G", "L"], label: "Lessons", then: true },
+  { id: "goLearning", group: "Go to", keys: ["G", "N"], label: "Learning", then: true },
   { id: "goAgents", group: "Go to", keys: ["G", "A"], label: "Agents", then: true },
   { id: "goSettings", group: "Go to", keys: ["G", "S"], label: "Settings", then: true },
   { id: "next", group: "Task page", keys: ["J"], label: "Next task on the board" },

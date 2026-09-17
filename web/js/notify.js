@@ -60,7 +60,7 @@ export function showDesktop(n) {
       window.focus();
       nt.close();
       if (n.task_id) navigate(`#/task/${n.task_id}`);
-      else if (n.kind === "digest") navigate("#/digest");
+      else if (n.kind === "digest") navigate("#/home/24h");
     };
     return true;
   } catch { return false; }

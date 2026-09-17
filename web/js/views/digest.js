@@ -8,6 +8,7 @@ const KIND = {
   question: ["Question", "amber", "question"],
   escalation: ["Decision", "amber", "flag"],
   approval: ["Approval", "purple", "shield"],
+  design_approval: ["Design approval", "purple", "layers"],
   parked: ["Paused", "amber", "pause"],
   blocked: ["Blocked", "red", "alert"],
 };
@@ -24,7 +25,7 @@ const taskRef = (x) => `<a class="nx-task" href="#/task/${esc(x.task_id)}">${x.n
 // ---------------------------------------------------------------------------- inbox items
 export function inboxItemHtml(x) {
   const [kindLabel, tone, ic] = KIND[x.kind] || KIND.question;
-  const who = x.kind === "question" ? `${esc(agentLabel(x.agent))} (${esc(ROLE[x.from] || x.from || "agent")}) asks` : x.kind === "escalation" ? "Relay's judge needs a decision" : x.kind === "approval" ? "Ready to deliver" : "";
+  const who = x.kind === "question" ? `${esc(agentLabel(x.agent))} (${esc(ROLE[x.from] || x.from || "agent")}) asks` : x.kind === "escalation" ? "Relay's judge needs a decision" : x.kind === "approval" ? "Ready to deliver" : x.kind === "design_approval" ? `System design v${esc(x.design_version || 1)} is reviewed and waits for you before any code is written` : "";
   const opts = (x.options || []).map((o) => `<button type="button" class="btn sm nx-opt" data-answer-opt="${esc(o)}">${esc(o)}</button>`).join("");
   let actions = "";
   if (x.kind === "question" || x.kind === "escalation") {
@@ -36,12 +37,17 @@ export function inboxItemHtml(x) {
       ${x.diffstat ? `<pre class="nx-diffstat">${esc(String(x.diffstat).split("\n").slice(-4).join("\n"))}</pre>` : ""}
       <div class="nx-reply"><textarea class="input" rows="1" data-answer-text placeholder="Note (required to request changes)" aria-label="Note"></textarea></div>
       <div class="nx-opts"><button type="button" class="btn sm primary" data-approve>${icon("check")}Approve delivery</button><button type="button" class="btn sm" data-reject>${icon("x")}Request changes</button></div>`;
+  } else if (x.kind === "design_approval") {
+    actions = `${x.summary ? `<div class="nx-summary">${md(x.summary)}</div>` : ""}
+      ${x.design_md ? `<details class="nx-design"><summary>${icon("layers", "sm")}Read the design</summary><div class="doc md nx-design-body">${md(x.design_md)}</div></details>` : ""}
+      <div class="nx-reply"><textarea class="input" rows="1" data-answer-text placeholder="What should change? (required to request changes)" aria-label="Note"></textarea></div>
+      <div class="nx-opts"><button type="button" class="btn sm primary" data-approve data-design>${icon("check")}Approve design</button><button type="button" class="btn sm" data-reject>${icon("x")}Request changes</button><a class="btn sm ghost" href="#/task/${esc(x.task_id)}/design">${icon("external", "sm")}Design tab</a></div>`;
   } else if (x.kind === "parked") {
     actions = `<div class="nx-opts"><button type="button" class="btn sm primary" data-resume>${icon("play")}Resume</button><button type="button" class="btn sm danger" data-stop>${icon("stop")}Stop</button></div>`;
   } else if (x.kind === "blocked" && x.blocker) {
     actions = `<div class="nx-opts"><button type="button" class="btn sm primary" data-retry-dep="${esc(x.blocker.id)}">${icon("retry")}Retry ${esc(x.blocker.label)}</button><button type="button" class="btn sm" data-drop-dep="${esc(x.blocker.id)}">${icon("x")}Run without it</button></div>`;
   }
-  const question = x.kind === "approval" ? "" : `<div class="nx-q">${md(x.question || "")}</div>`;
+  const question = x.kind === "approval" || x.kind === "design_approval" ? "" : `<div class="nx-q">${md(x.question || "")}</div>`;
   return `<article class="nx-item" data-inbox="${esc(x.id)}" data-task="${esc(x.task_id)}" data-kind="${esc(x.kind)}">
     <header class="nx-head"><span class="badge ${tone}">${icon(ic, "sm")}${kindLabel}</span>${taskRef(x)}<span class="nx-meta">${esc(x.repo || "")}${x.time ? ` · ${esc(timeAgo(x.time))}` : ""}</span></header>
     ${who ? `<div class="nx-who">${who}</div>` : ""}
@@ -72,7 +78,7 @@ export function bindInbox(root, items, onDone) {
     ta.addEventListener("input", fit);
     ta.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); $("[data-answer-send]", ta.closest(".nx-item"))?.click(); } });
   });
-  $$("[data-approve]", root).forEach((b) => (b.onclick = () => { const x = find(b); const note = $("[data-answer-text]", b.closest(".nx-item"))?.value.trim() || ""; run(b, () => api.action(x.task_id, "approve", { note }), "Delivery approved"); }));
+  $$("[data-approve]", root).forEach((b) => (b.onclick = () => { const x = find(b); const note = $("[data-answer-text]", b.closest(".nx-item"))?.value.trim() || ""; run(b, () => api.action(x.task_id, "approve", { note }), b.hasAttribute("data-design") ? "Design approved" : "Delivery approved"); }));
   $$("[data-reject]", root).forEach((b) => (b.onclick = () => {
     const x = find(b); const ta = $("[data-answer-text]", b.closest(".nx-item"));
     if (!ta.value.trim()) { ta.focus(); return toast("warning", "Say what should change"); }

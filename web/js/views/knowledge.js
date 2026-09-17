@@ -1,18 +1,20 @@
 // Knowledge: what Relay knows about the systems it works on. The system map, the repositories with their
 // environments, stacks and worktrees, the connectors to real environments, the lessons learned from past runs and
-// the GitHub repositories it watches, under one roof.
+// the learning engine's view of what works, and the GitHub repositories it watches, under one roof.
 import { $, $$, esc, icon } from "../ui.js";
 import { S } from "../state.js";
 import { mountRepos } from "./repos.js";
 import { mountConnectors } from "./connectors.js";
 import { mountLessons } from "./lessons.js";
 import { mountGithub } from "./github.js";
+import { mountLearning } from "./learning.js";
 
 const TABS = [
   ["system", "System map", "globe", "How your repositories depend on each other."],
   ["repositories", "Repositories", "folder", "Local clones, their environments, stacks and connectors."],
   ["connectors", "Connectors", "zap", "The APIs, databases and logs agents may check."],
   ["lessons", "Lessons", "brain", "What retrospectives learned, and what reaches the prompts."],
+  ["learning", "Learning", "trend", "Whether Relay is getting better, why, and what to change next."],
   ["worktrees", "Worktrees", "layers", "Isolated checkouts Relay created for tasks."],
   ["graph", "Branch graph", "branch", "How task branches relate to the main line."],
   ["github", "GitHub", "github", "Repositories watched for labelled or assigned issues."],
@@ -32,7 +34,7 @@ export function mountKnowledge(main, tab) {
   const page = $("#kn", main);
 
   function drawTabs() {
-    $("#knTabs", page).innerHTML = TABS.map(([k, l, i]) => `<a role="tab" href="#/knowledge/${k}" aria-selected="${k === cur}" class="${k === cur ? "active" : ""}">${icon(i, "sm")}<span>${esc(l)}</span>${k === "lessons" && S.lessonsPending ? `<span class="count-pill attn">${S.lessonsPending}</span>` : ""}</a>`).join("");
+    $("#knTabs", page).innerHTML = TABS.map(([k, l, i]) => `<a role="tab" href="#/knowledge/${k}" aria-selected="${k === cur}" class="${k === cur ? "active" : ""}">${icon(i, "sm")}<span>${esc(l)}</span>${k === "lessons" && S.lessonsPending ? `<span class="count-pill attn">${S.lessonsPending}</span>` : ""}${k === "learning" && S.learningProposals ? `<span class="count-pill attn">${S.learningProposals}</span>` : ""}</a>`).join("");
     $("#knSub", page).textContent = TABS.find(([k]) => k === cur)[3];
     $("#knTabs a.active", page)?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }
@@ -48,12 +50,13 @@ export function mountKnowledge(main, tab) {
     else if (k === "connectors") { mountConnectors(host); child = null; }
     else if (k === "lessons") child = mountLessons(host);
     else if (k === "github") child = mountGithub(host);
+    else if (k === "learning") child = mountLearning(host);
   }
   show(cur);
   return {
     update(reason, info) {
       if (reason === "route") { const t = S.route.tab && TABS.some(([k]) => k === S.route.tab) ? S.route.tab : "system"; if (t !== cur) show(t); return; }
-      if (reason === "lessons") drawTabs();
+      if (reason === "lessons" || reason === "learning") drawTabs();
       child?.update?.(reason, info);
     },
     destroy() { child?.destroy?.(); },

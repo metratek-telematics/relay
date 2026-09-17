@@ -25,7 +25,7 @@ export function successSection(s) {
   const prs = s.prs || {};
   const pending = s.lessons_pending || 0;
   const head = `<div class="section-head"><div><h2>Success</h2><p class="card-sub">Scored after every task · last ${s.window_weeks} weeks · ${s.finished} finished</p></div>
-      <a class="btn sm ${pending ? "primary" : ""}" href="#/lessons">${icon("brain")}Lessons${pending ? ` <span class="pill-count">${pending} to review</span>` : ""}</a></div>`;
+      <a class="btn sm ${pending ? "primary" : ""}" href="#/knowledge/lessons">${icon("brain")}Lessons${pending ? ` <span class="pill-count">${pending} to review</span>` : ""}</a></div>`;
   if (!s.finished) return `${head}<div class="card success-empty"><div class="card-body chart-empty">No task has finished in the last ${s.window_weeks} weeks. Each finished task gets a scorecard and a short retrospective, and the results collect here.</div></div>`;
   const weekBars = weeks.map((w) => {
     const h = w.success_rate === null ? 0 : Math.max(3, w.success_rate * 100);
@@ -42,7 +42,7 @@ export function successSection(s) {
         <div class="pr-outcomes muted">${prs.total ? `${prs.total} pull request${prs.total === 1 ? "" : "s"}: <b>${prs.merged}</b> merged · <b>${prs.open}</b> open · <b>${prs.closed}</b> closed unmerged${prs.human_fixed ? ` · <b>${prs.human_fixed}</b> needed human commits` : ""}` : "No pull requests in this window."}</div></div></div>
     <div class="card"><div class="card-head"><div><h3>Why tasks fail</h3><p class="card-sub">Failed and stopped tasks by cause</p></div></div><div class="card-body">
       ${fails.length ? `<div class="fail-rows">${fails.map((f) => `<div class="fail-row"><span class="truncate">${esc(f.label)}</span><span class="track" aria-hidden="true"><i style="width:${(f.count / maxFail) * 100}%"></i></span><b>${f.count}</b></div>`).join("")}</div>` : '<div class="chart-empty">Nothing failed in this window.</div>'}
-      <a class="lessons-link ${pending ? "has" : ""}" href="#/lessons">${icon("brain", "sm")}<span>${pending ? `<b>${pending}</b> proposed lesson${pending === 1 ? "" : "s"} awaiting your review` : "No lessons awaiting review"}</span><span class="muted">${s.lessons_approved || 0} approved</span></a>
+      <a class="lessons-link ${pending ? "has" : ""}" href="#/knowledge/lessons">${icon("brain", "sm")}<span>${pending ? `<b>${pending}</b> proposed lesson${pending === 1 ? "" : "s"} awaiting your review` : "No lessons awaiting review"}</span><span class="muted">${s.lessons_approved || 0} approved</span></a>
     </div></div>
     <div class="card"><div class="card-head"><div><h3>By repository</h3><p class="card-sub">Success rate and average score</p></div></div><div class="card-body repo-bars">${rateRows(s.by_repo || [], "No repositories yet.")}</div></div>
     <div class="card"><div class="card-head"><div><h3>By team</h3><p class="card-sub">Supervisor → worker → reviewer</p></div></div><div class="card-body repo-bars">${rateRows(s.by_pairing || [], "No teams yet.")}</div></div>
@@ -99,7 +99,7 @@ function retroBlock(t) {
   return `<div class="retro"><div class="row between wrap"><strong>Retrospective</strong><span class="row" style="gap:6px"><button class="btn xs" id="retroOpen">${icon("docs")}RETRO.md</button>${run}</span></div>
     <p class="muted">${esc(agentLabel(r.agent))}${r.model ? ` · ${esc(r.model)}` : ""}${r.effort ? ` · ${esc(r.effort)} effort` : ""} · ${esc(timeAgo(r.finished || r.time))}${r.cost_usd ? ` · ${fmtCost(r.cost_usd, r.estimated)}` : ""}</p>
     ${list("What went well", r.what_went_well)}${list("What went wrong", r.what_went_wrong)}${list("Root causes", r.root_causes)}
-    <a class="lessons-link ${n ? "has" : ""}" href="#/lessons">${icon("brain", "sm")}<span>${n ? `<b>${n}</b> lesson${n === 1 ? "" : "s"} proposed for review` : "No new lessons proposed"}</span>${icon("chevron", "sm")}</a></div>`;
+    <a class="lessons-link ${n ? "has" : ""}" href="#/knowledge/lessons">${icon("brain", "sm")}<span>${n ? `<b>${n}</b> lesson${n === 1 ? "" : "s"} proposed for review` : "No new lessons proposed"}</span>${icon("chevron", "sm")}</a></div>`;
 }
 
 export function bindScorecard(host, t, rerender) {
@@ -118,7 +118,7 @@ export function bindScorecard(host, t, rerender) {
   if (open) open.onclick = async () => {
     try {
       const a = await api.artifact(t.id, "retro");
-      modal(`<h2>Retrospective</h2><div class="doc md retro-doc">${md(a.text || "(empty)")}</div><div class="modal-actions"><a class="btn" href="#/lessons" data-close>${icon("brain")}Review lessons</a><button class="btn primary" data-close>Close</button></div>`, { wide: true });
+      modal(`<h2>Retrospective</h2><div class="doc md retro-doc">${md(a.text || "(empty)")}</div><div class="modal-actions"><a class="btn" href="#/knowledge/lessons" data-close>${icon("brain")}Review lessons</a><button class="btn primary" data-close>Close</button></div>`, { wide: true });
     } catch (e) { toast("error", "Could not open RETRO.md", e.message); }
   };
 }
