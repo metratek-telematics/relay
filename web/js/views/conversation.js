@@ -224,13 +224,19 @@ export function renderMessage(m, t, prevInfo) {
       </div>
     </div>`;
   }
+  if (k === "gate") {
+    const missing = (m.missing || []).length ? `<ul class="pk-list">${m.missing.map((x) => `<li><b class="mono">${esc(x.id)}</b> ${esc(x.criterion)} · <span class="muted">${esc(x.reason)}</span></li>`).join("")}</ul>` : "";
+    return `<div class="m m-notice" ${idAttr}><div class="ncard">${icon("shield", "sm")} ${esc(m.content || "")}${missing}</div></div>`;
+  }
   if (k === "decision") {
     const done = m.decision === "done";
+    const refs = (m.addresses || []).length ? `<div class="files">${m.addresses.map((r) => `<code>${esc(r)}</code>`).join("")}</div>` : "";
+    const crit = done && (m.criteria || []).length ? `<ul class="acceptance">${m.criteria.map((c) => `<li class="${c.status === "met" ? "ok" : ""}"><i>${icon("check")}</i><span><b class="mono">${esc(c.id)}</b> ${esc(c.criterion)}${c.evidence ? ` <span class="muted">· ${esc(c.evidence)}</span>` : ""}</span></li>`).join("")}</ul>` : "";
     return `<div class="m m-handoff" ${idAttr}>
       <div class="hcard ${done ? "done" : "revise"}">
         <div class="hcard-head"><span class="flow">${whoAv(m, "sm")}</span><span class="ttl">${done ? "Supervisor: task complete" : "Supervisor: revision requested"}</span><span class="badge ${done ? "green" : "amber"}">${done ? "done" : "revise"}</span><time>${time}</time></div>
         ${m.summary ? `<div class="hcard-body" style="padding-bottom:0"><div class="summary">${esc(m.summary)}</div></div>` : ""}
-        <div class="hcard-body md">${md(m.content || "")}</div>
+        <div class="hcard-body md">${md(m.content || "")}${refs}${crit}</div>
       </div>
     </div>`;
   }

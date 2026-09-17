@@ -131,11 +131,15 @@ class Runner:
         self._answer = {"qid": qid, "text": text, "extra": extra or {}}
         self._answer_event.set()
 
-    def wait_for_answer(self, qid) -> dict:
+    def wait_for_answer(self, qid, timeout=None) -> dict | None:
+        """Block until the human answers; with a timeout (seconds), return None when nobody did."""
         self._answer_event.clear()
         self._answer = None
+        deadline = time.time() + timeout if timeout else None
         while not self._answer_event.wait(0.5):
             self.check_stop()
+            if deadline and time.time() > deadline:
+                return None
         self.check_stop()
         return self._answer or {"qid": qid, "text": "", "extra": {}}
 

@@ -1087,3 +1087,21 @@ path.ch-agent.gemini, .sw.ch-agent.gemini { fill: var(--gemini); background: var
 .blocked-checks li { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; min-width: 0; }
 .blocked-checks li > div { min-width: 0; overflow-wrap: anywhere; }
 .blocked-checks .ic { color: var(--amber); flex: none; margin-top: 2px; }
+
+/* acceptance contract */
+.ac-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.ac-row { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; }
+.ac-box { width: 16px; height: 16px; border: 1px solid var(--border-strong); border-radius: 4px; flex: 0 0 auto; margin-top: 2px; display: inline-grid; place-items: center; color: var(--bg); }
+.ac-box .ic { width: 11px; height: 11px; }
+.ac-row.met .ac-box { background: var(--green); border-color: var(--green); }
+.ac-row.waived .ac-box { background: var(--text-2); border-color: var(--text-2); }
+.ac-row.waived .ac-line span { text-decoration: line-through; color: var(--text-2); }
+.ac-main { flex: 1 1 auto; min-width: 0; display: grid; gap: 2px; }
+.ac-line { overflow-wrap: anywhere; }
+.ac-meta { font-size: 11.5px; }
+.ac-evidence { font-family: var(--mono); font-size: 11.5px; color: var(--text-2); background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 3px 6px; overflow-wrap: anywhere; }
+.ac-edit { margin-top: 4px; gap: 4px; }
+.ac-add { margin-top: 10px; gap: 6px; }
+.ac-add input { flex: 1 1 auto; min-width: 0; }
+.ac-sub { margin: 14px 0 6px; }
+.findings li.should_fix, .findings li.nit { border-left-color: var(--amber); }

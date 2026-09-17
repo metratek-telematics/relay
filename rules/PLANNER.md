@@ -32,6 +32,11 @@ Good:
 - describe verification commands.
 
 ## Acceptance criteria
+Acceptance criteria are a contract: done is refused until every required one is met with concrete evidence. Give each an id (A1, A2, …), the criterion, `how_to_verify` (`test: <command>`, `command: <command>`, `screenshot: <what>` or `inspection: <what to read>`) and `required`. Mark a criterion `required: false` when it is nice to have.
+
+Good: `{"id":"A2","criterion":"parse_port rejects values outside 1-65535 with ValueError","how_to_verify":"test: python -m pytest tests/test_parse.py","required":true}`
+Bad: `"input validation is robust"` (not checkable), `"all edge cases handled"` (unbounded).
+
 Acceptance criteria must be observable and testable.
 Avoid vague words like:
 - better;

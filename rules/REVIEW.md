@@ -78,8 +78,22 @@ When visible UI changed:
 - dead code/debug code?
 - temporary artifacts?
 
+## Calibration
+- Judge against the acceptance contract and the evidence. The supervisor's criteria verdicts are claims: check the evidence behind each required one; a false or unproven claim is a blocking finding naming the criterion id.
+- Do not invent requirements late. Something the contract does not ask for is should_fix at most.
+- On re-review, check your earlier findings first. If one persists, report it with the same file and wording so Relay can track it; do not rephrase it as a new finding.
+- Report every blocking issue you can find in one round rather than drip-feeding them.
+- FAIL requires at least one blocking finding. A review whose findings are all should_fix or nit is a PASS; Relay treats it as one.
+
 ## Severity
-Block approval for:
+Every finding carries `"severity"`: `blocking`, `should_fix` or `nit`.
+- **blocking**: wrong behaviour against an acceptance criterion, a failing required check, a security issue, data loss, or a broken build. Example: the new endpoint returns 200 for an unauthenticated request.
+- **should_fix**: a real weakness that does not break the contract. Example: a missing test for an edge case the contract does not name.
+- **nit**: style or taste. Example: a helper could be named more clearly.
+
+Only blocking findings send the work back. should_fix and nit become follow-ups in the pull request.
+
+Blocking includes:
 - unmet acceptance criterion;
 - functional bug;
 - relevant failing test/build;
@@ -101,7 +115,7 @@ For each blocking issue state:
 3. why it matters;
 4. exact expected fix.
 
-Separate non-blocking suggestions from required fixes.
+Give non-blocking suggestions the severity should_fix or nit instead of leaving them out.
 
 PASS only when no blocking issue remains.
 

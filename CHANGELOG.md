@@ -8,6 +8,20 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The supervisor judges against an acceptance contract.** The plan carries 2 to 6 checkable criteria (id, criterion,
+  how to verify, required). They show on the task Overview as a checklist with status and evidence, can be edited
+  there (or with `PATCH /api/tasks/<id>/acceptance`), and gate delivery: `done` is refused until every required
+  criterion is met with concrete evidence, and a check Relay ran that fails outweighs any claim. After two refused
+  attempts the human decides.
+- **Severity discipline.** Revisions and review findings are `blocking`, `should_fix` or `nit`. Only blocking findings
+  cost another round; the rest are collected as follow-ups in the pull request, the report and the task page. A
+  review FAIL without a blocking finding counts as a PASS.
+- **Loop guards that ask instead of failing.** Every revision names the criteria or findings it addresses. A blocking
+  finding that comes back after two fix attempts, a revision that changes nothing, a used-up work-package budget,
+  used-up review rounds and verification that still fails after triage all ask the human with options (accept as a
+  follow-up, give guidance, more budget, stop). "go ahead" grants more budget. Unanswered questions take the safe
+  automatic choice after `judge_escalation_timeout_minutes`, and resuming a task stopped at its budget extends it.
+
 - **Prepared environments.** Relay installs a task's dependencies itself before any agent starts, using the
   repository's lockfile (`npm ci`, pnpm or yarn), the registry credentials mounted into Relay and a shared package
   cache. The result shows on the task Overview; a failure becomes a blocked check instead of an agent workaround. Tasks

@@ -15,7 +15,7 @@ Text before the envelope is fine (reasoning, notes, evidence). The envelope is w
   ```
   {"type":"plan","summary":"one line","plan":"short markdown: the work packages in order",
    "requirements":["the user's request, restated, nothing added"],
-   "acceptance":["observable criterion derived from the requirements"],
+   "acceptance":[{"id":"A1","criterion":"observable outcome derived from the requirements","how_to_verify":"test: python -m pytest tests/test_x.py","required":true}],
    "optional":["improvement the user did not ask for; never blocks done"],
    "known_files":{"primary":["path"],"supporting":["path"]},
    "findings":[{"file":"path","finding":"what you observed"}],
@@ -26,8 +26,11 @@ Text before the envelope is fine (reasoning, notes, evidence). The envelope is w
 - Next work package:
   `{"type":"instruction","summary":"one line","instruction":"exact work package"}`
 - Decision after a worker report:
-  `{"type":"decision","decision":"revise","summary":"one line","instruction":"exact required fixes"}`
-  `{"type":"decision","decision":"done","summary":"one line","pr_summary":"markdown summary suitable for a pull request description"}`
+  `{"type":"decision","decision":"revise","summary":"one line","addresses":["A2","F1"],"findings":[{"severity":"blocking","file":"path:line","problem":"...","fix":"...","criterion":"A2"}],"instruction":"exact required fixes"}`
+  `{"type":"decision","decision":"done","summary":"one line","criteria":[{"id":"A1","status":"met","evidence":"python -m pytest -q → 12 passed"}],"follow_ups":[{"severity":"should_fix","file":"path","problem":"..."}],"pr_summary":"markdown summary suitable for a pull request description"}`
+  - `addresses`: the acceptance criterion ids (A…) and blocking finding ids (F…, assigned by Relay) the revision fixes. A revise needs these or blocking findings.
+  - `criteria`: one entry per criterion; `status` is `met`, `unmet` or `waived`; `evidence` is concrete (command and result, file:line, screenshot path). A required criterion without met + evidence blocks done; only the human waives a required one.
+  - `severity`: `blocking` (wrong behaviour against the contract, failing required check, security issue, data loss, broken build), `should_fix` or `nit`. Only blocking findings justify another round; the rest are `follow_ups`.
 - Question to the human (only for genuine product/credential decisions):
   `{"type":"question","to":"user","question":"...","options":["Option A","Option B"]}`
 - Question to the worker:
@@ -50,7 +53,8 @@ Text before the envelope is fine (reasoning, notes, evidence). The envelope is w
 
 ## Envelopes the reviewer may send
 - `{"type":"review","verdict":"PASS","summary":"one line","findings":[]}`
-- `{"type":"review","verdict":"FAIL","summary":"one line","findings":[{"severity":"blocking","file":"path","problem":"...","fix":"..."}]}`
+- `{"type":"review","verdict":"FAIL","summary":"one line","findings":[{"severity":"blocking","criterion":"A2","file":"path:line","problem":"...","fix":"..."},{"severity":"nit","file":"path","problem":"...","fix":"..."}]}`
+- `severity` is `blocking`, `should_fix` or `nit`. FAIL needs at least one blocking finding; the others become pull-request follow-ups.
 
 ## Messages you will receive
 - `MESSAGE FROM SUPERVISOR`, `REPORT FROM WORKER`, `REVIEW FROM REVIEWER`: messages from teammates.

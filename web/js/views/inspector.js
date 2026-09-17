@@ -4,6 +4,7 @@ import { S, agentLabel, agentInitial, ROLE_LABEL, roleAgent, roleModel, roleEffo
 import { api } from "../api.js";
 import { prStatus, PR_STATE, REVIEW_LABEL, checksDetail } from "../prstatus.js";
 import { packetHtml, blockedHtml } from "../packet.js";
+import { acceptanceCardHtml, bindAcceptance } from "../acceptance.js";
 import { openTaskFolder } from "../ide.js";
 
 export const TABS = [
@@ -90,12 +91,13 @@ export function mountInspector(container, getTask) {
         </div>
         ${t.error ? `<div class="ecard"><strong>Failure</strong>${esc(t.error)}</div>` : ""}
         ${t.summary ? `<div class="card"><div class="card-head"><h3>Summary</h3></div><div class="card-body md">${md(t.summary)}</div></div>` : ""}
+        ${acceptanceCardHtml(t, { editing: bindAcceptance.editing })}
         ${workCard(t)}
         <div class="card"><div class="card-head"><h3>Team</h3><span class="badge outline">${esc(wf.preset || "custom")}</span></div><div class="card-body stack">
           ${roles.map((role) => `<div class="row between"><span class="row"><span class="av sm ${esc(roleAgent(t, role))}">${esc(agentInitial(roleAgent(t, role)))}</span><strong>${esc(agentLabel(roleAgent(t, role)))}</strong><span class="muted">${esc(ROLE_LABEL[role])}</span></span><span class="mono muted">${esc(roleModel(t, role) || "default model")}${roleEffort(t, role) ? ` · ${esc(roleEffort(t, role))} effort` : ""}</span></div>`).join("")}
           <div class="kv" style="margin-top:6px"><dt>Verification</dt><dd>${esc(wf.verify_mode || "each_report")}${(t.verify_commands || []).length ? ` · ${t.verify_commands.length} command(s)` : ""}</dd><dt>Approval gate</dt><dd>${wf.approval_before_delivery ? "before delivery" : "off"}</dd><dt>Agent questions</dt><dd>${wf.allow_agent_questions === false ? "disabled" : "allowed"}</dd><dt>Review rounds</dt><dd>${wf.max_review_rounds || "—"}</dd></div>
         </div></div>
-        ${plan.plan ? `<div class="card"><div class="card-head"><h3>Plan</h3>${plan.summary ? `<span class="muted truncate" style="max-width:220px">${esc(plan.summary)}</span>` : ""}</div><div class="card-body md">${md(plan.plan)}${packetHtml(plan, { done: t.status === "done" })}</div></div>` : ""}
+        ${plan.plan ? `<div class="card"><div class="card-head"><h3>Plan</h3>${plan.summary ? `<span class="muted truncate" style="max-width:220px">${esc(plan.summary)}</span>` : ""}</div><div class="card-body md">${md(plan.plan)}${packetHtml((t.acceptance || []).length ? { ...plan, acceptance: [] } : plan, { done: t.status === "done" })}</div></div>` : ""}
         <div class="card"><div class="card-head"><h3>Signals</h3></div><div class="card-body stack">
           <div class="row between"><span>Verification</span>${v ? `<span class="badge ${v.ok ? "green" : "red"}">${v.ok ? "passing" : "failing"}</span>` : '<span class="badge">not run</span>'}</div>
           ${(t.blocked_checks || []).length ? `<div><div class="row between"><span>Checks that could not run</span><span class="badge amber">${t.blocked_checks.length}</span></div>${blockedHtml(t.blocked_checks)}</div>` : ""}
@@ -115,6 +117,7 @@ export function mountInspector(container, getTask) {
       </div>`;
     $$("[data-open]", body).forEach((b) => (b.onclick = () => openTaskFolder(t, b.dataset.open)));
     $$("[data-copy-path]", body).forEach((b) => (b.onclick = () => copyText(b.dataset.copyPath)));
+    bindAcceptance(body, t, () => { if (state.tab === "overview") renderOverview(getTask()); });
     loadWork(t);
   }
 

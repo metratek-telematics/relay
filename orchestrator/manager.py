@@ -9,7 +9,7 @@ import time
 import traceback
 from pathlib import Path
 
-from . import agents, config as C, github, gitops
+from . import agents, config as C, github, gitops, judge
 from .pipeline import TurnBudget, orchestrate
 from .runner import Runner, Stopped
 from .store import ACTIVE, TERMINAL, WAITING, TaskStore
@@ -433,7 +433,8 @@ class Manager:
             raise ValueError("Task is still running")
         patch = {"status": "queued", "detail": "Queued for retry", "finished_at": None, "pending": None, "error": None, "traceback": None}
         if fresh or not (t.get("checkpoint") and t.get("worktree") and Path(t.get("worktree") or "").exists()):
-            patch.update({"checkpoint": None, "sessions": {}, "plan": None, "verification": None, "review": None})
+            patch.update({"checkpoint": None, "sessions": {}, "plan": None, "verification": None, "review": None,
+                          "acceptance": None, "follow_ups": None})
             patch["detail"] = "Queued · fresh start"
             if t.get("started_at"):
                 # A new run: elapsed time, the work chart and the signals describe it alone.
@@ -441,6 +442,9 @@ class Manager:
                               "environment": None, "diffstat": None, "changed_count": 0, "base_commit": None, "summary": ""})
         else:
             patch["detail"] = "Queued · resuming from checkpoint"
+            if str(t.get("error") or "").startswith("Turn budget exhausted"):
+                # Failed at the work-package budget by an older build: resuming grants the extension.
+                patch["checkpoint"] = {**t["checkpoint"], "budget_exhausted": True}
         self.store.update(tid, immediate=True, **patch)
         self.timeline(tid, "user", "Requeued", patch["detail"])
         self.emit_task(tid)
@@ -485,6 +489,30 @@ class Manager:
             self.store.update(tid, immediate=True, guidance=rows)
             return {"applied": "answer"}
         return {"applied": "next_boundary"}
+
+    def edit_acceptance(self, tid, ops: dict):
+        """Human edit of the acceptance contract. The supervisor hears about it at its next turn."""
+        t = self.store.get(tid)
+        if not t:
+            raise KeyError("Task not found")
+        before = list(t.get("acceptance") or [])
+        if not before and not (ops or {}).get("add"):
+            raise ValueError("This task has no acceptance contract to edit")
+        after = judge.edit_acceptance(before, ops or {})
+        self.store.update(tid, immediate=True, acceptance=after)
+        run_dir = t.get("run_dir")
+        if run_dir and Path(run_dir).is_dir():
+            p = Path(run_dir) / "ACCEPTANCE.md"
+            p.write_text(judge.acceptance_md(after), encoding="utf-8")
+            self.artifact(tid, "acceptance", str(p))
+        if t.get("status") not in TERMINAL:
+            text = ("The human edited the acceptance contract. It is now:\n" + judge.acceptance_block(after)
+                    + "\nJudge done against this version.")
+            rows = list(t.get("guidance") or []) + [{"id": new_id("g"), "time": now(), "text": text, "to": "supervisor", "consumed": False}]
+            self.store.update(tid, immediate=True, guidance=rows)
+        self.timeline(tid, "user", "Acceptance criteria edited", f"{len(before)} → {len(after)} criteria")
+        self.emit_task(tid)
+        return self.get(tid)
 
     def take_guidance(self, tid, role):
         t = self.store.get(tid)
