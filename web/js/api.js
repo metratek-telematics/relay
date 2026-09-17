@@ -6,7 +6,10 @@ function notifyConn() { for (const fn of conn.listeners) { try { fn(conn); } cat
 export async function request(url, options = {}) {
   let r;
   try {
-    r = await fetch(url, { cache: "no-store", ...options });
+    // The current project scopes lists the server builds (inbox, digest, repositories, connectors…); see views/org.
+    let project = "all";
+    try { project = localStorage.getItem("relay.project") || "all"; } catch {}
+    r = await fetch(url, { cache: "no-store", ...options, headers: { ...(options.headers || {}), "X-Relay-Project": project } });
     if (!conn.online) { conn.online = true; notifyConn(); }
   } catch (err) {
     conn.online = false; conn.lastError = err.message; notifyConn();

@@ -7,7 +7,7 @@ import { NOTIFY_EVENTS, chime, permission, requestPermission, showDesktop } from
 import { openShortcuts, keysFor } from "../shortcuts.js";
 import { mountConnectors } from "./connectors.js";
 
-const SECTIONS = [["workflow", "Workflow", "layers"], ["autopilot", "Autopilot", "clock"], ["agents", "Agents", "bot"], ["budget", "Usage & budget", "gauge"], ["verification", "Verification", "shield"], ["git", "Git & GitHub", "github"], ["connectors", "Connectors", "zap"], ["appearance", "Appearance", "sun"], ["notifications", "Notifications", "bell"], ["prompts", "Saved prompts", "message"], ["rules", "Rules", "docs"], ["about", "About", "info"]];
+const SECTIONS = [["workflow", "Workflow", "layers"], ["autopilot", "Autopilot", "clock"], ["agents", "Agents", "bot"], ["budget", "Usage & budget", "gauge"], ["verification", "Verification", "shield"], ["git", "Git & GitHub", "github"], ["connectors", "Connectors", "zap"], ["appearance", "Appearance", "sun"], ["notifications", "Notifications", "bell"], ["prompts", "Saved prompts", "message"], ["rules", "Rules", "docs"], ["about", "About", "info"], ["workspace", "Workspace & access", "user"]];
 
 // Scorecards, retrospectives and lessons (orchestrator/learning.py).
 function learningCard(c) {
@@ -303,6 +303,8 @@ export function mountSettings(main, section) {
       bindAuto();
       $$("[data-cfg='ui_theme'],[data-cfg='ui_density']", body).forEach((s) => s.addEventListener("change", () => bus.emit("theme", { theme: $("[data-cfg='ui_theme']", body).value, density: $("[data-cfg='ui_density']", body).value })));
       $("#showKeys", body).onclick = () => openShortcuts();
+    } else if (cur === "workspace") {
+      import("./org/settings-entry.js").then((m) => m.renderWorkspaceSettings(body));
     } else if (cur === "notifications") {
       renderNotifications(c);
     } else if (cur === "prompts") {

@@ -15,6 +15,7 @@ import { openNewTask } from "./views/newtask.js";
 import { TABS } from "./views/inspector.js";
 import { deliver, markSeen, renderAttention, permission, requestPermission } from "./notify.js";
 import { GOTO, keysFor, openShortcuts } from "./shortcuts.js";
+import { mountOrg, mountOrgHeader, parseOrgRoute, inProject } from "./views/org/org.js";
 
 const main = $("#main");
 let view = null;
@@ -131,13 +132,14 @@ function parseRoute() {
   if (!parts.length) return { view: "dashboard", id: null, tab: null, section: null };
   if (parts[0] === "task" && parts[1]) return { view: "task", id: decodeURIComponent(parts[1]), tab: parts[2] || null, section: null };
   if (parts[0] === "settings") return { view: "settings", id: null, tab: null, section: parts[1] || "workflow" };
+  if (parts[0] === "org") return parseOrgRoute(parts);
   if (parts[0] === "repos") return { view: "repos", id: null, tab: null, section: parts[1] || "list" };
   if (["agents", "github", "issues", "tasks", "dashboard", "lessons", "digest", "inbox"].includes(parts[0])) return { view: parts[0] === "dashboard" ? "dashboard" : parts[0], id: null, tab: null, section: null };
   return { view: "dashboard", id: null, tab: null, section: null };
 }
 function route() {
   const r = parseRoute();
-  const same = view && S.route.view === r.view && S.route.id === r.id;
+  const same = view && S.route.view === r.view && S.route.id === r.id && (r.view !== "org" || (S.route.section === r.section && S.route.tab === r.tab));
   S.route = r;
   if (r.id) { markSeen(r.id); renderAttention(); }
   $$(".rail-btn[data-nav]").forEach((b) => b.classList.toggle("active", b.dataset.nav === (r.view === "task" ? "tasks" : r.view)));
@@ -155,12 +157,16 @@ function route() {
   else if (r.view === "lessons") view = mountLessons(main);
   else if (r.view === "digest") view = mountDigest(main);
   else if (r.view === "inbox") view = mountInbox(main);
+  else if (r.view === "org") view = mountOrg(main, r.section, r.tab);
   else view = mountDashboard(main);
   renderSidebar();
   bus.emit("route");
   requestAnimationFrame(wireTabScroll);
 }
 window.addEventListener("hashchange", route);
+// Switching project re-draws the page and the task list for that project.
+bus.on("project", () => { view && view.destroy && view.destroy(); view = null; route(); });
+bus.on("org", () => { if (S.ready) renderSidebar(); });
 
 function mountTasksHome() {
   const tasks = [...S.tasks.values()].filter((t) => !t.archived).sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
@@ -180,6 +186,7 @@ const groupOf = (t) => {
 };
 const GROUPS = ["Needs attention", "Active", "Queued", "Recent"];
 function matchesFilter(t) {
+  if (!inProject(t)) return false;
   const f = S.ui.filter;
   if (f === "archived") return !!t.archived;
   if (t.archived) return false;
@@ -531,7 +538,7 @@ async function bootstrap() {
   S.tasks = new Map((st.tasks || []).map((t) => [t.id, t]));
   applyTheme(S.config.ui_theme, S.config.ui_density);
   renderQueue(); renderNotifBadge(); renderLessonsBadge(); renderConn(); renderAttention(); renderAutopilot();
-  if (!S.ready) { S.ready = true; connectEvents(onEvent); route(); }
+  if (!S.ready) { S.ready = true; connectEvents(onEvent); mountOrgHeader(); route(); }
   else { renderSidebar(); view && view.update && view.update("task", {}); }
 }
 bootstrap();
