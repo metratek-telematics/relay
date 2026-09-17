@@ -183,7 +183,8 @@
 .org-chain { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-xs); font-weight: 650; padding: 3px 9px; border-radius: 99px; }
 .org-chain.ok { color: var(--green); background: var(--green-soft); }
 .org-chain.bad { color: var(--red); background: var(--red-soft); }
-@media (max-width: 700px) { .org-diff { grid-template-columns: 1fr; } .org-hide-sm { display: none; } }
+.org-show-sm { display: none; }
+@media (max-width: 700px) { .org-diff { grid-template-columns: 1fr; } .org-hide-sm { display: none; } .org-show-sm { display: inline; } }
 
 /* ---- usage */
 .org-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }

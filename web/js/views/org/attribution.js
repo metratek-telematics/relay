@@ -20,7 +20,7 @@ export function attributionHtml(t) {
   ].filter(([, p]) => p);
   if (!bits.length && !proj) return "";
   const who = (p, verb, when, ic) => {
-    const av = p.u ? avatar({ ...p.u, initials: p.u.initials }, 18) : `<span class="org-av" style="width:18px;height:18px;font-size:8px;background:var(--text-3)"><span>${esc((p.name || "?").slice(0, 2).toUpperCase())}</span></span>`;
+    const av = p.u ? avatar({ ...p.u, initials: p.u.initials }, 18) : `<span class="org-av" style="width:18px;height:18px;font-size:8px;background:#55606e"><span>${esc((p.name || "?").slice(0, 2).toUpperCase())}</span></span>`;
     return `<span title="${esc(`${verb} by ${p.label}${p.via ? ` via ${p.via}` : ""}`)}">${icon(ic, "sm")}${verb} by ${av}<b>${esc(p.label)}</b>${when || p.when ? `<span class="muted">${esc(timeAgo(when || p.when))}</span>` : ""}${p.via && p.via !== "proxy" && p.via !== "local" ? `<span class="badge outline">${esc(p.via.startsWith("token") ? "API" : p.via)}</span>` : ""}</span>`;
   };
   return `<div class="org-attrib">${proj ? `<span><span class="org-proj-dot" style="background:${esc(proj.color)}"></span><a href="#/org/project/${esc(proj.id)}"><b>${esc(proj.name)}</b></a></span>` : ""}${bits.map(([verb, p, when, ic]) => who(p, verb, when, ic)).join("")}</div>`;

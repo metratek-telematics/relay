@@ -119,7 +119,7 @@ export function xicon(name, cls = "") {
 
 export function avatar(u, size = 28) {
   if (!u) return "";
-  const style = `width:${size}px;height:${size}px;font-size:${Math.round(size * 0.4)}px;background:${esc(u.color || "var(--text-3)")}`;
+  const style = `width:${size}px;height:${size}px;font-size:${Math.round(size * 0.4)}px;background:${esc(u.color || "#55606e")}`;
   const img = u.avatar_url ? `<img src="${esc(u.avatar_url)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : "";
   // Invisible characters in a name (zero-width spaces from an identity provider) must never become initials.
   const ini = String(u.initials || "").replace(/[\u0000-\u001f\u007f-\u00bf\u200b-\u200f\u2028-\u202f\u2060-\u206f\ufeff]/g, "").slice(0, 2) || "?";
