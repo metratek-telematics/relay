@@ -8,8 +8,9 @@ export const NOTIFY_EVENTS = [
   ["failed", "Task failed or stopped", "A run failed, ran out of turns, or was stopped."],
   ["needs_input", "Agent needs input or approval", "An agent asked you a question, or delivery is waiting for your approval."],
   ["pr_opened", "Pull request opened", "Relay opened a draft pull request on GitHub."],
+  ["digest", "Morning digest", "Once a day at the digest time set under Autopilot: what was delivered, what waits for you, what is next."],
 ];
-const EVENT_OF_KIND = { delivered: "delivered", failed: "failed", stopped: "failed", needs_input: "needs_input", approval: "needs_input", pr_opened: "pr_opened" };
+const EVENT_OF_KIND = { delivered: "delivered", failed: "failed", stopped: "failed", needs_input: "needs_input", approval: "needs_input", pr_opened: "pr_opened", digest: "digest" };
 
 export function eventAllowed(n) {
   const ev = EVENT_OF_KIND[n.kind];
@@ -59,6 +60,7 @@ export function showDesktop(n) {
       window.focus();
       nt.close();
       if (n.task_id) navigate(`#/task/${n.task_id}`);
+      else if (n.kind === "digest") navigate("#/digest");
     };
     return true;
   } catch { return false; }

@@ -10,6 +10,7 @@ import { mountGithub } from "./views/github.js";
 import { mountIssues } from "./views/issues.js";
 import { mountRepos } from "./views/repos.js";
 import { mountLessons } from "./views/lessons.js";
+import { mountDigest, mountInbox } from "./views/digest.js";
 import { openNewTask } from "./views/newtask.js";
 import { TABS } from "./views/inspector.js";
 import { deliver, markSeen, renderAttention, permission, requestPermission } from "./notify.js";
@@ -131,7 +132,7 @@ function parseRoute() {
   if (parts[0] === "task" && parts[1]) return { view: "task", id: decodeURIComponent(parts[1]), tab: parts[2] || null, section: null };
   if (parts[0] === "settings") return { view: "settings", id: null, tab: null, section: parts[1] || "workflow" };
   if (parts[0] === "repos") return { view: "repos", id: null, tab: null, section: parts[1] || "list" };
-  if (["agents", "github", "issues", "tasks", "dashboard", "lessons"].includes(parts[0])) return { view: parts[0] === "dashboard" ? "dashboard" : parts[0], id: null, tab: null, section: null };
+  if (["agents", "github", "issues", "tasks", "dashboard", "lessons", "digest", "inbox"].includes(parts[0])) return { view: parts[0] === "dashboard" ? "dashboard" : parts[0], id: null, tab: null, section: null };
   return { view: "dashboard", id: null, tab: null, section: null };
 }
 function route() {
@@ -152,6 +153,8 @@ function route() {
   else if (r.view === "repos") view = mountRepos(main, r.section);
   else if (r.view === "tasks") view = mountTasksHome();
   else if (r.view === "lessons") view = mountLessons(main);
+  else if (r.view === "digest") view = mountDigest(main);
+  else if (r.view === "inbox") view = mountInbox(main);
   else view = mountDashboard(main);
   renderSidebar();
   bus.emit("route");
@@ -221,12 +224,14 @@ function renderSidebar() {
         ? `<span class="task-quick-group"><button class="task-quick" data-move="${esc(t.id)}" data-dir="up" title="Run earlier" aria-label="Move up in queue" ${pos === 0 ? "disabled" : ""}>${icon("chevronUp")}</button><button class="task-quick" data-move="${esc(t.id)}" data-dir="down" title="Run later" aria-label="Move down in queue" ${pos === order.length - 1 ? "disabled" : ""}>${icon("chevronDown")}</button><button class="task-quick" data-unqueue="${esc(t.id)}" title="Remove from the queue (keeps it as a draft)" aria-label="Remove from queue">${icon("unqueue")}</button><button class="task-quick" data-start="${esc(t.id)}" title="Start now (runs alongside other tasks)" aria-label="Start now">${icon("play")}</button></span>`
         : (canStart ? `<button class="task-quick" data-start="${esc(t.id)}" title="Start now (runs alongside other tasks)">${icon("play")}</button>` : "");
     const queueTag = pos !== undefined ? `<span class="q-pos" title="${t.chain_id ? "Runs after the previous task of its chain ends" : "Position in the queue"}">#${pos + 1}${t.chain_id ? " · chain" : ""}</span>` : "";
+    const waitLine = t.status === "queued" && t.waiting?.text ? `<span class="wait-line" title="${esc(t.waiting.text)}">${icon(t.waiting.kind === "limits" ? "gauge" : t.waiting.kind === "dependency" || t.waiting.kind === "chain" ? "layers" : "clock", "sm")}<span class="truncate">${esc(t.waiting.text)}</span></span>` : "";
     return head + `<div class="task-row ${S.route.id === t.id ? "active" : ""}">
       <button class="task-item" data-task="${esc(t.id)}" role="listitem" title="${esc(t.name)}">
       <span class="st ${live ? "live" : ""}" style="background:${color};color:${color}"></span>
       <span class="name">${esc(t.name)}</span>
       ${badge || "<span></span>"}
       <span class="sub"><span class="wf-mini" title="${esc(roles.map(agentLabel).join(" → "))}">${roles.map((a) => `<i class="av ${esc(a)}">${esc(agentInitial(a)[0])}</i>`).join("")}</span>${queueTag}<span class="truncate">${esc(t.github_repo || basename(t.repo))}</span><span style="margin-left:auto">${live ? esc(st.label.toLowerCase()) : timeAgo(t.updated_at)}</span></span>
+      ${waitLine}
     </button>${quick}</div>`;
   }).join("");
   $$("[data-task]", list).forEach((b) => (b.onclick = () => navigate(`#/task/${b.dataset.task}`)));
@@ -280,6 +285,41 @@ function renderConn() {
 }
 onConnection(renderConn);
 
+// ---------------------------------------------------------------------------- autopilot status bar
+const AP_TONE = { running: "on", idle: "on", paused: "warn", halted: "", outside_window: "", waiting_limits: "warn", cost_cap: "off" };
+function renderAutopilot() {
+  const a = S.autopilot, bar = $("#apBar");
+  if (!bar || !a) return;
+  const badge = $("#inboxBadge");
+  if (badge) badge.hidden = !a.needs_you;
+  const stats = [a.running ? `${a.running} running` : "", a.parked ? `${a.parked} parked` : "", a.queued ? `${a.queued} queued` : "",
+    a.waiting_dependencies ? `${a.waiting_dependencies} waiting on others` : ""].filter(Boolean).join(" · ");
+  const until = a.until ? ` until ${a.until_text}` : "";
+  const label = a.state === "running" ? "running" : a.state === "idle" ? "idle" : (a.label || a.state).replace(/^Autopilot /, "").replace(/^./, (c) => c.toLowerCase());
+  bar.hidden = false;
+  bar.dataset.state = a.state;
+  bar.innerHTML = `<span class="dot ${AP_TONE[a.state] || ""} ${a.state === "running" && a.running ? "live" : ""}"></span>
+    <span class="ap-label"><b>Autopilot</b> <span>${esc(label)}${a.state === "waiting_limits" || a.state === "running" || a.state === "idle" ? "" : esc(until)}</span></span>
+    ${stats ? `<span class="ap-stats">${esc(stats)}</span>` : ""}
+    ${a.quiet_hours ? `<span class="badge purple" title="Judge decisions take their automatic choice">${icon("moon", "sm")}quiet hours</span>` : ""}
+    ${a.daily_cap_usd ? `<span class="ap-cost" title="Estimated spend today">~$${Number(a.today_cost_usd || 0).toFixed(2)} / $${a.daily_cap_usd}</span>` : ""}
+    <span class="ap-spacer"></span>
+    <a class="ap-link ${a.needs_you ? "attn" : ""}" href="#/inbox">${icon("inbox", "sm")}<span class="lbl">Needs you</span><b>${a.needs_you || 0}</b></a>
+    <a class="ap-link" href="#/digest" title="Digest">${icon("sunrise", "sm")}<span class="lbl">Digest</span></a>
+    ${a.state === "halted" ? `<button class="btn xs" id="apRun">${icon("play")}Run queue</button>` : `<button class="btn xs" id="apToggle" title="${a.paused ? "Resume: queued tasks start and paused runs continue" : "Pause everything: nothing new starts, running tasks stop after their current turn"}">${icon(a.paused ? "play" : "pause")}${a.paused ? "Resume" : "Pause"}</button>`}`;
+  $("#apToggle", bar) && ($("#apToggle", bar).onclick = toggleAutopilot);
+  $("#apRun", bar) && ($("#apRun", bar).onclick = () => $("#runBtn").click());
+}
+async function toggleAutopilot() {
+  const paused = !!S.autopilot?.paused;
+  try {
+    S.autopilot = await api.autopilotAction(paused ? "resume" : "pause");
+    renderAutopilot();
+    toast(paused ? "success" : "info", paused ? "Autopilot resumed" : "Autopilot paused", paused ? "Queued tasks start again." : "Nothing new starts; running tasks stop after their current turn.");
+  } catch (e) { toast("error", "Autopilot", e.message); }
+}
+setInterval(async () => { if (!conn.online || !S.ready) return; try { S.autopilot = await api.autopilot(); renderAutopilot(); } catch {} }, 30000);
+
 // ---------------------------------------------------------------------------- notifications
 function renderLessonsBadge() { const b = $("#lessonsBadge"); if (b) b.hidden = !S.lessonsPending; }
 function renderNotifBadge() { const unread = (S.notifications || []).filter((n) => !n.read).length; const b = $("#notifBadge"); b.hidden = !unread; }
@@ -289,7 +329,7 @@ $("#notifBtn").onclick = () => {
   const rows = S.notifications || [];
   const askDesktop = S.config.ui_notifications && permission() === "default";
   p.innerHTML = `<div class="row between" style="padding:8px 10px 4px"><strong>Notifications</strong><button class="btn xs" id="notifClear">Mark all read</button></div>` +
-    (askDesktop ? `<div class="notif-ask"><span>Get a desktop alert when a task needs you, even with Relay in the background.</span><button class="btn xs primary" id="notifAllow">${icon("bell")}Allow</button></div>` : "") + (rows.length ? rows.slice(0, 40).map((n) => `<div class="notif-row" data-n="${esc(n.task_id || "")}"><span class="toast-ic ${esc(n.level)}" style="background:var(--${n.level === "success" ? "green" : n.level === "error" ? "red" : n.level === "warning" ? "amber" : "blue"}-soft);color:var(--${n.level === "success" ? "green" : n.level === "error" ? "red" : n.level === "warning" ? "amber" : "blue"})">${icon(n.level === "success" ? "check" : n.level === "info" ? "info" : "alert")}</span><div><strong>${esc(n.title)}</strong><span>${esc(n.body || "")}</span><time>${timeAgo(n.time)}</time></div></div>`).join("") : '<div class="empty small">No notifications yet.</div>');
+    (askDesktop ? `<div class="notif-ask"><span>Get a desktop alert when a task needs you, even with Relay in the background.</span><button class="btn xs primary" id="notifAllow">${icon("bell")}Allow</button></div>` : "") + (rows.length ? rows.slice(0, 40).map((n) => `<div class="notif-row" data-n="${esc(n.task_id || "")}" data-kind="${esc(n.kind || "")}"><span class="toast-ic ${esc(n.level)}" style="background:var(--${n.level === "success" ? "green" : n.level === "error" ? "red" : n.level === "warning" ? "amber" : "blue"}-soft);color:var(--${n.level === "success" ? "green" : n.level === "error" ? "red" : n.level === "warning" ? "amber" : "blue"})">${icon(n.level === "success" ? "check" : n.level === "info" ? "info" : "alert")}</span><div><strong>${esc(n.title)}</strong><span>${esc(n.body || "")}</span><time>${timeAgo(n.time)}</time></div></div>`).join("") : '<div class="empty small">No notifications yet.</div>');
   p.hidden = false;
   $("#notifAllow", p) && ($("#notifAllow", p).onclick = async () => {
     const res = await requestPermission();
@@ -297,7 +337,7 @@ $("#notifBtn").onclick = () => {
     p.hidden = true;
   });
   $("#notifClear", p).onclick = async () => { await api.notificationsRead(); S.notifications.forEach((n) => (n.read = true)); renderNotifBadge(); p.hidden = true; };
-  $$("[data-n]", p).forEach((r) => (r.onclick = () => { p.hidden = true; if (r.dataset.n) navigate(`#/task/${r.dataset.n}`); }));
+  $$("[data-n]", p).forEach((r) => (r.onclick = () => { p.hidden = true; if (r.dataset.n) navigate(`#/task/${r.dataset.n}`); else if (r.dataset.kind === "digest") navigate("#/digest"); }));
   const close = (e) => { if (!p.contains(e.target) && e.target !== $("#notifBtn") && !$("#notifBtn").contains(e.target)) { p.hidden = true; document.removeEventListener("mousedown", close); } };
   setTimeout(() => document.addEventListener("mousedown", close), 0);
 };
@@ -359,6 +399,7 @@ function onEvent(ev) {
     case "github": S.github = { ...S.github, ...p }; view && view.update && view.update("github", p); break;
     case "config": S.config = p; applyTheme(p.ui_theme, p.ui_density); renderQueue(); break;
     case "queue": S.queue = { ...S.queue, ...p }; renderQueue(); break;
+    case "autopilot": S.autopilot = p; renderAutopilot(); view && view.update && view.update("autopilot", p); break;
     case "lessons": S.lessonsPending = p.pending || 0; renderLessonsBadge(); view && view.update && view.update("lessons"); break;
     case "agents": { const j = p.job; if (j) toast(j.state === "done" ? "success" : "error", `${agentLabel(p.agent)} ${j.action === "remove" ? "removal" : j.action} ${j.state === "done" ? "finished" : "failed"}`, j.error || ""); view && view.update && view.update("agents"); break; }
   }
@@ -373,6 +414,10 @@ function paletteItems() {
     { group: "Actions", label: "Toggle theme", icon: "sun", onClick: () => $("#themeBtn").click() },
     { group: "Actions", label: "Show or hide the task list", icon: "tasks", hint: keysFor("sidebar"), onClick: () => $("#sidebarToggle").click() },
     { group: "Navigate", label: "Dashboard", icon: "home", hint: keysFor("goDashboard"), onClick: () => navigate("#/") },
+    { group: "Navigate", label: "Needs you", icon: "inbox", hint: keysFor("goInbox"), keywords: "inbox questions approvals answer", onClick: () => navigate("#/inbox") },
+    { group: "Navigate", label: "Digest", icon: "sunrise", hint: keysFor("goDigest"), keywords: "morning summary report overnight", onClick: () => navigate("#/digest") },
+    { group: "Actions", label: S.autopilot?.paused ? "Resume autopilot" : "Pause autopilot", icon: S.autopilot?.paused ? "play" : "pause", keywords: "pause everything", onClick: () => toggleAutopilot() },
+    { group: "Navigate", label: "Autopilot settings", icon: "clock", keywords: "schedule window quiet hours limits fallback cost cap", onClick: () => navigate("#/settings/autopilot") },
     { group: "Navigate", label: "Agents", icon: "bot", hint: keysFor("goAgents"), onClick: () => navigate("#/agents") },
     { group: "Navigate", label: "Issues", icon: "issue", hint: keysFor("goIssues"), keywords: "tickets github board", onClick: () => navigate("#/issues") },
     { group: "Navigate", label: "GitHub inbox", icon: "github", hint: keysFor("goGithub"), onClick: () => navigate("#/github") },
@@ -417,7 +462,7 @@ function stepTask(delta) {
 
 // "g" starts a two-key sequence; a small pill shows it is waiting for the second key.
 let chordUntil = 0;
-const chordPill = el('<div class="chord-pill" hidden><kbd>G</kbd> then <kbd>D</kbd> dashboard · <kbd>T</kbd> tasks · <kbd>A</kbd> agents · <kbd>H</kbd> GitHub · <kbd>I</kbd> issues · <kbd>S</kbd> settings · <kbd>R</kbd> repositories</div>');
+const chordPill = el('<div class="chord-pill" hidden><kbd>G</kbd> then <kbd>D</kbd> dashboard · <kbd>T</kbd> tasks · <kbd>A</kbd> agents · <kbd>H</kbd> GitHub · <kbd>I</kbd> issues · <kbd>S</kbd> settings · <kbd>R</kbd> repositories · <kbd>Y</kbd> needs you · <kbd>E</kbd> digest</div>');
 document.body.appendChild(chordPill);
 const endChord = () => { chordUntil = 0; chordPill.hidden = true; };
 
@@ -482,10 +527,10 @@ async function bootstrap() {
   try { st = await api.state(); } catch (e) { main.innerHTML = `<div class="page"><div class="empty">${icon("alert", "lg")}<h3>Backend unreachable</h3><p>${esc(e.message)}</p></div></div>`; renderConn(); setTimeout(bootstrap, 3000); return; }
   S.build = st.build; S.config = st.config || {}; S.agents = st.agents || {}; S.agentMeta = st.agent_meta || {};
   paintAgentColors(); S.presets = st.presets || []; S.templates = st.templates || [];
-  S.github = st.github || {}; S.queue = st.queue || {}; S.notifications = st.notifications || []; S.lessonsPending = st.lessons_pending || 0;
+  S.github = st.github || {}; S.queue = st.queue || {}; S.autopilot = st.autopilot || null; S.notifications = st.notifications || []; S.lessonsPending = st.lessons_pending || 0;
   S.tasks = new Map((st.tasks || []).map((t) => [t.id, t]));
   applyTheme(S.config.ui_theme, S.config.ui_density);
-  renderQueue(); renderNotifBadge(); renderLessonsBadge(); renderConn(); renderAttention();
+  renderQueue(); renderNotifBadge(); renderLessonsBadge(); renderConn(); renderAttention(); renderAutopilot();
   if (!S.ready) { S.ready = true; connectEvents(onEvent); route(); }
   else { renderSidebar(); view && view.update && view.update("task", {}); }
 }
