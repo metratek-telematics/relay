@@ -79,7 +79,8 @@ files plus a 3,000-line lockfile. Characters:
 
 Same small task ("add `word_count` and `truncate_words` with tests") run end to end in throwaway containers built
 from origin/main (ead2091) and from this branch: Codex supervisor and reviewer at low effort on the CLI's default
-model, Claude Sonnet worker at low effort, verification after each report, no push, no pull request. Two runs each.
+model, Claude Sonnet worker at low effort, verification after each report, no push, no pull request. Two runs on
+main, three on the branch.
 Every run finished in one work package, verification passed and the review passed in round 1, so quality was the
 same.
 
@@ -89,13 +90,14 @@ same.
 | main #2 | 488,584 | 433,819 | 4,988 | $0.309 |
 | branch #1 | 507,129 | 420,846 | 5,112 | $0.286 |
 | branch #2 | 393,888 | 332,293 | 4,803 | $0.234 |
-| **mean, main → branch** | 477,005 → 450,509 (−6%) | | 4,737 → 4,958 (+5%) | **$0.310 → $0.260 (−16%)** |
+| branch #3 (after merging main again) | 482,388 | 410,957 | 4,717 | $0.262 |
+| **mean, main → branch** | 477,005 → 461,135 (−3%) | | 4,737 → 4,877 (+3%) | **$0.310 → $0.261 (−16%)** |
 
-The Claude worker turn fell from $0.185 to $0.141 on average (−24%): the lean agent context, since each of its API
+The Claude worker turn fell from $0.185 to $0.143 on average (−23%): the lean agent context, since each of its API
 calls re-reads the whole context. An earlier branch run without the lean context cost exactly as much as main
 ($0.310), so on a one-package task the prompt deltas, diffs and excerpts have nothing to act on: they pay off from
-the second work package and review round, as the table above shows. Two runs per side is a small sample: the two
-branch runs differ by about 20% because the worker read files and ran tests a different number of times.
+the second work package and review round, as the table above shows. This is a small sample: the branch runs
+range from $0.234 to $0.286 because the worker read files and ran tests a different number of times.
 
 Most of a turn's tokens are the CLI's own system prompt, tool definitions and the tool results of the calls inside
 the turn, re-read on every call; Relay's text was about 5% of the prompt tokens in these runs. That is why the
