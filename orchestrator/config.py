@@ -271,6 +271,9 @@ DEFAULTS = {
     "github_auto_create_pr": True,
     "github_pr_draft": True,
     "github_pr_base": "",
+    "issues_comment_on_pickup": False,   # Issues board: comment "Relay picked this up" on the issue
+    "issues_pickup_label": "",           # Issues board: label added to an issue when a task is created from it
+    "queue_stop_chain_on_failure": False,  # one-after-the-other chains keep going after a failed task
     "github_pr_body_template": "{summary}\n\n---\n{details}\n\n{issue_close}\n",
     # learning: scorecards, retrospectives, lessons (orchestrator/learning.py)
     "retro_enabled": True,             # one short agent turn after each task ends, proposing lessons for review

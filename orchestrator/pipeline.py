@@ -11,19 +11,30 @@ resumed against the same persistent agent sessions.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import time
 import traceback
 from pathlib import Path
 
 from . import config as C
-from . import designcheck, environment, gitops, github, lessons, protocol
+from . import designcheck, environment, gitops, github, lessons, protocol, repo_env
 from .runner import Interrupted, Stopped, TurnTimeout
 from .util import APP_DIR, new_id, now, quiet, read_text, truncate, write_text
 
 SUP_TYPES = {"plan", "instruction", "decision", "question"}
 WRK_TYPES = {"report", "question"}
 REV_TYPES = {"review"}
+
+
+_CONFIG_ERRORS = re.compile(
+    r"model[^\n]{0,80}(?:not supported|not found|does not exist|is not available|unknown|invalid)|unknown model|"
+    r"not supported when using|401 unauthorized|\b401\b[^\n]{0,40}unauthori|invalid api key|api key (?:is )?(?:missing|invalid|not valid)|"
+    r"not signed in|not logged in|authentication required|no authentication information|please (?:log ?in|sign in)", re.I)
+
+
+def _config_error(text: str) -> bool:
+    return bool(_CONFIG_ERRORS.search(text or ""))
 
 
 class TurnBudget(RuntimeError):
@@ -188,6 +199,10 @@ class Pipeline:
             if not res.get("ok"):
                 failures += 1
                 self.r.msg(role=role, agent=agent, kind="error", content=truncate(res.get("error") or "Agent turn failed", 3000), turn=turn)
+                if failures >= 2 and _config_error(res.get("error") or ""):
+                    # Retrying cannot fix a wrong model name or a missing sign-in; say what to change instead.
+                    raise RuntimeError(f"{_label(agent)} ({role}) cannot run with this setup: {truncate(res.get('error') or '', 400)}\n"
+                                       f"Fix the model or sign-in for {_label(agent)} (Agents page, or the task's team), then send a message or Resume.")
                 if failures > max_failures:
                     raise RuntimeError(f"{_label(agent)} ({role}) failed {failures} times in a row, including on fresh sessions: {truncate(res.get('error') or '', 500)}")
                 self.r.timeline(role, f"Agent turn failed · retrying ({failures}/{max_failures})", truncate(res.get("error") or "", 200))
@@ -309,8 +324,32 @@ class Pipeline:
                                       "reason": truncate((res.get("output") or "").strip().splitlines()[-1] if (res.get("output") or "").strip() else f"exit {res.get('rc')}", 300),
                                       "impact": "tests, builds and previews that need dependencies cannot run"}])
                 self.r.timeline("system", "Environment setup failed", cmd)
+        if self.repo_env.get("services_up"):
+            self.start_services()
         self.m.set_meta(self.tid, environment=info)
         return info
+
+    def start_services(self):
+        cmd = self.repo_env["services_up"]
+        self.r.timeline("system", "Starting services", cmd)
+        res = self.r.run_shell(cmd, self.wt, "setup", timeout=float(self.cfg.get("env_prepare_timeout_minutes") or 20) * 60,
+                               title=f"Start services · {cmd}")
+        if not res["ok"]:
+            self.record_blocked([{"check": f"Services ({cmd})", "action_required": True,
+                                  "reason": truncate((res.get("output") or "").strip().splitlines()[-1] if (res.get("output") or "").strip() else f"exit {res.get('rc')}", 300),
+                                  "impact": "checks that need these services cannot pass"}])
+        self.state["services_started"] = res["ok"]
+        return res
+
+    def stop_services(self):
+        cmd = (getattr(self, "repo_env", None) or {}).get("services_down")
+        if not cmd or not self.wt or not self.state.get("services_started"):
+            return
+        try:
+            self.r.run_shell(cmd, self.wt, "setup", timeout=300, title=f"Stop services · {cmd}")
+        except Exception:
+            pass  # stopping services must never mask the task's own outcome
+        self.state["services_started"] = False
 
     def env_text(self):
         info = self.state.get("environment") or (self.task_meta().get("environment") or {})
@@ -318,6 +357,9 @@ class Pipeline:
         if info.get("command"):
             state = "installed" if info.get("ok") else ("already present" if info.get("skipped") else "FAILED, see blocked checks")
             lines.append(f"- Dependencies: Relay ran `{info['command']}` before you started ({state}). Do not install dependencies another way.")
+        described = repo_env.describe(getattr(self, "repo_env", None) or repo_env.empty())
+        if described:
+            lines.append(described)
         if self.wt and environment.venv_bin(self.wt):
             lines.append("- Python: Relay created `.venv` in the worktree with the requirements and pytest, and it is first on PATH, "
                          "so `python`, `pip` and `python -m pytest` already use it. Do not create another environment.")
@@ -404,13 +446,23 @@ class Pipeline:
             if skipped:
                 res["ok"] = True
             pre_existing = False
-            if not res["ok"]:
+            # 126/127: the command itself could not run (not installed, not executable). That proves nothing
+            # either way, so it is never excused as a pre-existing failure and is recorded for a human to fix.
+            cannot_run = res.get("rc") in (126, 127)
+            if cannot_run:
+                self.record_blocked([{"check": c, "action_required": True,
+                                      "reason": truncate((res.get("output") or "").strip().splitlines()[-1] if (res.get("output") or "").strip() else f"exit {res.get('rc')}", 300),
+                                      "impact": "this check could not run, so it proves nothing; fix the environment (Repositories → Environment)"}])
+            elif not res["ok"]:
                 base = self.baseline_result(c, timeout)
                 pre_existing = bool(base and not base["ok"])
-            items.append({"command": c, "ok": res["ok"] or pre_existing, "rc": res.get("rc"), "skipped": skipped,
-                          "pre_existing": pre_existing, "duration": round(res.get("duration") or 0, 1)})
+            optional = c in getattr(self, "optional_checks", set())
+            items.append({"command": c, "ok": res["ok"] or pre_existing or optional, "rc": res.get("rc"), "skipped": skipped,
+                          "pre_existing": pre_existing, "optional": optional, "passed": res["ok"],
+                          "duration": round(res.get("duration") or 0, 1)})
             verdict = ("SKIPPED (no tests collected)" if skipped else "PASS" if res["ok"]
-                       else "PRE-EXISTING FAILURE (also fails on the starting commit; does not block)" if pre_existing else "FAIL")
+                       else "PRE-EXISTING FAILURE (also fails on the starting commit; does not block)" if pre_existing
+                       else "FAIL (optional check; reported, does not block)" if optional else "FAIL")
             head = f"$ {c}\n{verdict} (exit {res.get('rc')}, {round(res.get('duration') or 0)}s)"
             # A passing command only needs its verdict; a failure needs output the agents can act on.
             body = "" if (res["ok"] and quiet_pass) else "\n" + truncate(res["output"], fail_chars, tail=True)
@@ -460,7 +512,13 @@ class Pipeline:
             self.r.timeline("git", "Worktree ready", f"{self.branch} → {self.wt}")
             # Recorded before any agent works, so changes still count once Relay commits them.
             t["base_commit"] = quiet(["git", "rev-parse", "HEAD"], cwd=self.wt).stdout.strip()
+            self.repo_env = repo_env.load(t["repo"]) if t.get("repo") else repo_env.empty()
+            self.r.set_masker(repo_env.masker(self.repo_env))
             self.state["environment"] = self.prepare_environment(t)
+        self.repo_env = repo_env.load(t["repo"]) if t.get("repo") else repo_env.empty()
+        self.r.set_masker(repo_env.masker(self.repo_env))
+        if resumable and self.repo_env.get("services_up") and self.state.get("phase") != "delivered":
+            self.start_services()
         self.base = t.get("base_commit") or gitops.base_commit(self.wt, t.get("repo"))
         repo_full = t.get("github_repo") or github.remote_repo_name(t.get("repo"))
         self.m.set_meta(self.tid, worktree=str(self.wt), branch=self.branch, run_dir=str(self.run_dir), github_repo=repo_full, base_commit=self.base)
@@ -481,7 +539,12 @@ class Pipeline:
 
         wf = t.get("workflow") or {}
         cmds = list(wf.get("verification_commands") or self.cfg.get("verification_commands") or [])
-        if wf.get("auto_detect_verification", self.cfg.get("auto_detect_verification", True)):
+        saved_checks = self.repo_env.get("checks") or []
+        self.optional_checks = {c["command"] for c in saved_checks if not c.get("required", True)}
+        if saved_checks and not wf.get("verification_commands"):
+            # The repository's own test profile replaces guessing.
+            cmds = [c["command"] for c in saved_checks]
+        elif wf.get("auto_detect_verification", self.cfg.get("auto_detect_verification", True)):
             for c in gitops.detect_verify(self.wt):
                 if c not in cmds:
                     cmds.append(c)
@@ -850,14 +913,17 @@ class Pipeline:
     def run(self):
         self.validate_team()
         self.prepare()
-        if self.state.get("phase") == "kickoff":
-            self.kickoff()
-        if self.state.get("phase") == "dialogue":
-            self.dialogue()
-        if self.state.get("phase") == "review":
-            self.review()
-        if self.state.get("phase") == "deliver":
-            self.deliver()
+        try:
+            if self.state.get("phase") == "kickoff":
+                self.kickoff()
+            if self.state.get("phase") == "dialogue":
+                self.dialogue()
+            if self.state.get("phase") == "review":
+                self.review()
+            if self.state.get("phase") == "deliver":
+                self.deliver()
+        finally:
+            self.stop_services()
 
 
 def orchestrate(task, runner, manager):
