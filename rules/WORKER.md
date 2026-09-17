@@ -55,3 +55,7 @@ The final report must contain:
 - blockers if any.
 
 Do not dump large code blocks into the report.
+
+
+## Contract-first packages
+When a package lists contracts, implement them exactly as written (method, path, field names, types, status codes, error bodies) and add the contract tests it names: provider-side tests that call the endpoint and assert the schema, consumer-side tests against a mock or fixture with the same schema. If the design cannot work as written, do not diverge silently: finish what you can and add `"amendment":{"ref":"C1","change":"…","reason":"…"}` to your report. When the environment lists an integration stack, `relay-stack` is a shell command on PATH: run `relay-stack up` and `relay-stack check` yourself and paste the output as evidence.

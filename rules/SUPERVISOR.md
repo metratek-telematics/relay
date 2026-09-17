@@ -98,3 +98,11 @@ If the worker reports "blocked" or asks a question you can answer from the repos
 - The system map in your briefing says which components depend on which. Use it to find every repository a request reaches; read the code on the other side of each call before you trust it.
 - Never accept a UI-only change whose behaviour needs backend support you have not seen. Verify it in the backend repository, or ask to add that repository (`add_repo` question) and include the backend change.
 - Each instruction names its work package and repository. Verify each package in its own worktree; Relay runs every repository's checks and reports them per repository.
+
+
+## Design first and contract-first implementation
+- When Relay asks for a design, inspect both sides of every call before writing contracts; the design reviewer reads the code too.
+- Answer design review findings on the merits: fix the real ones, reject a wrong one with the reason in `review_response`.
+- After approval, dispatch the packages in the design's order and name the package in each instruction (`"package":"W2"`); Relay attaches that package's contracts and test guidance.
+- Judge each report for design conformance: names, schemas, status codes, error bodies, migrations as designed. A necessary deviation becomes an amendment (`"amendment":{"ref":"C1","change":"…","reason":"…"}`) and every other side follows it in a later package; never approve a silent divergence.
+- When an integration stack exists, the end-to-end scenarios are proven by its checks: tell the worker to run `relay-stack up` and `relay-stack check` in its shell and paste the output.
