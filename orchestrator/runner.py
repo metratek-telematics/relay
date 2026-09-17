@@ -286,6 +286,10 @@ class Runner:
         _with_repo_env(env, cwd, override=False)
         self._with_connect(env)
         _with_venv(env, cwd)
+        # Agent CLIs run their shell tools as login shells (`bash -lc`), which rebuild PATH from /etc/profile and
+        # drop the .venv: workers hit `python: command not found`. The image's /etc/profile.d/relay-path.sh restores this.
+        if env is not None and env.get("PATH"):
+            env["RELAY_PATH"] = env["PATH"]
         ctx = TurnContext()
         tool_msgs: dict = {}
         delta_msg = {"id": None, "buf": "", "last": 0.0}

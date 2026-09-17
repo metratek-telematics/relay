@@ -80,7 +80,7 @@ export function openNewTask(prefill = {}) {
   const parent = prefill.followUp;
   const data = {
     repo: edit?.repo || parent?.repo || prefill.repo || S.config.recent_repos?.[0] || "",
-    name: edit?.name || (parent ? `Follow-up: ${parent.name}` : ""), requirements: edit?.requirements || prefill.requirements || "", issue: edit?.issue || prefill.issue || "",
+    name: edit?.name || (parent ? `Follow-up: ${String(parent.name || "").replace(/^(Follow-up:\s*)+/i, "")}` : ""), requirements: edit?.requirements || prefill.requirements || "", issue: edit?.issue || prefill.issue || "",
     template: edit?.template || parent?.template || "feature", priority: edit?.priority || parent?.priority || "normal", tags: (edit?.tags || parent?.tags || []).join(", "),
     workflow: edit ? JSON.parse(JSON.stringify(edit.workflow)) : parent?.workflow ? JSON.parse(JSON.stringify(parent.workflow)) : defaultWorkflow(), queue: true,
     branch: parent ? (parent.branch || parent.branch_name || "") : "", branchEdited: !!parent,

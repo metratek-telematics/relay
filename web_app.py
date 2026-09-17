@@ -50,6 +50,28 @@ def ensure_single_instance():
         sys.exit(1)
 
 app = Flask(__name__, static_folder=str(ROOT / "web"), static_url_path="")
+
+
+# Agents run inside Relay's container and could otherwise call Relay's own API: flip a connector to
+# write access, read back settings they should not change, or delete tasks. In Docker, people reach
+# Relay through a published port or a reverse proxy, never from inside the container, so a changing
+# request from loopback can only be an agent. The one API agents are meant to use, relay-connect
+# (/api/connect/…), authenticates with its per-task token instead.
+_AGENT_API = ("/api/connect/",)
+
+
+@app.before_request
+def _refuse_agent_admin_calls():
+    if not IN_DOCKER or os.environ.get("RELAY_ALLOW_LOOPBACK_ADMIN") == "1":
+        return None
+    if request.method in ("GET", "HEAD", "OPTIONS") or not request.path.startswith("/api/"):
+        return None
+    if request.path.startswith(_AGENT_API):
+        return None
+    if (request.remote_addr or "") in ("127.0.0.1", "::1", "localhost"):
+        return jsonify({"error": "Changes to Relay are not allowed from inside its container (agents cannot "
+                                 "modify Relay). Use the web interface."}), 403
+    return None
 app.json.sort_keys = False
 
 # ----------------------------------------------------------------------------- SSE fan-out
@@ -516,7 +538,7 @@ def branch_name():
     name = (a.get("name") or "").strip()
     requirements = a.get("requirements") or ""
     if not name:
-        name = requirements.strip().splitlines()[0][:60] if requirements.strip() else ""
+        name = gitops.auto_task_name(requirements)
     return jsonify({"branch": gitops.suggest_branch(manager.cfg(), name, requirements, a.get("template") or "feature",
                                                      (a.get("issue") or "").strip().lstrip("#"), repo or None,
                                                      manager.taken_branches(repo))})
@@ -904,7 +926,12 @@ def repos_action(action):
 @app.get("/api/repos/env")
 def repo_env_get():
     path = repo_arg(request.args.get("path"))
-    return jsonify(repo_env.public(repo_env.load(path)))
+    out = repo_env.public(repo_env.load(path))
+    # System packages: what the repository's manifests suggest, and whether this Relay can install anything.
+    from orchestrator import syspkgs
+    out["system_packages_detected"] = syspkgs.detect(path)
+    out["system_packages_capability"] = syspkgs.capability()
+    return jsonify(out)
 
 
 @app.put("/api/repos/env")
