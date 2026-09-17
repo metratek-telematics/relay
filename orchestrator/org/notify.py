@@ -328,6 +328,7 @@ class Dispatcher:
         self.buckets: dict[str, TokenBucket] = {}
         self.log: collections.OrderedDict[str, dict] = collections.OrderedDict()
         self.waiters: dict[str, threading.Event] = {}
+        self.telegram = None  # telegram.Assistant, set by web.install
         self._load_log()
         self.thread = None
         if autostart:
@@ -555,6 +556,9 @@ class Dispatcher:
             ok, why = target_allowed(api, allow_private or api == "https://api.telegram.org")
             if not ok:
                 raise PermissionError(why)
+            if self.telegram is not None:
+                # The assistant renders the full context and remembers the message, so a plain reply acts on it.
+                return self.telegram.deliver_notification(target["chat_id"], msg)
             return self.http(f"{api}/bot{tg['bot_token']}/sendMessage", json.dumps(telegram_payload(msg, target["chat_id"])).encode(),
                              {"Content-Type": "application/json"})
         if channel == "email":

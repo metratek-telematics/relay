@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import functools
 import json
+from contextlib import contextmanager
 import re
 import secrets
 import threading
@@ -24,12 +25,28 @@ from datetime import datetime
 from flask import Blueprint, Response, g, jsonify, request
 
 from .. import config as C, connectors, github, lessons, repos, stacks
-from . import audit, identity, notify, onboarding, projects, rbac, settings as OS, tokens, usage, webpush
+from . import audit, identity, notify, onboarding, projects, rbac, settings as OS, telegram, tokens, usage, webpush
 from .common import MASK, mask, now_iso
 
 PUBLIC_API = {"/api/ping", "/api/build", "/api/v1/openapi.json", "/api/org/integrations/telegram/webhook"}
 UI_KEYS = {"ui_theme", "ui_density", "ui_notifications", "ui_notify_events", "ui_sound"}
-STATE = {"manager": None, "dispatcher": None}
+STATE = {"manager": None, "dispatcher": None, "telegram": None}
+_acting = threading.local()
+
+
+@contextmanager
+def acting_as(user: dict, via: str):
+    """Attribute manager actions on this thread to `user` (Telegram, which has no request context)."""
+    prev = getattr(_acting, "who", None)
+    _acting.who = (user, via)
+    try:
+        yield
+    finally:
+        _acting.who = prev
+
+
+def acting() -> tuple[dict | None, str | None]:
+    return getattr(_acting, "who", None) or (None, None)
 
 bp = Blueprint("org", __name__)
 
@@ -296,6 +313,10 @@ def install(app, manager, broadcast):
     _migrate(manager)
     _hook_manager(manager)
     STATE["dispatcher"] = notify.Dispatcher(manager)
+    STATE["telegram"] = telegram.Assistant(manager, STATE["dispatcher"])
+    STATE["dispatcher"].telegram = STATE["telegram"]
+    if not app.config.get("TESTING"):
+        STATE["telegram"].start()  # long polling when a bot token is set and the mode is polling (the default)
     usage.Watch(manager)
     threading.Thread(target=_digest_loop, args=(manager,), name="relay-digests", daemon=True).start()
     threading.Thread(target=_merged_by_loop, args=(manager,), name="relay-merged-by", daemon=True).start()
@@ -515,7 +536,8 @@ def _hook_manager(manager):
 
     def create_task(payload: dict):
         payload = dict(payload or {})
-        u = current_user() if _in_request() else None
+        act_user, act_via = acting()
+        u = act_user or (current_user() if _in_request() else None)
         pid = str(payload.pop("project_id", "") or payload.pop("project", "") or "").strip()
         if not pid and _in_request():
             pid = current_project_id() or ""
@@ -540,7 +562,7 @@ def _hook_manager(manager):
         sample = bool(payload.pop("_sample", False))
         created = orig_create(payload)
         who = (u or {}).get("username") or payload.get("_created_by") or ("github-intake" if payload.get("issue") else "system")
-        via = g.get("org_via") if _in_request() else "automation"
+        via = act_via or (g.get("org_via") if _in_request() else "automation")
         patch = {"project_id": p["id"], "created_by": who, "created_via": via}
         if d.get("reviewers"):
             patch["reviewers"] = list(d["reviewers"])
@@ -555,10 +577,11 @@ def _hook_manager(manager):
         t = manager.store.get(tid) or {}
         kind = (t.get("pending") or {}).get("kind")
         res = orig_answer(tid, qid, text, extra)
-        who = g.get("org_actor_override") if _in_request() and g.get("org_actor_override") else (current_user() if _in_request() else None)
+        act_user, act_via = acting()
+        who = act_user or (g.get("org_actor_override") if _in_request() and g.get("org_actor_override") else (current_user() if _in_request() else None))
         stamp = {"username": (who or {}).get("username") or "system", "name": (who or {}).get("name") or "", "time": now_iso(),
-                 "via": (g.get("org_via") if _in_request() else None) or "system"}
-        if _in_request() and g.get("org_actor_override"):
+                 "via": act_via or (g.get("org_via") if _in_request() else None) or "system"}
+        if not act_user and _in_request() and g.get("org_actor_override"):
             stamp["via"] = g.get("org_actor_via") or stamp["via"]
         patch = {}
         if extra and "approved" in extra:
@@ -575,6 +598,11 @@ def _hook_manager(manager):
 
     def emit(typ, payload):
         orig_emit(typ, payload)
+        if typ == "task" and STATE.get("telegram"):
+            try:
+                STATE["telegram"].on_task_event(payload)  # live progress for people who follow the task on Telegram
+            except Exception as e:
+                print(f"telegram progress failed: {e}")
         if typ == "notify" and STATE.get("dispatcher"):
             try:
                 STATE["dispatcher"].on_notify(payload)
@@ -950,10 +978,56 @@ def org_telegram_register():
     tg = OS.load()["integrations"]["telegram"]
     api = (tg.get("api_base") or "https://api.telegram.org").rstrip("/")
     payload = {"url": f"{base}/api/org/integrations/telegram/webhook", "secret_token": tg["webhook_secret"], "allowed_updates": ["message", "callback_query"]}
-    status, text, _ = STATE["dispatcher"].http(f"{api}/bot{tg['bot_token']}/setWebhook", json.dumps(payload).encode(), {"Content-Type": "application/json"})
-    if status and 200 <= status < 300:
-        return jsonify({"ok": True, "url": payload["url"]})
-    return jsonify({"error": f"Telegram answered {status}: {mask(text)[:200]}"}), 502
+    try:
+        telegram.Bot(tg, bool(data["integrations"].get("allow_private_targets")), STATE["telegram"].transport).call("setWebhook", payload)
+    except telegram.TelegramError as e:
+        return jsonify({"error": f"Telegram answered: {e.description}"}), 502
+    OS.save({"integrations": {"telegram": {"mode": "webhook"}}})  # the poller stops; getUpdates would conflict with the webhook
+    return jsonify({"ok": True, "url": payload["url"], "mode": "webhook"})
+
+
+@bp.get("/api/org/integrations/telegram/status")
+def org_telegram_status():
+    data = OS.load()
+    tg = telegram.settings(data)
+    a = STATE["telegram"]
+    st = dict(a.status) if a else {}
+    bot = (telegram._state.read().get("bot") or {}) if tg.get("bot_token") else {}
+    linked = [{"username": u["username"], "name": u.get("name") or u["username"], "role": u.get("role")} for u in identity.users() if u.get("telegram_user_id")]
+    from . import concierge, voice
+    agent, model, effort = ("", "", "")
+    try:
+        agent, model, effort = concierge.choose(STATE["manager"].cfg(), tg.get("concierge") or {})
+    except Exception:
+        pass
+    me = current_user() or {}
+    return jsonify({"mode": tg["mode"], "has_token": bool(tg.get("bot_token")), "bot": bot, "status": st, "linked": linked,
+                    "webhook_url": (data["integrations"].get("public_url") or notify.base_url() or "").rstrip("/") + "/api/org/integrations/telegram/webhook",
+                    "concierge": {"agent": agent, "model": model, "effort": effort, "enabled": (tg.get("concierge") or {}).get("enabled", True)},
+                    "voice": {"provider": (voice.provider(STATE["manager"].cfg()) or {}).get("name")},
+                    "you": {"linked": bool((identity.get(me.get("username")) or {}).get("telegram_user_id")),
+                            "chat_id": ((identity.get(me.get("username")) or {}).get("prefs") or {}).get("notifications", {}).get("channels", {}).get("telegram", {}).get("chat_id")
+                            if me.get("username") else None}})
+
+
+@bp.post("/api/org/integrations/telegram/send-test")
+def org_telegram_send_test():
+    """A test message to a chat id, or to the caller's own linked chat."""
+    b = request.get_json(silent=True) or {}
+    data = OS.load()
+    if not data["integrations"]["telegram"].get("bot_token"):
+        return jsonify({"error": "Add the bot token and save first."}), 400
+    me = identity.get(current_user()["username"]) or {}
+    chat = str(b.get("chat_id") or "").strip() or ((me.get("prefs") or {}).get("notifications", {}).get("channels", {}).get("telegram", {}).get("chat_id") or "")
+    if not chat:
+        return jsonify({"error": "No chat yet: send /start and then /link CODE to the bot first, or type a chat id."}), 400
+    try:
+        ids = STATE["telegram"].send(chat, f"🔔 <b>Test from Relay</b>\nSent by {telegram.h(me.get('name') or me.get('username'))}. If you can read this, "
+                                     f"Relay can reach this chat. Send /help to see what I can do.")
+    except telegram.TelegramError as e:
+        return jsonify({"error": f"Telegram answered: {e.description}"}), 502
+    audit.record(current_user(), "integration.telegram_test", {"type": "integration", "id": "telegram"}, via=g.get("org_via") or "", detail=f"chat {chat}")
+    return jsonify({"ok": True, "chat_id": chat, "message_ids": ids})
 
 
 @bp.get("/api/org/deliveries")
@@ -963,73 +1037,16 @@ def org_deliveries():
 
 @bp.post("/api/org/integrations/telegram/webhook")
 def telegram_webhook():
-    """Telegram updates: /start and /link CODE in a chat, and presses on the inline buttons Relay sent."""
-    tg = OS.load()["integrations"]["telegram"]
+    """Webhook mode: Telegram posts updates here (secret token checked); the same handler as long polling runs them."""
+    tg = telegram.settings()
     secret = tg.get("webhook_secret") or ""
-    if not tg.get("bot_token") or not secret or not _const_eq(request.headers.get("X-Telegram-Bot-Api-Secret-Token") or "", secret):
+    if not tg.get("bot_token") or not secret or tg["mode"] == "off" or not _const_eq(request.headers.get("X-Telegram-Bot-Api-Secret-Token") or "", secret):
         return jsonify({"error": "forbidden"}), 403
     up = request.get_json(silent=True) or {}
-    api = (tg.get("api_base") or "https://api.telegram.org").rstrip("/") + f"/bot{tg['bot_token']}"
-    d = STATE["dispatcher"]
-
-    def call(method, payload):
-        return d.http(f"{api}/{method}", json.dumps(payload).encode(), {"Content-Type": "application/json"})
-
-    if up.get("message"):
-        msg = up["message"]
-        text = (msg.get("text") or "").strip()
-        chat = (msg.get("chat") or {}).get("id")
-        from_id = (msg.get("from") or {}).get("id")
-        if text.startswith("/link"):
-            u = notify.user_for_link_code(text.split(maxsplit=1)[1] if " " in text else "")
-            if u:
-                identity.link_telegram(u["username"], from_id)
-                audit.record(u, "profile.telegram_link", {"type": "profile", "id": u["username"]}, via="telegram", detail=f"telegram user {from_id}")
-                call("sendMessage", {"chat_id": chat, "text": f"Linked to Relay as {u.get('name') or u['username']}. Buttons on Relay messages now act as you."})
-            else:
-                call("sendMessage", {"chat_id": chat, "text": "That code is not valid. Copy it from Profile → Notifications in Relay."})
-        elif text.startswith("/start"):
-            call("sendMessage", {"chat_id": chat, "text": f"Relay notifications. Your chat id is {chat}: add it under Profile → Notifications, then send /link <code> from the same page so buttons act as you."})
-        return jsonify({"ok": True})
-    cq = up.get("callback_query")
-    if not cq:
-        return jsonify({"ok": True})
-    data = str(cq.get("data") or "")
-    act = notify.take_action(data[3:]) if data.startswith("rl:") else None
-    user = identity.by_telegram((cq.get("from") or {}).get("id"))
-    m = STATE["manager"]
-    reply = ""
-    if not act:
-        reply = "This button has expired."
-    elif not user:
-        reply = "Link Telegram to your Relay account first (/link CODE)."
-    elif rbac.level(user.get("role")) < rbac.level("member"):
-        reply = "Answering needs the member role."
-    else:
-        g.org_actor_override, g.org_actor_via = user, "telegram"
-        t = m.store.get(act["tid"]) or {}
-        try:
-            if (t.get("pending") or {}).get("id") != act["qid"]:
-                raise ValueError("That question was already answered.")
-            if act["action"] == "approve":
-                m.approve(act["tid"], True, "Approved from Telegram")
-                reply = "Approved"
-            elif act["action"] == "reject":
-                m.approve(act["tid"], False, "Changes requested from Telegram")
-                reply = "Changes requested"
-            else:
-                m.answer(act["tid"], act["qid"], act["value"], {})
-                reply = f"Answered: {act['value']}"
-            audit.record(user, f"task.{act['action']}", {"type": "task", "id": act["tid"], "name": t.get("name"), "project": projects.project_of_task(t) if t else None},
-                         via="telegram", detail=reply)
-        except (ValueError, KeyError) as e:
-            reply = str(e)
-            audit.record(user, f"task.{act['action']}", {"type": "task", "id": act["tid"]}, via="telegram", outcome="error", detail=reply)
-    call("answerCallbackQuery", {"callback_query_id": cq.get("id"), "text": reply[:190]})
-    msgobj = cq.get("message") or {}
-    if act and msgobj.get("message_id") and reply and user:
-        call("editMessageReplyMarkup", {"chat_id": (msgobj.get("chat") or {}).get("id"), "message_id": msgobj["message_id"], "reply_markup": {"inline_keyboard": []}})
-    return jsonify({"ok": True, "result": reply})
+    a = STATE["telegram"]
+    a.status.update(last_update_at=now_iso(), running=True, mode="webhook", updates=a.status.get("updates", 0) + 1)
+    a.submit(a.handle_update, up)  # answered right away; Telegram retries slow webhooks
+    return jsonify({"ok": True})
 
 
 def _const_eq(a, b):

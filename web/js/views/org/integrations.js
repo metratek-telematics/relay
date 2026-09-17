@@ -1,4 +1,4 @@
-// Integrations (admins): Relay's public address, team Slack/Discord, the Telegram bot, SMTP, Web Push, signed webhooks, delivery policy and log.
+// Integrations (admins): Relay's public address, the Telegram assistant (polling or webhook, status, setup steps), team Slack/Discord, SMTP, Web Push, signed webhooks, delivery policy and log.
 import { $, $$, esc, icon, toast, confirm, timeAgo } from "../../ui.js";
 import { ORG, loadMe, orgApi, can, xicon, copyButton, bindCopy, readOnlyNote } from "./org.js";
 import { request } from "../../api.js";
@@ -8,12 +8,12 @@ const EVENTS = [["needs_input", "Needs input"], ["approval", "Approval"], ["deli
 const TONE = { delivered: "green", failed: "red", dropped: "red", suppressed: "", retrying: "amber", rate_limited: "amber", queued: "blue", sending: "blue" };
 
 export function mountIntegrations(body) {
-  let alive = true, data = null, deliveries = [], timer = null, dirty = false;
+  let alive = true, data = null, deliveries = [], timer = null, dirty = false, tgStatus = null;
 
   async function load() {
     if (!ORG.me) await loadMe();
     if (!can("admin")) { body.innerHTML = `<div class="page-head"><div><h1>Integrations</h1></div></div>${readOnlyNote("admin", "Managing integrations")}`; return; }
-    try { data = await orgApi.settings(); deliveries = (await orgApi.deliveries()).deliveries || []; }
+    try { data = await orgApi.settings(); deliveries = (await orgApi.deliveries()).deliveries || []; tgStatus = await orgApi.telegramStatus().catch(() => null); }
     catch (e) { body.innerHTML = `<div class="empty">${icon("alert", "lg")}<p>${esc(e.message)}</p></div>`; return; }
     if (alive) draw();
   }
@@ -30,6 +30,7 @@ export function mountIntegrations(body) {
         <div class="page-actions"><span class="muted" id="iState" style="font-size:12px"></span><button class="btn primary" id="iSave">${icon("save")}Save</button></div></div>
       <div class="card"><div class="card-head"><h3>Relay's address</h3></div><div class="card-body">
         <div class="field"><label>Public URL</label><input data-k="public_url" value="${esc(i.public_url || "")}" placeholder="${esc(location.origin)}"><div class="help">Used for links and buttons in messages. Empty: the address people last used to open Relay.</div></div></div></div>
+      ${telegramCard(tg, hook)}
       <div class="org-channels">
         <div class="card org-channel"><div class="org-channel-head"><span class="org-ch-ic">${xicon("slack")}</span><strong>Slack · team channel</strong>${state(i.slack.has_webhook_url, "connected", "not set")}</div>
           <div class="field"><label>Incoming webhook URL</label><input data-k="slack.webhook_url" value="${esc(sec(i.slack.webhook_url, i.slack.has_webhook_url))}" placeholder="https://hooks.slack.com/services/…" autocomplete="off"></div>
@@ -38,12 +39,6 @@ export function mountIntegrations(body) {
         <div class="card org-channel"><div class="org-channel-head"><span class="org-ch-ic">${xicon("discord")}</span><strong>Discord · team channel</strong>${state(i.discord.has_webhook_url, "connected", "not set")}</div>
           <div class="field"><label>Webhook URL</label><input data-k="discord.webhook_url" value="${esc(sec(i.discord.webhook_url, i.discord.has_webhook_url))}" placeholder="https://discord.com/api/webhooks/…" autocomplete="off"></div>
           <div><button class="btn xs" data-test="discord">${icon("send")}Send test</button></div></div>
-        <div class="card org-channel"><div class="org-channel-head"><span class="org-ch-ic">${xicon("telegram")}</span><strong>Telegram bot</strong>${state(tg.has_bot_token, "connected", "not set")}</div>
-          <div class="field"><label>Bot token (from @BotFather)</label><input data-k="telegram.bot_token" value="${esc(sec(tg.bot_token, tg.has_bot_token))}" placeholder="123456:ABC…" autocomplete="off"></div>
-          <div class="field"><label>API base</label><input data-k="telegram.api_base" value="${esc(tg.api_base || "")}" placeholder="https://api.telegram.org"></div>
-          <div class="help">Buttons (Approve, Request changes, answer options) need Telegram to reach Relay: register the webhook (Relay's public URL must be https) and let <code class="org-inline-code">/api/org/integrations/telegram/webhook</code> through your sign-in proxy. Relay checks Telegram's secret token on every call.</div>
-          <div class="row wrap" style="gap:6px"><button class="btn xs" id="tgRegister" ${tg.has_bot_token ? "" : "disabled"}>${xicon("webhook")}Register webhook with Telegram</button>${copyButton(hook, "Copy webhook URL")}</div>
-          <div class="row" style="gap:6px"><input class="input" id="tgChat" placeholder="chat id for the test" style="flex:1"><button class="btn xs" data-test="telegram">${icon("send")}Send test</button></div></div>
         <div class="card org-channel"><div class="org-channel-head"><span class="org-ch-ic">${xicon("mail")}</span><strong>Email (SMTP)</strong>${state(!!sm.host, "configured", "not set")}</div>
           <div class="grid2"><div class="field"><label>Host</label><input data-k="smtp.host" value="${esc(sm.host || "")}" placeholder="smtp.example.com"></div><div class="field"><label>Port</label><input data-k="smtp.port" type="number" value="${esc(sm.port || 587)}"></div></div>
           <div class="grid2"><div class="field"><label>Security</label><select data-k="smtp.security">${["starttls", "ssl", "none"].map((x) => `<option ${sm.security === x ? "selected" : ""}>${x}</option>`).join("")}</select></div><div class="field"><label>From</label><input data-k="smtp.from" value="${esc(sm.from || "")}" placeholder="Relay &lt;relay@example.com&gt;"></div></div>
@@ -67,6 +62,58 @@ export function mountIntegrations(body) {
     bind();
   }
 
+  function telegramCard(tg, hook) {
+    const st = tgStatus || {}, run = st.status || {}, cc = tg.concierge || {}, mode = tg.mode || "polling";
+    const bot = st.bot && st.bot.username ? `@${st.bot.username}` : "";
+    let health, tone;
+    if (!tg.has_bot_token) { health = "Add a bot token to connect."; tone = "text-3"; }
+    else if (mode === "off") { health = "Send-only: Relay sends notifications but does not read replies or commands."; tone = "text-3"; }
+    else if (mode === "polling" && run.running) { health = `Listening${bot ? ` as ${bot}` : ""} · long polling`; tone = "green"; }
+    else if (mode === "webhook") { health = `Webhook mode${bot ? ` · ${bot}` : ""}${run.last_update_at ? "" : " · no update received yet"}`; tone = run.last_update_at ? "green" : "amber"; }
+    else if (run.lock) { health = run.lock; tone = "amber"; }
+    else { health = run.last_error ? "Not connected" : "Connecting…"; tone = run.last_error ? "red" : "amber"; }
+    const facts = [run.last_update_at ? `last message ${timeAgo(run.last_update_at)}` : "", run.last_poll_at && mode === "polling" ? `checked ${timeAgo(run.last_poll_at)}` : "",
+      (st.linked || []).length ? `${st.linked.length} ${st.linked.length === 1 ? "person" : "people"} linked` : "nobody linked yet"].filter(Boolean);
+    const agentLabel = st.concierge && st.concierge.agent ? `${st.concierge.agent}${st.concierge.model ? ` · ${st.concierge.model}` : ""}${st.concierge.effort ? ` · ${st.concierge.effort}` : ""}` : "no signed-in Claude or Codex";
+    return `<div class="card tg-card"><div class="card-head"><div class="row" style="gap:10px"><span class="org-ch-ic">${xicon("telegram")}</span><div><h3>Telegram assistant</h3>
+        <p class="card-sub">Questions, approvals and deliveries on your phone. Reply to answer, send commands, or ask the assistant about your tasks.</p></div></div>
+        ${state(tg.has_bot_token && mode !== "off", mode === "webhook" ? "webhook" : "connected", tg.has_bot_token ? "send only" : "not set")}</div>
+      <div class="card-body tg-body">
+        <div class="tg-status tone-${tone}" id="tgHealth"><span class="dot"></span><div><b>${esc(health)}</b>${facts.length && tg.has_bot_token ? `<span>${esc(facts.join(" · "))}</span>` : ""}
+          ${run.last_error ? `<span class="tg-err" title="${esc(run.last_error_at || "")}">Last error: ${esc(run.last_error)}</span>` : ""}</div></div>
+        <ol class="tg-steps">
+          <li><b>Create a bot.</b> In Telegram, open <b>@BotFather</b>, send <code class="org-inline-code">/newbot</code> and copy the token it gives you.</li>
+          <li><b>Paste the token</b> below and press <b>Save</b>. With long polling nothing else is needed: no public address, no proxy rule.</li>
+          <li><b>Say hello.</b> Open your bot in Telegram and send <code class="org-inline-code">/start</code>.</li>
+          <li><b>Link your account.</b> In Relay open your avatar → <b>Profile</b> → <b>Notifications</b>, copy the <code class="org-inline-code">/link …</code> line and send it to the bot. Questions, approvals, deliveries and failures then reach you there.</li>
+        </ol>
+        <div class="grid2 tg-grid">
+          <div class="field"><label>Bot token</label><input data-k="telegram.bot_token" value="${esc(sec(tg.bot_token, tg.has_bot_token))}" placeholder="123456:ABC…" autocomplete="off"></div>
+          <div class="field"><label>How Relay receives messages</label><select data-k="telegram.mode">
+            ${[["polling", "Long polling (recommended)"], ["webhook", "Webhook"], ["off", "Off: send notifications only"]].map(([v, l]) => `<option value="${v}" ${mode === v ? "selected" : ""}>${l}</option>`).join("")}</select>
+            <div class="help">${mode === "webhook" ? "Telegram calls Relay's public https address; the webhook path must bypass your sign-in proxy." : mode === "off" ? "Replies, buttons and commands are ignored." : "Relay asks Telegram for new messages every few seconds. Works behind any proxy or firewall."}</div></div>
+        </div>
+        ${mode === "webhook" ? `<div class="org-channel" style="background:var(--panel-2)"><div class="help">Relay's public URL (above) must be https. Let <code class="org-inline-code">/api/org/integrations/telegram/webhook</code> through your forward-auth proxy; Relay checks Telegram's secret token on every call.</div>
+          <div class="row wrap" style="gap:6px"><button class="btn xs" id="tgRegister" ${tg.has_bot_token ? "" : "disabled"}>${xicon("webhook")}Register webhook with Telegram</button>${copyButton(hook, "Copy webhook URL")}</div></div>` : ""}
+        <div class="grid3 tg-grid">
+          <div class="field"><label>Assistant agent</label><select data-k="telegram.concierge.agent">${[["", "Automatic (cheapest signed-in)"], ["claude", "Claude"], ["codex", "Codex"]].map(([v, l]) => `<option value="${v}" ${(cc.agent || "") === v ? "selected" : ""}>${l}</option>`).join("")}</select>
+            <div class="help">Now: ${esc(agentLabel)}. No tools, no file access; it only suggests actions as buttons.</div></div>
+          <div class="field"><label>Model</label><input data-k="telegram.concierge.model" value="${esc(cc.model || "")}" placeholder="default (e.g. haiku)"></div>
+          <div class="field"><label>Assistant replies per person per day</label><input data-k="telegram.concierge.daily_turn_limit" type="number" min="1" max="5000" value="${esc(cc.daily_turn_limit || 200)}"></div>
+        </div>
+        <div class="grid2 tg-grid">
+          <div class="field inline"><label>Allow group chats<div class="help">Off: the bot only answers private chats. On: linked people can use it in groups (commands, replies and @mentions).</div></label><span class="switch ${tg.groups_enabled ? "on" : ""}" data-sw="telegram.groups_enabled"></span></div>
+          <div class="field"><label>Voice notes</label><div class="help">${st.voice && st.voice.provider ? `Transcribed with ${esc(st.voice.provider)} (API key found).` : "Not available: add an OpenAI or Gemini API key (agent environment) to transcribe voice notes. Anthropic has no speech-to-text."}</div></div>
+        </div>
+        <details class="tg-adv"><summary>Advanced</summary><div class="grid2 tg-grid">
+          <div class="field"><label>API base</label><input data-k="telegram.api_base" value="${esc(tg.api_base || "")}" placeholder="https://api.telegram.org"></div>
+          <div class="field"><label>Progress pings for followed tasks, at most one every (seconds)</label><input data-k="telegram.progress_throttle_seconds" type="number" min="10" max="3600" value="${esc(tg.progress_throttle_seconds || 60)}"></div>
+        </div></details>
+        <div class="row wrap tg-test" style="gap:6px"><input class="input" id="tgChat" placeholder="${st.you && st.you.chat_id ? "your linked chat" : "chat id (empty: your linked chat)"}" style="flex:1;min-width:160px"><button class="btn sm" id="tgTest" ${tg.has_bot_token ? "" : "disabled"}>${icon("send")}Send test</button><button class="btn sm ghost" id="tgRefresh">${icon("refresh")}Refresh status</button></div>
+        ${(st.linked || []).length ? `<div class="help">Linked: ${st.linked.map((u) => `${esc(u.name)} <span class="muted">(${esc(u.role)})</span>`).join(", ")}</div>` : ""}
+      </div></div>`;
+  }
+
   const webhookRow = (w) => `<div class="org-channel" data-wh="${esc(w.id || "")}">
     <div class="org-channel-head"><span class="org-ch-ic">${xicon("webhook")}</span><input class="input" data-w="name" value="${esc(w.name || "")}" placeholder="Name" style="flex:1"><span class="switch ${w.enabled !== false ? "on" : ""}" data-w-enabled title="Enabled"></span><button class="btn xs ghost" data-w-del title="Remove">${icon("trash")}</button></div>
     <div class="grid2"><div class="field"><label>URL</label><input data-w="url" value="${esc(w.url || "")}" placeholder="https://example.com/hooks/relay"></div><div class="field"><label>Secret</label><input data-w="secret" value="${esc(w.has_secret ? MASK : w.secret || "")}" placeholder="long random string" autocomplete="off"></div></div>
@@ -76,12 +123,9 @@ export function mountIntegrations(body) {
 
   function collect() {
     const out = { slack: {}, discord: {}, telegram: {}, smtp: {} };
-    $$("[data-k]", body).forEach((el) => {
-      const [a, b] = el.dataset.k.split(".");
-      const v = el.type === "number" ? Number(el.value) : el.value.trim();
-      if (b) out[a][b] = v; else out[a] = v;
-    });
-    $$("[data-sw]", body).forEach((s) => (out[s.dataset.sw] = s.classList.contains("on")));
+    const put = (path, v) => { const ks = path.split("."); let o = out; ks.slice(0, -1).forEach((k) => (o = o[k] = o[k] || {})); o[ks[ks.length - 1]] = v; };
+    $$("[data-k]", body).forEach((el) => put(el.dataset.k, el.type === "number" ? Number(el.value) : el.value.trim()));
+    $$("[data-sw]", body).forEach((s) => put(s.dataset.sw, s.classList.contains("on")));
     out.webhooks = $$("[data-wh]", body).map((row) => {
       const w = { enabled: $("[data-w-enabled]", row).classList.contains("on") };
       if (row.dataset.wh) w.id = row.dataset.wh;
@@ -95,6 +139,7 @@ export function mountIntegrations(body) {
   const save = async (quiet) => {
     try { data = { ...data, ...(await orgApi.saveIntegrations(collect())) }; dirty = false; if (!quiet) toast("success", "Integrations saved"); return true; }
     catch (e) { toast("error", "Could not save", e.message); return false; }
+    finally { orgApi.telegramStatus().then((r) => { tgStatus = r; }).catch(() => {}); }
   };
 
   function bind() {
@@ -107,7 +152,7 @@ export function mountIntegrations(body) {
     $$("[data-w-del]", body).forEach((b) => (b.onclick = async () => { if (await confirm("Remove this webhook?", "Save to apply.", { danger: true, okLabel: "Remove" })) { b.closest("[data-wh]").remove(); mark(); } }));
     $("#tgRegister", body) && ($("#tgRegister", body).onclick = async () => {
       if (dirty && !(await save(true))) return;
-      try { const r = await request("/api/org/integrations/telegram/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); toast("success", "Telegram webhook registered", r.url); }
+      try { const r = await request("/api/org/integrations/telegram/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); toast("success", "Telegram webhook registered", r.url); data = await orgApi.settings(); tgStatus = await orgApi.telegramStatus().catch(() => tgStatus); draw(); }
       catch (e) { toast("error", "Could not register the webhook", e.message); }
     });
     $("#wpKeys", body) && ($("#wpKeys", body).onclick = async () => { try { await orgApi.vapidKeys(); data = await orgApi.settings(); toast("success", "Web Push keys ready", "People can now enable push under Notifications."); draw(); } catch (e) { toast("error", "Could not create keys", e.message); } });
@@ -120,12 +165,25 @@ export function mountIntegrations(body) {
       } catch (e) { toast("error", "Test failed", e.message); }
       deliveries = (await orgApi.deliveries()).deliveries || []; data = await orgApi.settings(); draw();
     };
-    $$("[data-test]", body).forEach((b) => (b.onclick = () => test(b, { channel: b.dataset.test, chat_id: $("#tgChat", body)?.value.trim(), address: $("#emTo", body)?.value.trim() })));
+    $$("[data-test]", body).forEach((b) => (b.onclick = () => test(b, { channel: b.dataset.test, address: $("#emTo", body)?.value.trim() })));
+    $("#tgTest", body) && ($("#tgTest", body).onclick = async () => {
+      if (dirty && !(await save(true))) return;
+      const b = $("#tgTest", body); b.disabled = true;
+      try { const r = await orgApi.telegramTest({ chat_id: $("#tgChat", body).value.trim() }); toast("success", "Test sent", `Chat ${r.chat_id}`); }
+      catch (e) { toast("error", "Test not sent", e.message); }
+      b.disabled = false;
+    });
+    $("#tgRefresh", body) && ($("#tgRefresh", body).onclick = async () => { tgStatus = await orgApi.telegramStatus().catch(() => tgStatus); draw(); });
+    $('[data-k="telegram.mode"]', body)?.addEventListener("change", async () => { if (await save(true)) { data = await orgApi.settings(); setTimeout(async () => { tgStatus = await orgApi.telegramStatus().catch(() => tgStatus); if (alive && !dirty) draw(); }, 2500); draw(); } });
     $$("[data-w-test]", body).forEach((b) => (b.onclick = () => test(b, { channel: "webhook", id: b.dataset.wTest })));
     bindCopy(body);
   }
 
   load();
-  timer = setInterval(async () => { if (alive && !dirty && document.visibilityState === "visible" && data) { try { deliveries = (await orgApi.deliveries()).deliveries || []; } catch {} } }, 20000);
+  timer = setInterval(async () => {
+    if (alive && !dirty && document.visibilityState === "visible" && data) {
+      try { deliveries = (await orgApi.deliveries()).deliveries || []; tgStatus = await orgApi.telegramStatus(); const el = $("#tgHealth", body); if (el) { const fresh = document.createElement("div"); fresh.innerHTML = telegramCard(data.integrations.telegram, ""); const n = fresh.querySelector("#tgHealth"); if (n) el.replaceWith(n); } } catch {}
+    }
+  }, 20000);
   return { destroy() { alive = false; clearInterval(timer); } };
 }
