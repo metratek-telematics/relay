@@ -11,6 +11,9 @@
 <link rel="stylesheet" href="/styles.css?v=15.0.0">
 <link rel="stylesheet" href="/connectors.css?v=15.0.0">
 <link rel="stylesheet" href="/learning.css?v=15.0.0">
+<link rel="stylesheet" href="/tools.css?v=15.0.0">
+<link rel="stylesheet" href="/org.css?v=15.0.0">
+<link rel="stylesheet" href="/org-pages.css?v=15.0.0">
 <link rel="stylesheet" href="/app.css?v=15.0.0">
 <script>
   try {
@@ -41,6 +44,7 @@
         <i data-icon="panel"></i>
       </button>
     </div>
+    <div class="nav-project" id="orgProject"></div>
     <button class="btn primary nav-new" id="newTaskBtn" type="button" title="New task (N)"><i data-icon="plus"></i><span class="lbl">New task</span><kbd class="lbl">N</kbd></button>
     <div class="nav-items" role="list">
       <a class="nav-item" role="listitem" href="#/" data-nav="home" title="Mission Control (G H)"><i data-icon="radar"></i><span class="lbl">Mission Control</span><span class="nav-count live" id="navLive" hidden></span></a>
@@ -59,7 +63,7 @@
         <button class="nav-tool" id="shortcutsBtn" type="button" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts"><i data-icon="keyboard"></i></button>
       </div>
     </div>
-    <div class="conn" id="connBox" role="status"><span class="dot" id="connDot"></span><span class="lbl" id="connText">Connecting…</span></div>
+    <div class="nav-foot"><div class="nav-user" id="orgUser"></div><div class="conn" id="connBox" role="status"><span class="dot" id="connDot"></span><span class="lbl" id="connText">Connecting…</span></div></div>
   </nav>
 
   <div class="main-col">

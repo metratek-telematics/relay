@@ -970,3 +970,28 @@ html[data-view="work"] .board { grid-auto-columns: minmax(204px, 1fr); gap: 10px
 }
 .ol-sub button { overflow: hidden; }
 .ol-sub .truncate { flex: 1; min-width: 0; }
+
+/* ---------------------------------------------------------------- workspace: project switcher and user (views/org) */
+.nav-project { margin: -4px 0 10px; min-width: 0; }
+.nav-project:empty { display: none; }
+.nav-project .org-proj-btn { width: 100%; max-width: none; height: 34px; padding: 0 10px; border: 1px solid var(--border); background: var(--panel); border-radius: var(--r); justify-content: flex-start; }
+.nav-project .org-proj-name { flex: 1; min-width: 0; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.org-proj-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.nav-foot { display: flex; align-items: center; gap: 8px; margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--border); min-width: 0; }
+.nav-foot .conn { margin: 0; padding: 0; border: 0; flex: 1; min-width: 0; }
+.nav-user { display: flex; align-items: center; gap: 6px; flex: none; }
+.nav-user:empty { display: none; }
+.nav-user .org-user-btn { padding: 2px; border-radius: 99px; }
+.nav-user .org-setup-pill { height: 24px; padding: 0 8px; }
+.org-av { display: inline-grid; place-items: center; line-height: 1; }
+.org-av > span { display: block; line-height: 1; text-align: center; transform: translateY(.02em); }
+html.nav-collapsed .nav-project .org-proj-btn, html[data-view="work"] .nav-project .org-proj-btn { width: 42px; padding: 0; justify-content: center; }
+html.nav-collapsed .nav-project .org-proj-name, html.nav-collapsed .nav-project .org-proj-btn > .ic,
+html[data-view="work"] .nav-project .org-proj-name, html[data-view="work"] .nav-project .org-proj-btn > .ic { display: none; }
+html.nav-collapsed .nav-foot, html[data-view="work"] .nav-foot { flex-direction: column; }
+html.nav-collapsed .nav-user .org-setup-pill, html[data-view="work"] .nav-user .org-setup-pill { display: none; }
+@media (max-width: 1240px) {
+  .nav-project .org-proj-btn { width: 42px; padding: 0; justify-content: center; }
+  .nav-project .org-proj-name, .nav-project .org-proj-btn > .ic, .nav-user .org-setup-pill { display: none; }
+  .nav-foot { flex-direction: column; }
+}

@@ -8,6 +8,7 @@ import { openNewTask, defaultWorkflow } from "./newtask.js";
 import { prCached } from "../prstatus.js";
 import { activityHtml, teamHtml, repoChips, reposOf, phases } from "../live.js";
 import { scoreRing } from "./mission.js";
+import { inProject } from "./org/org.js";
 
 const COLUMNS = [
   { id: "ideas", label: "Ideas", icon: "sparkles", hint: "Drafts and GitHub issues. Drag one to Queued to line it up." },
@@ -67,6 +68,7 @@ export function mountWork(main, tab) {
   function visibleTasks() {
     const q = ui.q.trim().toLowerCase();
     return [...S.tasks.values()].filter((t) => {
+      if (!inProject(t)) return false;
       if (!!t.archived !== ui.archived) return false;
       if (ui.repo && !reposOf(t).includes(ui.repo)) return false;
       if (q && !`${t.name} #${t.number || ""} ${reposOf(t).join(" ")} ${(t.tags || []).join(" ")} ${t.github_repo || ""}`.toLowerCase().includes(q)) return false;
@@ -149,7 +151,7 @@ export function mountWork(main, tab) {
     S.workOrder = COLUMNS.flatMap((c) => byCol[c.id].map((t) => t.id));
 
     // Repository filter options follow the tasks that exist.
-    const repos = [...new Set([...S.tasks.values()].flatMap(reposOf))].sort();
+    const repos = [...new Set([...S.tasks.values()].filter(inProject).flatMap(reposOf))].sort();
     $("#wkRepo", page).innerHTML = `<option value="">All repositories</option>${repos.map((r) => `<option ${r === ui.repo ? "selected" : ""}>${esc(r)}</option>`).join("")}`;
     const total = rows.length;
     $("#wkSub", page).textContent = `${total} task${total === 1 ? "" : "s"}${iss.length ? ` and ${iss.length} open issue${iss.length === 1 ? "" : "s"}` : ""}${ui.repo ? ` in ${ui.repo}` : ""}${ui.archived ? " · archived" : ""}`;

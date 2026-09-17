@@ -6,9 +6,11 @@ import { workflowEditor } from "./newtask.js";
 import { NOTIFY_EVENTS, chime, permission, requestPermission, showDesktop } from "../notify.js";
 import { openShortcuts, keysFor } from "../shortcuts.js";
 import { mountConnectors } from "./connectors.js";
+import { mountTools } from "./tools.js";
+import { mountTokens } from "./tokens.js";
 
-const SECTIONS = [["workflow", "Team and workflow", "layers"], ["agents", "Agents and models", "bot"], ["verification", "Verification", "shield"], ["prompts", "Saved prompts", "message"], ["rules", "Rules", "docs"], ["autopilot", "Autopilot", "clock"], ["budget", "Usage and budget", "gauge"], ["notifications", "Notifications", "bell"], ["git", "Git and GitHub", "github"], ["appearance", "Appearance", "sun"], ["about", "About", "info"]];
-const GROUPS = [["Team", ["workflow", "agents", "verification", "prompts", "rules"]], ["Automation", ["autopilot", "budget", "notifications"]], ["Integrations", ["git"]], ["You", ["appearance", "about"]]];
+const SECTIONS = [["workflow", "Team and workflow", "layers"], ["agents", "Agents and models", "bot"], ["verification", "Verification", "shield"], ["prompts", "Saved prompts", "message"], ["rules", "Rules", "docs"], ["autopilot", "Autopilot", "clock"], ["budget", "Usage and budget", "gauge"], ["notifications", "Notifications", "bell"], ["git", "Git and GitHub", "github"], ["tools", "Agent tools", "package"], ["tokens", "Token efficiency", "gauge"], ["workspace", "Workspace and access", "user"], ["appearance", "Appearance", "sun"], ["about", "About", "info"]];
+const GROUPS = [["Team", ["workflow", "agents", "tools", "verification", "prompts", "rules"]], ["Automation", ["autopilot", "budget", "tokens", "notifications"]], ["Integrations", ["git", "workspace"]], ["You", ["appearance", "about"]]];
 // Words each section answers to, so the search finds "quiet hours" under Autopilot.
 const KEYWORDS = {
   workflow: "preset supervisor worker reviewer team max turns review rounds approval questions design step learning retrospective lessons scorecard parallel",
@@ -22,6 +24,9 @@ const KEYWORDS = {
   git: "github pull request pr draft branch push label intake watch issues commit",
   appearance: "theme dark light density compact keyboard shortcuts",
   about: "version data folder archive",
+  tools: "toolbox mcp servers cli tools requests install catalog",
+  tokens: "token efficiency cache prompt size context compression",
+  workspace: "people roles users projects audit log integrations slack telegram email api tokens usage budgets sso onboarding",
 };
 
 // Scorecards, retrospectives and lessons (orchestrator/learning.py).
@@ -338,12 +343,18 @@ export function mountSettings(main, section) {
       bindAuto();
       $$("[data-cfg='ui_theme'],[data-cfg='ui_density']", body).forEach((s) => s.addEventListener("change", () => bus.emit("theme", { theme: $("[data-cfg='ui_theme']", body).value, density: $("[data-cfg='ui_density']", body).value })));
       $("#showKeys", body).onclick = () => openShortcuts();
+    } else if (cur === "workspace") {
+      import("./org/settings-entry.js").then((m) => m.renderWorkspaceSettings(body));
     } else if (cur === "notifications") {
       renderNotifications(c);
     } else if (cur === "prompts") {
       renderPrompts(c);
     } else if (cur === "connectors") {
       mountConnectors(body);
+    } else if (cur === "tools") {
+      mountTools(body);
+    } else if (cur === "tokens") {
+      mountTokens(body);
     } else if (cur === "rules") {
       body.innerHTML = `<div class="card"><div class="card-head"><h3>Engineering rules</h3><span class="muted" style="font-size:12px">Injected into agent prompts by role</span></div><div class="card-body"><div class="row wrap" id="ruleList"></div><div id="ruleEd" style="margin-top:12px"></div></div></div>`;
       api.rules().then((rows) => {

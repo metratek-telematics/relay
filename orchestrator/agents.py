@@ -288,6 +288,11 @@ class ClaudeAdapter(AgentAdapter):
             env.pop("ANTHROPIC_AUTH_TOKEN", None)
         env.pop("CLAUDECODE", None)  # allow nesting when launched from inside Claude Code
         env.pop("CLAUDE_CODE_ENTRYPOINT", None)
+        if cfg.get("token_lean_agent_context", True):
+            env["ENABLE_CLAUDEAI_MCP_SERVERS"] = "false"
+        cap = int(cfg.get("token_claude_max_output_tokens") or 0)
+        if cap > 0:  # per-response output cap (Claude Code's own setting)
+            env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(cap)
         if cfg.get("subagent_cheap_enabled", True):
             sub = (cfg.get("subagent_models", {}) or {}).get("claude", "").strip()
             if sub:
@@ -318,6 +323,11 @@ class ClaudeAdapter(AgentAdapter):
         for d in cfg.get("extra_dirs") or []:  # a multi-repository task's other worktrees
             args += ["--add-dir", str(d)]
         srcs = (cfg.get("claude_setting_sources") or "").strip()
+        if cfg.get("token_lean_agent_context", True):
+            # The user's personal plugins, skills, slash commands and MCP connectors (claude.ai, user settings) add
+            # thousands of tokens to every API call and nothing to a coding turn; the task's own tools come from Relay.
+            srcs = srcs or "project,local"
+            args += ["--strict-mcp-config", "--disable-slash-commands"]
         if srcs:
             args += ["--setting-sources", srcs]
         args += list(cfg.get("claude_extra_args") or [])
@@ -355,9 +365,18 @@ class ClaudeAdapter(AgentAdapter):
                                 "input": block.get("input"), "summary": _summarize_input(block.get("name"), block.get("input"))})
             u = msg.get("usage") or {}
             if u:
-                ctx.usage["input"] += int(u.get("input_tokens") or 0)
-                ctx.usage["output"] += int(u.get("output_tokens") or 0)
-                ctx.usage["cached"] += int(u.get("cache_read_input_tokens") or 0)
+                # One API call can arrive as several assistant events carrying the same usage: count each message id once.
+                mid = msg.get("id") or f"m{len(ctx.texts)}:{ctx.tool_calls}"
+                seen = ctx.__dict__.setdefault("_usage_ids", set())
+                if mid not in seen:
+                    seen.add(mid)
+                    ctx.usage["input"] += int(u.get("input_tokens") or 0)
+                    ctx.usage["output"] += int(u.get("output_tokens") or 0)
+                    ctx.usage["cached"] += int(u.get("cache_read_input_tokens") or 0)
+                    ctx.usage["cache_write"] = ctx.usage.get("cache_write", 0) + int(u.get("cache_creation_input_tokens") or 0)
+                # The session's context size is what the latest call sent (for compaction decisions).
+                ctx.usage["context"] = (int(u.get("input_tokens") or 0) + int(u.get("cache_read_input_tokens") or 0)
+                                        + int(u.get("cache_creation_input_tokens") or 0)) or ctx.usage.get("context", 0)
             return out
         if typ == "user":
             msg = obj.get("message") or {}
@@ -383,9 +402,11 @@ class ClaudeAdapter(AgentAdapter):
                 ctx.usage["cost_usd"] = float(obj.get("total_cost_usd") or 0)
             u = obj.get("usage") or {}
             if u:
-                ctx.usage["input"] = max(ctx.usage["input"], int(u.get("input_tokens") or 0))
-                ctx.usage["output"] = max(ctx.usage["output"], int(u.get("output_tokens") or 0))
-                ctx.usage["cached"] = max(ctx.usage["cached"], int(u.get("cache_read_input_tokens") or 0))
+                # The result's usage covers the whole turn and is authoritative.
+                ctx.usage["input"] = int(u.get("input_tokens") or 0) or ctx.usage["input"]
+                ctx.usage["output"] = int(u.get("output_tokens") or 0) or ctx.usage["output"]
+                ctx.usage["cached"] = int(u.get("cache_read_input_tokens") or 0) or ctx.usage["cached"]
+                ctx.usage["cache_write"] = int(u.get("cache_creation_input_tokens") or 0) or ctx.usage.get("cache_write", 0)
             sub = obj.get("subtype") or ""
             if obj.get("is_error") or sub.startswith("error"):
                 ctx.error = f"Claude ended with {sub or 'error'}: {truncate(str(obj.get('result') or obj.get('error') or ''), 400)}"
@@ -427,6 +448,9 @@ class CodexAdapter(AgentAdapter):
         eff = (effort or cfg.get("codex_reasoning_effort") or "").strip()
         if eff:
             common += ["-c", f"model_reasoning_effort=\"{eff}\""]
+        verbosity = (cfg.get("token_codex_verbosity") or "").strip()
+        if verbosity in ("low", "medium", "high"):  # GPT-5 family text verbosity; Codex ignores it for models without it
+            common += ["-c", f"model_verbosity=\"{verbosity}\""]
         # No subagent-model override for Codex. Its `agents.<role>` config table
         # defines whole custom agent roles (a description is mandatory), not a
         # model for built-in helpers, so passing a model there only produced

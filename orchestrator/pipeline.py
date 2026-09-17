@@ -19,6 +19,7 @@ from pathlib import Path
 
 from . import config as C
 from . import commitguard, connectors, design, designcheck, environment, gitops, github, judge, lessons, multirepo, protocol, repo_env, stacks
+from . import tokens, toolbox
 from .runner import Interrupted, Stopped, TurnTimeout
 from .util import APP_DIR, new_id, now, quiet, read_text, truncate, write_text
 
@@ -189,15 +190,24 @@ class Pipeline(design.DesignFlow, multirepo.MultiRepo):
             # Start the role over on a new session with the original request; the worktree keeps all the work.
             nonlocal sess, restarts
             restarts += 1
+            had_turns = int(sess.get("turns", 0)) > 0
+            sess_before = sess
             sess = {"agent": agent, "turns": 0}
             self.sessions[skey] = sess
             self.save()
             self.r.timeline(role, "Starting a fresh session", f"{_label(agent)} ({role}): {truncate(reason, 160)}")
-            return (f"ORCHESTRATOR · your previous session for this role broke ({truncate(reason, 300)}), so this is a new session. "
+            note = (f"ORCHESTRATOR · your previous session for this role broke ({truncate(reason, 300)}), so this is a new session. "
                     "Work already done is in the working tree: inspect it (git status, git diff) before acting, do not redo "
-                    "finished work, and end with the appropriate protocol envelope.\n\n" + original_prompt)
+                    "finished work, and end with the appropriate protocol envelope.")
+            if had_turns and self.cfg.get("token_prompt_deltas", True) and self.wt:
+                # A later message alone lacks the rules and the task the lost session had; rebuild them from Relay's records.
+                return self.handoff_prompt(role, agent, note, original_prompt, int(sess_before.get("context_tokens") or 0))
+            return note + "\n\n" + original_prompt
 
+        prompt, sess = self.maybe_compact(role, agent, sess, prompt, skey)
+        original_prompt = prompt
         while True:
+            prompt, sess = self.tools_turn_note(role, agent, sess, prompt)
             self.r.wait_if_paused()
             try:
                 res = self.r.run_agent(role, agent, prompt, self.wt, self.agent_cfg(), model, sess, self.run_dir, label, turn,
@@ -253,6 +263,7 @@ class Pipeline(design.DesignFlow, multirepo.MultiRepo):
                            "text": res.get("text")}
             if env and env.get("type") in expect:
                 env["_text"] = res.get("text") or ""
+                self.tool_request_from_envelope(role, agent, env)
                 return res, env
             nudges += 1
             if nudges > int(self.cfg.get("envelope_retries") or 2):
@@ -560,7 +571,9 @@ class Pipeline(design.DesignFlow, multirepo.MultiRepo):
                        else "FAIL (optional check; reported, does not block)" if optional else "FAIL")
             head = f"$ {c}\n{verdict} (exit {res.get('rc')}, {round(res.get('duration') or 0)}s)"
             # A passing command only needs its verdict; a failure needs output the agents can act on.
-            body = "" if (res["ok"] and quiet_pass) else "\n" + truncate(res["output"], fail_chars, tail=True)
+            body = "" if (res["ok"] and quiet_pass) else "\n" + (
+                tokens.failure_excerpt(res["output"], fail_chars) if self.cfg.get("token_failure_excerpts", True)
+                else truncate(res["output"], fail_chars, tail=True))
             parts.append(head + body)
         if self.stack:
             # End-to-end checks against the task's integration stack; no baseline: the stack is built from this branch.
@@ -690,7 +703,7 @@ class Pipeline(design.DesignFlow, multirepo.MultiRepo):
                      subtype="briefing", issue=self.issue_text[:400] if self.issue_text else "")
         guidance = self.take_guidance("supervisor")
         prompt = protocol.supervisor_kickoff(self.task, self.wt, self.branch, self.issue_text, self.refs_text, guidance, self.verify_cmds, self.cfg,
-                                             self.env_text())
+                                             self.env_text(), self.tools_text("supervisor"))
         prompt = protocol.with_lessons(prompt, self.lessons_text)
         prompt = protocol.with_block(prompt, self.playbook_text)
         prompt = protocol.with_block(prompt, self.context_text("supervisor"))
@@ -763,13 +776,13 @@ class Pipeline(design.DesignFlow, multirepo.MultiRepo):
                     prompt = protocol.worker_kickoff(self.task, self.wt, self.branch, self.issue_text, self.refs_text,
                                                      {**(self.state.get("plan") or {}), "criteria": self.criteria()},
                                                      self.state.get("instruction", ""), guidance, self.cfg,
-                                                     self.gate_command(), self.env_text())
+                                                     self.gate_command(), self.env_text(), self.tools_text("worker"))
                     prompt = protocol.with_lessons(prompt, self.lessons_text)
                     prompt = protocol.with_block(prompt, self.context_text("worker"))
                 else:
                     prompt = protocol.worker_followup(_label(sup_agent), turn, self.state.get("instruction", ""), guidance, kind)
                 if self.state.get("resumed"):
-                    prompt = protocol.resume_note({k: v for k, v in self.state.items() if k in ("phase", "turn", "awaiting", "instruction_summary")}) + "\n\n" + prompt
+                    prompt = tokens.prepend(prompt, protocol.resume_note({k: v for k, v in self.state.items() if k in ("phase", "turn", "awaiting", "instruction_summary")}))
                     self.state["resumed"] = False
                 res, env = self.worker_turn(prompt, f"Work package #{turn}", turn)
                 self.note_package_report(env)
@@ -807,11 +820,11 @@ class Pipeline(design.DesignFlow, multirepo.MultiRepo):
             note = self.state.pop("judge_note", "")
             if note:
                 guidance = (guidance + "\n\n" if guidance else "") + note
+            vt, judge_text, brief = self.after_report_deltas()
             prompt = protocol.supervisor_after_report(_label(wrk_agent), turn, self.state.get("report"), (self.state.get("report") or {}).get("report", ""),
-                                                      self.state.get("last_verification", ""), changed, ds, guidance, remaining, self.cfg,
-                                                      "\n\n".join(x for x in (self.judge_text(), self.design_judge_text()) if x))
+                                                      vt, changed, ds, guidance, remaining, self.cfg, judge_text, brief=brief)
             if self.state.get("resumed"):
-                prompt = protocol.resume_note({k: v for k, v in self.state.items() if k in ("phase", "turn", "awaiting")}) + "\n\n" + prompt
+                prompt = tokens.prepend(prompt, protocol.resume_note({k: v for k, v in self.state.items() if k in ("phase", "turn", "awaiting")}))
                 self.state["resumed"] = False
             res, env = self.supervisor_turn(prompt, f"{_label(sup_agent)} is evaluating work package #{turn}", turn)
             self.apply_supervisor_decision(env, turn)
@@ -1229,12 +1242,13 @@ class Pipeline(design.DesignFlow, multirepo.MultiRepo):
             if ((self.verify_cmds and self.verify_mode != "off") or self.design_gate) and not vt:
                 vt = self.run_verification()
                 self.state["last_verification"] = vt
-            diff = self.all_diff(int(self.cfg.get("budget_diff_chars") or 50000))
             sess = self.sessions.get("reviewer") or {}
+            diff = self.review_diff(sess, rev_agent)
             if int(sess.get("turns", 0)) == 0 or sess.get("agent") != rev_agent:
                 prompt = protocol.reviewer_kickoff(self.task, self.wt, self.branch, {**(self.state.get("plan") or {}), "criteria": self.criteria()},
                                                    self.state.get("pr_summary", ""), vt, diff, rnd, self.cfg,
-                                                   self.state.get("blocked_checks") or [], judge.acceptance_block(self.criteria()) if self.criteria() else "")
+                                                   self.state.get("blocked_checks") or [], judge.acceptance_block(self.criteria()) if self.criteria() else "",
+                                                   self.tools_text("reviewer"))
                 prompt = protocol.with_block(prompt, self.context_text("reviewer"))
             else:
                 prompt = protocol.reviewer_followup(rnd, vt, diff, self.state.get("pr_summary", ""),
@@ -1488,13 +1502,121 @@ class Pipeline(design.DesignFlow, multirepo.MultiRepo):
             if a and a not in C.AGENTS:
                 raise RuntimeError(f"Unknown agent '{a}' for the {r} role.")
 
+    # ------------------------------------------------------------ tools and token efficiency (orchestrator/toolbox.py, tokens.py)
+    def tools_text(self, role):
+        agent, _ = self.role_agent(role)
+        tools = toolbox.tools_for_task({**self.task_meta(), "id": self.tid})
+        served = [t["name"] for t in tools if t.get("kind") == "mcp" and toolbox.installed(t)] if agent in toolbox.MCP_SUPPORT else []
+        return toolbox.describe(tools, agent, {"servers": served}, self.cfg.get("tools_request_policy") or "ask")
+
+    def tools_turn_note(self, role, agent, sess, prompt):
+        """Tools approved or added since this session last heard about them are announced once, on its next turn."""
+        names = toolbox.names_for_task({**self.task_meta(), "id": self.tid})
+        seen = sess.get("tools_seen")
+        notes = self.state.get("tool_notes", {}).pop(role, "") if self.state.get("tool_notes") else ""
+        sess["tools_seen"] = names
+        if int(sess.get("turns", 0)) == 0 or seen is None:
+            return (tokens.prepend(prompt, notes, "tools") if notes else prompt), sess
+        added = [n for n in names if n not in seen]
+        if added:
+            tools = [t for t in toolbox.tools_for_task({**self.task_meta(), "id": self.tid}) if t["name"] in added]
+            served = [t["name"] for t in tools if t.get("kind") == "mcp" and toolbox.installed(t)] if agent in toolbox.MCP_SUPPORT else []
+            text = toolbox.describe(tools, agent, {"servers": served}, "off")
+            notes = (notes + "\n\n" if notes else "") + "ORCHESTRATOR · tools added to this task since your last turn\n" + text
+        return (tokens.prepend(prompt, notes, "tools") if notes else prompt), sess
+
+    def tool_request_from_envelope(self, role, agent, env):
+        """An envelope's `tool_request` (one or a list) goes through the same policy as `relay-tools request`."""
+        reqs = env.get("tool_request") or env.get("tool_requests")
+        if not reqs:
+            return
+        for spec in (reqs if isinstance(reqs, list) else [reqs])[:3]:
+            try:
+                row = toolbox.request({**self.task_meta(), "id": self.tid}, role, agent, spec, self.cfg.get("tools_request_policy") or "ask")
+            except Exception as e:
+                row = {"status": "refused", "error": str(e)}
+            self.tool_request_recorded(role, agent, row)
+
+    def tool_request_recorded(self, role, agent, row):
+        status, name = row.get("status"), row.get("name") or row.get("tool") or "?"
+        self.r.msg(role=role, agent=agent, kind="notice", turn=self.state.get("turn"),
+                   content=f"Tool request `{name}`: {status}" + (f" · {row.get('why')}" if row.get("why") else "")
+                   + (f" · {row.get('error')}" if row.get("error") else ""))
+        self.r.timeline(role, f"Tool requested · {name}", status or "")
+        if status == "pending":
+            self.m.notify("warning", f"{_label(agent)} asks for a tool", f"{name}: {truncate(row.get('why') or '', 120)}", self.tid, kind="needs_input")
+        elif status in ("approved", "refused"):
+            note = (f"ORCHESTRATOR · your tool request `{name}` was {status}"
+                    + (" and is available from this turn" if status == "approved" else f": {row.get('error') or row.get('note') or ''}"))
+            self.state.setdefault("tool_notes", {})[role] = note
+            self.save()
+
+    def _delta(self, role, key, text):
+        """(text to send, unchanged): content this role's live session already received is not sent again."""
+        if not text or not self.cfg.get("token_prompt_deltas", True):
+            return text, False
+        sess = self.sessions.get(role) or {}
+        marker = f"{sess.get('agent')}:{sess.get('id')}"
+        sent = self.state.setdefault("sent", {}).setdefault(role, {})
+        if sent.get("_session") != marker:
+            sent.clear()
+            sent["_session"] = marker
+        h = tokens.digest(re.sub(r"\d+(?:\.\d+)?s\)", "s)", text))
+        if sent.get(key) == h:
+            return text, True
+        sent[key] = h
+        return text, False
+
+    def after_report_deltas(self):
+        vt = self.state.get("last_verification", "")
+        _, same = self._delta("supervisor", "verification", vt)
+        if same:
+            heads = [line for line in vt.splitlines() if line.startswith("$ ") or re.match(r"^(PASS|FAIL|PRE-EXISTING|SKIPPED)", line)]
+            vt = "Unchanged since the previous report (same results, output not repeated):\n" + "\n".join(heads[:40])
+        jt = "\n\n".join(x for x in (self.judge_text(), self.design_judge_text()) if x)
+        _, same = self._delta("supervisor", "judge", jt)
+        if same:
+            jt = "ACCEPTANCE CONTRACT: unchanged since your last message (same criteria, statuses and open findings)."
+        _, brief = self._delta("supervisor", "reply_help", "after_report")
+        return vt, jt, brief
+
+    def review_diff(self, sess, rev_agent):
+        budget = int(self.cfg.get("budget_diff_chars") or 50000)
+        if (self.cfg.get("token_diff_mode") or "targeted") != "targeted":
+            return self.all_diff(budget)
+        full = self.all_diff(max(budget * 20, 400000))
+        resumed = int(sess.get("turns", 0)) > 0 and sess.get("agent") == rev_agent
+        text, hashes = tokens.targeted_diff(full, budget, self.base or "", self.state.get("review_diff") if resumed else None)
+        self.state["review_diff"] = hashes
+        return text
+
+    def handoff_prompt(self, role, agent, note, message, context_tokens=0):
+        changed = self.all_changed_files() if self.wt else []
+        handoff = tokens.compact_handoff(role, self.state, judge.acceptance_block(self.criteria()) if self.criteria() else "",
+                                         changed, self.open_findings_text(), int(context_tokens or 0))
+        return protocol.resume_kickoff(role, self.task, self.wt, self.branch, self.cfg, note + "\n\n" + handoff, str(message),
+                                       self.env_text(), self.tools_text(role), self.gate_command() if role == "worker" else "")
+
+    def maybe_compact(self, role, agent, sess, prompt, skey=None):
+        """A session whose context outgrew the threshold is replaced by a fresh one that starts from a Relay handoff."""
+        limit = int(self.cfg.get("token_compact_threshold") or 0)
+        size = int(sess.get("context_tokens") or 0)
+        if not limit or int(sess.get("turns", 0)) == 0 or size <= limit or not self.wt:
+            return prompt, sess
+        self.r.timeline(role, "Compacting the session", f"{_label(agent)} ({role}) context ≈ {size:,} tokens > {limit:,}: fresh session with a handoff")
+        new_prompt = self.handoff_prompt(role, agent, "", prompt, size)
+        self.m.set_meta(self.tid, compactions=int(self.task_meta().get("compactions") or 0) + 1)
+        sess = {"agent": agent, "turns": 0, "compacted_from": size}
+        self.sessions[skey or role] = sess
+        self.save()
+        return new_prompt, sess
+
     # ------------------------------------------------------------ connectors
     def connect_start(self):
         """Scope the task's connectors and hand agents a token that only works while this run lasts."""
         names = connectors.names_for_task(self.task)
         self.connector_names = names
-        if not names:
-            return
+        # The token also lets agents use relay-tools (list and request tools), so it is issued without connectors too.
         token = connectors.issue_token(self.tid, names)
         self.r.set_agent_env({"RELAY_CONNECT_URL": connectors.relay_url(), "RELAY_CONNECT_TOKEN": token,
                               "RELAY_CONNECT_BIN": str(connectors.BIN_DIR)})
@@ -1503,7 +1625,11 @@ class Pipeline(design.DesignFlow, multirepo.MultiRepo):
         self._conn_mask = conn_mask
         self.r.set_masker(lambda s: conn_mask(repo_mask(s)))
         self.m.set_meta(self.tid, connectors_active=names)
-        self.r.timeline("system", "Connectors available", ", ".join(names))
+        if names:
+            self.r.timeline("system", "Connectors available", ", ".join(names))
+        tools = toolbox.tools_for_task({**self.task_meta(), "id": self.tid})
+        if tools:
+            self.r.timeline("system", "Tools available", ", ".join(t["name"] for t in tools))
 
     def connect_stop(self):
         connectors.revoke_task(self.tid)

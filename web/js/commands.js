@@ -7,6 +7,7 @@ import { toast, basename, copyText } from "./ui.js";
 import { openNewTask, defaultWorkflow } from "./views/newtask.js";
 import { keysFor, openShortcuts } from "./shortcuts.js";
 import { reposOf } from "./live.js";
+import { inProject } from "./views/org/org.js";
 
 const CREATE_RE = /^\s*(?:(?:create|new|add)(?:\s+(?:a\s+)?task)?|task|\+)\s*[:>-]?\s+(.+)$/i;
 
@@ -100,12 +101,16 @@ export function commandItems(q, { view } = {}) {
     ["Learning", "#/knowledge/learning", "trend", "recommendation team risk playbook autopsy proposals calibration"],
     ["Watched GitHub repositories", "#/knowledge/github", "github", "github inbox sources label"],
     ["Agents", "#/agents", "bot", "codex claude gemini login models"], ["Settings", "#/settings", "settings", "preferences"],
+    ["Profile", "#/org/profile", "user", "me account avatar"], ["Projects", "#/org/projects", "layers", "workspace switch project"], ["People and roles", "#/org/people", "user", "users members access sso groups"],
+    ["Integrations", "#/org/integrations", "zap", "slack telegram discord email webhooks push"], ["Usage and budgets", "#/org/usage", "gauge", "spend cost budget"],
+    ["Audit log", "#/org/audit", "list", "history who changed"], ["API tokens", "#/org/tokens", "hash", "personal access token ci"], ["API docs", "#/org/api", "code", "rest openapi v1"],
+    ["Agent tools", "#/settings/tools", "package", "toolbox mcp cli"], ["Token efficiency", "#/settings/tokens", "gauge", "tokens cache"],
     ["Autopilot settings", "#/settings/autopilot", "clock", "schedule window quiet hours limits fallback cost cap"],
     ["Notification settings", "#/settings/notifications", "bell", "desktop sound"], ["Usage and budget", "#/settings/budget", "gauge", "cost pricing"],
   ];
   for (const [label, hash, ic, kw] of nav) items.push({ group: "Go to", icon: ic, label, keywords: kw, onClick: () => navigate(hash) });
 
-  const tasks = [...S.tasks.values()].filter((x) => !x.archived).sort((a, b) => (LIVE.has(b.status) - LIVE.has(a.status)) || (b.updated_at || "").localeCompare(a.updated_at || ""));
+  const tasks = [...S.tasks.values()].filter((x) => !x.archived && inProject(x)).sort((a, b) => (LIVE.has(b.status) - LIVE.has(a.status)) || (b.updated_at || "").localeCompare(a.updated_at || ""));
   for (const x of tasks.slice(0, 200)) {
     items.push({ group: "Tasks", icon: LIVE.has(x.status) ? "activity" : x.status === "done" ? "check" : "tasks", label: x.name, sub: `${x.number ? `#${x.number} · ` : ""}${reposOf(x).join(", ")} · ${statusOf(x).label}`, keywords: `${x.number ? `#${x.number}` : ""} ${(x.tags || []).join(" ")} ${agentLabel(x.workflow?.roles?.worker?.agent || "")}`, onClick: () => navigate(`#/task/${x.id}`) });
   }

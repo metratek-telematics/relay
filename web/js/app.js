@@ -15,6 +15,7 @@ import { deliver, markSeen, renderAttention, permission, requestPermission } fro
 import { GOTO, keysFor, openShortcuts } from "./shortcuts.js";
 import { noteMessage } from "./live.js";
 import { commandItems } from "./commands.js";
+import { mountOrg, mountOrgHeader, parseOrgRoute, inProject } from "./views/org/org.js";
 
 const main = $("#main");
 const root = document.documentElement;
@@ -51,6 +52,8 @@ $("#tabNew").onclick = () => openNewTask();
 $("#tabMore").onclick = (e) => menu(e.currentTarget, [
   { label: "Agents", icon: "bot", onClick: () => navigate("#/agents") },
   { label: "Settings", icon: "settings", onClick: () => navigate("#/settings") },
+  { label: "Projects", icon: "layers", onClick: () => navigate("#/org/projects") },
+  { label: "Profile", icon: "user", onClick: () => navigate("#/org/profile") },
   "-",
   { label: "Search or run a command", icon: "search", onClick: () => openPalette() },
   { label: "Notifications", icon: "bell", onClick: () => $("#notifBtn").click() },
@@ -89,12 +92,13 @@ function parseRoute() {
   if (a === "knowledge") return { view: "knowledge", id: null, tab: b || "system", section: null };
   if (a === "settings") return { view: "settings", id: null, tab: null, section: b || "workflow" };
   if (a === "agents") return { view: "agents", id: null, tab: null, section: null };
+  if (a === "org") return parseOrgRoute(parts);
   return { view: "home", id: null, tab: null, section: null };
 }
-const NAV_OF_VIEW = { home: "home", work: "work", task: "work", review: "work", knowledge: "knowledge", agents: "agents", settings: "settings" };
+const NAV_OF_VIEW = { home: "home", work: "work", task: "work", review: "work", knowledge: "knowledge", agents: "agents", settings: "settings", org: "settings" };
 function route() {
   const r = parseRoute();
-  const same = view && S.route.view === r.view && S.route.id === r.id;
+  const same = view && S.route.view === r.view && S.route.id === r.id && (r.view !== "org" || (S.route.section === r.section && S.route.tab === r.tab));
   S.route = r;
   root.classList.toggle("bare", r.view === "status");
   root.dataset.view = r.view;
@@ -111,16 +115,20 @@ function route() {
   else if (r.view === "knowledge") view = mountKnowledge(main, r.tab);
   else if (r.view === "settings") view = mountSettings(main, r.section);
   else if (r.view === "agents") view = mountAgents(main);
+  else if (r.view === "org") view = mountOrg(main, r.section, r.tab);
   else view = mountMission(main, r.tab);
   bus.emit("route");
 }
 window.addEventListener("hashchange", route);
+// Switching project re-draws the page for that project; lists, counts and the board follow it.
+bus.on("project", () => { view && view.destroy && view.destroy(); view = null; renderCounts(); route(); });
+bus.on("org", () => { if (S.ready) renderCounts(); });
 
 // ---------------------------------------------------------------------------- nav counts, autopilot, connection
 function renderCounts() {
-  const tasks = [...S.tasks.values()].filter((t) => !t.archived);
+  const tasks = [...S.tasks.values()].filter((t) => !t.archived && inProject(t));
   const live = tasks.filter((t) => LIVE.has(t.status)).length;
-  const needs = S.autopilot?.needs_you ?? tasks.filter((t) => statusOf(t).attention).length;
+  const needs = tasks.filter((t) => statusOf(t).attention || t.pending).length;
   const set = (id, n, title) => { const b = $(id); if (!b) return; b.hidden = !n; b.textContent = n > 99 ? "99+" : String(n); if (title) b.title = title; };
   set("#navLive", live, `${live} running`);
   set("#navNeeds", needs, `${needs} need you`);
@@ -340,7 +348,7 @@ async function bootstrap() {
   S.tasks = new Map((st.tasks || []).map((t) => [t.id, t]));
   applyTheme(S.config.ui_theme, S.config.ui_density);
   renderNotifBadge(); renderConn(); renderAttention(); renderAutopilot();
-  if (!S.ready) { S.ready = true; connectEvents(onEvent); route(); }
+  if (!S.ready) { S.ready = true; connectEvents(onEvent); mountOrgHeader(); route(); }
   else view?.update?.("task", {});
 }
 bootstrap();

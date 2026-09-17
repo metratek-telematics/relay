@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+"""relay-tools: see the tools Relay gives this task, and ask for another one.
+
+  relay-tools list                       tools available to this task (MCP servers and command-line tools)
+  relay-tools catalog                    vetted tools the owner can add with one click
+  relay-tools request <name> "<why>"     ask for a catalog tool by its id
+  relay-tools request <name> "<why>" --npm <package> [--binary <cmd>] [--usage "<how to call it>"]
+  relay-tools request <name> "<why>" --pip <package> [--binary <cmd>] [--usage "..."]
+  relay-tools request <name> "<why>" --mcp-command "<command and args>" [--npm <package> | --pip <package>]
+  relay-tools request <name> "<why>" --mcp-url <https://…/mcp>
+  relay-tools status                     your requests for this task and what was decided
+
+Relay applies the owner's policy: a request is approved automatically, or waits for the owner in Needs you.
+An approved tool is available from your next turn. Keep working meanwhile; do not wait for it.
+Exit codes: 0 ok · 2 usage · 3 refused · 4 Relay unreachable or no task token.
+"""
+import argparse
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+
+def fail(msg, code=4):
+    print(f"relay-tools: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def call(method, path, payload=None):
+    base = os.environ.get("RELAY_CONNECT_URL", "").rstrip("/")
+    token = os.environ.get("RELAY_CONNECT_TOKEN", "")
+    if not base or not token:
+        fail("RELAY_CONNECT_URL / RELAY_CONNECT_TOKEN are not set: run this from an agent turn of a Relay task")
+    data = json.dumps(payload).encode() if payload is not None else None
+    req = urllib.request.Request(base + path, data=data, method=method,
+                                 headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return r.status, json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read() or b"{}")
+        except ValueError:
+            return e.code, {"error": f"HTTP {e.code}"}
+    except (urllib.error.URLError, OSError) as e:
+        fail(f"Relay is unreachable at {base}: {getattr(e, 'reason', e)}")
+
+
+def main():
+    p = argparse.ArgumentParser(prog="relay-tools", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("list")
+    sub.add_parser("catalog")
+    sub.add_parser("status")
+    r = sub.add_parser("request")
+    r.add_argument("name")
+    r.add_argument("why")
+    r.add_argument("--npm")
+    r.add_argument("--pip")
+    r.add_argument("--binary")
+    r.add_argument("--usage")
+    r.add_argument("--mcp-command", dest="command")
+    r.add_argument("--mcp-url", dest="url")
+    a = p.parse_args()
+
+    if a.cmd == "request":
+        payload = {k: v for k, v in {"name": a.name, "why": a.why, "npm": a.npm, "pip": a.pip, "binary": a.binary,
+                                     "usage": a.usage, "command": a.command, "url": a.url}.items() if v}
+        code, res = call("POST", "/api/connect/tools/request", payload)
+        if code >= 400 or res.get("status") == "refused":
+            fail(res.get("error") or f"refused (HTTP {code})", 3)
+        status = res.get("status")
+        msg = {"pending": "waiting for the owner's approval; keep working, it will be available on a later turn if approved",
+               "approved": "approved; available from your next turn" + (" (installing now)" if res.get("installing") else ""),
+               "available": "already available to this task"}.get(status, status)
+        print(f"{res.get('name') or res.get('tool') or a.name}: {msg}")
+        return
+    code, res = call("GET", "/api/connect/tools")
+    if code >= 400:
+        fail(res.get("error") or f"HTTP {code}")
+    if a.cmd == "list":
+        if not res.get("tools"):
+            print("No extra tools for this task. See `relay-tools catalog`.")
+        for t in res.get("tools") or []:
+            extra = f" · run `{t['binary']}`" if t["kind"] == "cli" and t.get("binary") else ""
+            print(f"{t['name']} ({t['kind']}{'' if t.get('installed') else ', installing'}){extra}: {t.get('usage') or t.get('description') or ''}")
+    elif a.cmd == "catalog":
+        for c in res.get("catalog") or []:
+            print(f"{c['id']} ({c['kind']}): {c['description']}")
+        print(f"\nRequest one with: relay-tools request <id> \"<why>\"   (policy: {res.get('policy')})")
+    else:
+        rows = res.get("requests") or []
+        if not rows:
+            print("No tool requests for this task.")
+        for x in rows:
+            print(f"{x['name']}: {x['status']} · {x.get('why') or ''}")
+
+
+if __name__ == "__main__":
+    main()

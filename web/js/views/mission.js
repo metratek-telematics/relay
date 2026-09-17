@@ -7,6 +7,7 @@ import { api } from "../api.js";
 import { inboxItemHtml, bindInbox } from "./digest.js";
 import { openNewTask } from "./newtask.js";
 import { seedActivity, activity, activityHtml, stepperHtml, teamHtml, repoChips, phases } from "../live.js";
+import { inProject } from "./org/org.js";
 
 const RANGES = [["today", "Today"], ["24h", "24 h"], ["3d", "3 days"], ["7d", "7 days"]];
 const HOURS = { "24h": 24, "3d": 72, "7d": 168 };
@@ -87,7 +88,7 @@ export function mountMission(main, tab) {
 
   function drawAll() { drawHead(); drawMetrics(); drawLive(); drawNeeds(); drawQueue(); drawHealth(); drawDelivered(); drawTrend(); }
 
-  const tasks = () => [...S.tasks.values()].filter((t) => !t.archived);
+  const tasks = () => [...S.tasks.values()].filter((t) => !t.archived && inProject(t));
   const liveTasks = () => tasks().filter((t) => LIVE.has(t.status)).sort((a, b) => (a.started_at || "").localeCompare(b.started_at || ""));
 
   // ---------------------------------------------------------------- headline

@@ -69,6 +69,10 @@ def _refuse_agent_admin_calls():
         return None
     if request.path.startswith(_AGENT_API):
         return None
+    # The public API authenticates each call with a person's access token, so a valid token is allowed from
+    # anywhere; without one, loopback is still refused (the organisation guard checks the token's scopes).
+    if request.path.startswith("/api/v1/") and org_web.resolve() and org_web.g.get("org_via") == "token":
+        return None
     if (request.remote_addr or "") in ("127.0.0.1", "::1", "localhost"):
         return jsonify({"error": "Changes to Relay are not allowed from inside its container (agents cannot "
                                  "modify Relay). Use the web interface."}), 403
@@ -97,6 +101,9 @@ def broadcast(typ, payload):
 
 manager = Manager(broadcast)
 
+# People, projects, roles, audit, integrations, API tokens, usage and onboarding (orchestrator/org).
+from orchestrator.org import web as org_web  # noqa: E402
+org_web.install(app, manager, broadcast)
 import web_learning  # noqa: E402  learning engine API (recommendations, risk, proposals, playbooks)
 app.register_blueprint(web_learning.init(manager, broadcast))
 
@@ -819,7 +826,12 @@ def autopilot_action(action):
 
 @app.get("/api/autopilot/inbox")
 def autopilot_inbox():
-    return jsonify({"items": manager.autopilot.inbox()})
+    items = manager.autopilot.inbox()
+    try:
+        items = sorted(items + toolbox.inbox_items(), key=lambda x: x.get("time") or "")  # agents' tool requests
+    except Exception:
+        app.logger.exception("Could not list tool requests")
+    return jsonify({"items": items})
 
 
 @app.get("/api/digest")
@@ -1199,6 +1211,117 @@ def connectors_repo_defaults():
     return jsonify({"saved": connectors.set_repo_defaults(path, b.get("names")), "defaults": connectors.default_names(path)})
 
 
+# ----------------------------------------------------------------------------- tools (orchestrator/toolbox.py)
+from orchestrator import tokens, toolbox  # noqa: E402
+
+
+@app.get("/api/tools")
+def tools_list():
+    return jsonify({"tools": [toolbox.public(t) for t in toolbox.load_all()], "catalog": toolbox.catalog(), "builtins": toolbox.builtins(),
+                    "stats": toolbox.stats(), "requests": toolbox.requests()[-60:][::-1], "mcp_support": toolbox.MCP_SUPPORT,
+                    "agents": {k: v["label"] for k, v in C.AGENTS.items()}, "tools_dir": str(toolbox.TOOLS_DIR),
+                    "policy": manager.cfg().get("tools_request_policy") or "ask", "policies": toolbox.POLICIES})
+
+
+@app.post("/api/tools")
+def tools_save():
+    try:
+        return jsonify(toolbox.public(toolbox.save(body())))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.post("/api/tools/catalog/<cid>")
+def tools_add_catalog(cid):
+    b = body()
+    try:
+        spec = toolbox.from_catalog(cid, {k: b.get(k) for k in ("name", "env", "headers", "enabled", "args")})
+        t = toolbox.save(spec)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    if b.get("install", True) and not toolbox.installed(t):
+        toolbox.install(t["name"])
+    return jsonify(toolbox.public(t))
+
+
+@app.delete("/api/tools/<name>")
+def tools_delete(name):
+    t = toolbox.get(name)
+    if t and toolbox.installed(t) and (t.get("install") or {}).get("kind") in ("npm", "pip") and request.args.get("uninstall") == "1":
+        toolbox.install(name, "remove", on_done=lambda n, ok: toolbox.delete(n))
+        return jsonify({"ok": True, "removing": True})
+    toolbox.delete(name)
+    return jsonify({"ok": True})
+
+
+@app.post("/api/tools/<name>/install")
+def tools_install(name):
+    try:
+        return jsonify(toolbox.install(name, body().get("action") or "install"))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.get("/api/tools/<name>/job")
+def tools_job(name):
+    return jsonify({"job": toolbox.job(name), "tool": toolbox.public(toolbox.get(name)) if toolbox.get(name) else None})
+
+
+@app.post("/api/tools/<name>/test")
+def tools_test(name):
+    try:
+        return jsonify(toolbox.probe(name))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
+
+
+@app.get("/api/tools/for-repo")
+def tools_for_repo():
+    path = request.args.get("path") or ""
+    return jsonify({"tools": [toolbox.public(t) for t in toolbox.load_all()], "scope": toolbox.repo_scope(path) if path else None,
+                    "defaults": toolbox.default_names(path) if path else [t["name"] for t in toolbox.load_all() if t.get("enabled")]})
+
+
+@app.put("/api/tools/repo-scope")
+def tools_repo_scope():
+    b = body()
+    try:
+        path = repo_arg(b.get("path"))
+        scope = toolbox.set_repo_scope(path, b.get("enable"), b.get("disable"), b.get("dev"))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"scope": scope, "defaults": toolbox.default_names(path)})
+
+
+@app.post("/api/tools/requests/<rid>/<action>")
+def tools_request_decide(rid, action):
+    b = body()
+    try:
+        if action == "approve":
+            row = toolbox.approve(rid, edits={k: b[k] for k in ("env", "headers") if k in b}, scope=b.get("scope") or "task")
+        elif action == "deny":
+            row = toolbox.deny(rid, b.get("note") or "")
+        else:
+            return jsonify({"error": f"Unknown action {action}"}), 404
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    if row.get("task"):
+        manager.timeline(row["task"], "user", f"Tool request {row['status']}", row.get("name") or "")
+    return jsonify(row)
+
+
+@app.get("/api/tokens")
+def tokens_report():
+    try:
+        days = max(1, min(365, int(request.args.get("days") or 30)))
+    except ValueError:
+        days = 30
+    rep = tokens.report(manager.store.list(), days)
+    keys = [k for k in C.DEFAULTS if k.startswith("token_") or k.startswith("budget_") or k in ("lean_prompts", "subagent_cheap_enabled")]
+    rep["settings"] = {k: manager.cfg().get(k) for k in keys}
+    return jsonify(rep)
+
+
 def _connect_scope():
     """The task token an agent sent. Raises PermissionError."""
     return connectors.check_token(request.headers.get("Authorization") or "")
@@ -1212,6 +1335,50 @@ def connect_list():
         return jsonify({"error": str(e)}), 401
     rows = [connectors.public(c) for c in connectors.load_all() if c["name"] in scope["names"]]
     return jsonify({"connectors": [{k: c[k] for k in ("name", "type", "environment", "access", "description", "target")} for c in rows]})
+
+
+@app.get("/api/connect/tools")
+def connect_tools():
+    """relay-tools list/catalog: the task's tools and the vetted catalog."""
+    try:
+        scope = _connect_scope()
+    except PermissionError as e:
+        return jsonify({"error": str(e)}), 401
+    task = manager.store.get(scope["tid"]) or {"id": scope["tid"]}
+    tools = toolbox.tools_for_task(task)
+    return jsonify({"tools": [{"name": t["name"], "kind": t["kind"], "description": t.get("description", ""), "installed": toolbox.installed(t),
+                               "usage": t.get("usage", ""), "binary": t.get("binary", "")} for t in tools],
+                    "catalog": [{"id": c["id"], "kind": c["kind"], "description": c["description"]} for c in toolbox.CATALOG],
+                    "requests": [{k: r.get(k) for k in ("id", "name", "status", "why", "time")} for r in toolbox.requests(task=scope["tid"])],
+                    "policy": manager.cfg().get("tools_request_policy") or "ask"})
+
+
+@app.post("/api/connect/tools/request")
+def connect_tools_request():
+    """relay-tools request: an agent proposes a tool; the policy decides, the owner approves in Needs you."""
+    try:
+        scope = _connect_scope()
+    except PermissionError as e:
+        return jsonify({"error": str(e)}), 401
+    tid = scope["tid"]
+    task = manager.store.get(tid) or {"id": tid}
+    runner = manager.runners.get(tid)
+    cur = (runner.current if runner else {}) or {}
+    role, agent = cur.get("role") or "agent", cur.get("agent") or ""
+    try:
+        row = toolbox.request(task, role, agent, body(), manager.cfg().get("tools_request_policy") or "ask")
+    except ValueError as e:
+        return jsonify({"status": "refused", "error": str(e)}), 400
+    fields = {"role": role, "agent": agent, "kind": "notice", "turn": (manager.get(tid) or {}).get("current_turn"),
+              "content": f"Tool request `{row.get('name') or row.get('tool') or '?'}`: {row.get('status')}" + (f" · {row.get('why')}" if row.get("why") else "")}
+    try:
+        runner.msg(**fields) if runner else manager.message(tid, fields)
+        manager.timeline(tid, role, f"Tool requested · {row.get('name') or row.get('tool')}", row.get("status") or "")
+        if row.get("status") == "pending":
+            manager.notify("warning", "An agent asks for a tool", f"{row.get('name')}: {(row.get('why') or '')[:120]}", tid, kind="needs_input")
+    except Exception:
+        app.logger.exception("Could not record a tool request")
+    return jsonify({k: row.get(k) for k in ("id", "name", "status", "tool", "error", "note", "installing")})
 
 
 @app.post("/api/connect/<name>/<op>")
