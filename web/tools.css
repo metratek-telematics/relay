@@ -12,11 +12,11 @@
 .tb-why { font-size: var(--fs-sm); overflow-wrap: anywhere; }
 .tb-proposal { font-size: var(--fs-xs); color: var(--text-2); background: var(--panel-2); border-radius: var(--r-sm); padding: 6px 8px; overflow-wrap: anywhere; }
 .tb-decided { margin-top: 12px; display: grid; gap: 2px; }
-.tb-catalog { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.tb-catalog { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr)); gap: 10px; }
 .tb-cat { border: 1px solid var(--border); border-radius: var(--r); padding: 10px 12px; background: var(--bg); display: grid; gap: 6px; align-content: start; min-width: 0; }
 .tb-cat .tb-meta a { display: inline-flex; align-items: center; gap: 2px; }
-.tb-builtins { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 4px 16px; }
-.tb-builtin { display: grid; grid-template-columns: 96px minmax(90px, auto) minmax(0, 1fr); gap: 8px; align-items: center; padding: 4px 0; font-size: var(--fs-sm); min-width: 0; }
+.tb-builtins { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: 4px 16px; }
+.tb-builtin { display: grid; grid-template-columns: 96px minmax(0, auto) minmax(0, 1fr); gap: 8px; align-items: center; padding: 4px 0; font-size: var(--fs-sm); min-width: 0; }
 .tb-builtin .badge { justify-self: start; }
 .tb-pair input[data-pv] { font-family: var(--mono); }
 
@@ -32,7 +32,7 @@
 .tk-track { height: 10px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
 .tk-fill { display: block; height: 100%; background: var(--accent); border-radius: 0 4px 4px 0; }
 .tk-bar-val { text-align: right; font-variant-numeric: tabular-nums; color: var(--text); }
-.tk-table-wrap { overflow-x: auto; }
+.tk-table-wrap { overflow-x: auto; width: 0; min-width: 100%; } /* the table scrolls inside its card instead of widening the page */
 .tk-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
 .tk-table th { text-align: left; font-weight: 600; color: var(--text-3); font-size: var(--fs-xs); padding: 4px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
 .tk-table td { padding: 5px 8px; border-bottom: 1px solid var(--border); }
