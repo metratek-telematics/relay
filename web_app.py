@@ -516,7 +516,7 @@ def branch_name():
     name = (a.get("name") or "").strip()
     requirements = a.get("requirements") or ""
     if not name:
-        name = requirements.strip().splitlines()[0][:60] if requirements.strip() else ""
+        name = gitops.auto_task_name(requirements)
     return jsonify({"branch": gitops.suggest_branch(manager.cfg(), name, requirements, a.get("template") or "feature",
                                                      (a.get("issue") or "").strip().lstrip("#"), repo or None,
                                                      manager.taken_branches(repo))})
@@ -904,7 +904,12 @@ def repos_action(action):
 @app.get("/api/repos/env")
 def repo_env_get():
     path = repo_arg(request.args.get("path"))
-    return jsonify(repo_env.public(repo_env.load(path)))
+    out = repo_env.public(repo_env.load(path))
+    # System packages: what the repository's manifests suggest, and whether this Relay can install anything.
+    from orchestrator import syspkgs
+    out["system_packages_detected"] = syspkgs.detect(path)
+    out["system_packages_capability"] = syspkgs.capability()
+    return jsonify(out)
 
 
 @app.put("/api/repos/env")

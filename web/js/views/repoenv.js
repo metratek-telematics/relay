@@ -23,6 +23,8 @@ export async function openRepoEnv(repo, { onSaved } = {}) {
       <label class="renv-secret"><input type="checkbox" data-cr ${c.required ? "checked" : ""}>required</label>
       <button class="btn xs ghost" data-del title="Remove">${icon("x", "sm")}</button></div>`;
 
+  const pkgCap = env.system_packages_capability || {};
+  const pkgList = (v) => String(v || "").split(/[\s,;]+/).map((x) => x.trim()).filter(Boolean);
   const m = modal(`<h2>${icon("shield")} Environment · ${esc(repo.name)}</h2>
     <p class="hint">Everything a task in this repository needs to run and test the software. It is stored on this server, never committed, applied to every new task's worktree, and secret values are masked in logs and hidden here after saving.</p>
     <div class="renv-sec"><div class="row between"><h3>Variables</h3><span class="row" style="gap:6px"><button class="btn xs" id="rePaste">${icon("file", "sm")}Paste .env</button><button class="btn xs" id="reAddVar">${icon("plus", "sm")}Add</button></span></div>
@@ -31,6 +33,11 @@ export async function openRepoEnv(repo, { onSaved } = {}) {
     <div class="renv-sec"><div class="row between"><h3>Local files</h3><button class="btn xs" id="reAddFile">${icon("plus", "sm")}Add file</button></div>
       <p class="hint">Config files that are not in git: cookies, <code>config.local.json</code>, certificates.</p>
       <div id="reFiles" class="stack" style="gap:8px">${env.files.map(fileRow).join("")}</div></div>
+    <div class="renv-sec" id="rePkgSec"><h3>System packages</h3>
+      <p class="hint">apt packages Relay installs where it runs, before the setup command, for libraries that pip or npm cannot bring (<code>unixodbc</code> for pyodbc). Installed once; later tasks reuse them.</p>
+      ${pkgCap.ok === false ? `<p class="hint renv-warn" style="color:var(--amber)">${icon("alert", "sm")} ${esc(pkgCap.reason || "Relay cannot install system packages here.")}</p>` : ""}
+      <div class="field"><input id="rePkgs" value="${esc((env.system_packages || []).join(" "))}" placeholder="unixodbc unixodbc-dev libpq-dev" spellcheck="false" autocomplete="off"></div>
+      <div id="rePkgDetect" class="stack" style="gap:6px"></div></div>
     <div class="renv-sec"><h3>Setup and services</h3>
       <div class="field"><label>Setup command <span class="muted">(replaces the detected install)</span></label><input id="reSetup" value="${esc(env.setup)}" placeholder="leave empty to detect: npm ci, .venv + requirements + pytest, …" spellcheck="false"></div>
       <div class="field"><label>Start services before the team works</label><input id="reUp" value="${esc(env.services_up)}" placeholder="docker compose up -d db" spellcheck="false"></div>
@@ -48,6 +55,22 @@ export async function openRepoEnv(repo, { onSaved } = {}) {
   });
   const add = (id, html) => { $(id, m.body).insertAdjacentHTML("beforeend", html); bindDel(); bindSecret(); };
   bindDel(); bindSecret();
+  // Suggestions from the repository's manifests, e.g. "Detected: pyodbc needs unixodbc unixodbc-dev — add?"
+  const renderDetected = () => {
+    const have = new Set(pkgList($("#rePkgs", m.body).value));
+    const rows = (env.system_packages_detected || []).filter((d) => d.packages.some((p) => !have.has(p)));
+    $("#rePkgDetect", m.body).innerHTML = rows.map((d) => `<div class="row between renv-detect" style="gap:8px">
+        <span class="muted">Detected: <code>${esc(d.dependency)}</code> in ${esc(d.source)} needs <code>${esc(d.packages.join(" "))}</code> · ${esc(d.reason)}</span>
+        <button class="btn xs" data-addpkgs="${esc(d.packages.join(" "))}">${icon("plus", "sm")}Add</button></div>`).join("");
+    $$("[data-addpkgs]", m.body).forEach((b) => (b.onclick = () => {
+      const merged = [...pkgList($("#rePkgs", m.body).value)];
+      for (const p of pkgList(b.dataset.addpkgs)) if (!merged.includes(p)) merged.push(p);
+      $("#rePkgs", m.body).value = merged.join(" ");
+      renderDetected();
+    }));
+  };
+  renderDetected();
+  $("#rePkgs", m.body).oninput = renderDetected;
   $("#reAddVar", m.body).onclick = () => { add("#reVars", varRow()); $$("[data-vn]", m.body).pop().focus(); };
   $("#reAddFile", m.body).onclick = () => add("#reFiles", fileRow());
   $("#reAddCheck", m.body).onclick = () => add("#reChecks", checkRow());
@@ -78,6 +101,7 @@ export async function openRepoEnv(repo, { onSaved } = {}) {
         .map((f) => { const old = env.files.find((o) => o.path === f.path); return old && old.secret && old.has_value && f.content === "" ? { ...f, content: MASK } : f; })
         .filter((f) => f.path),
       write_dotenv: $("#reDotenv", m.body).checked,
+      system_packages: pkgList($("#rePkgs", m.body).value),
       setup: $("#reSetup", m.body).value, services_up: $("#reUp", m.body).value, services_down: $("#reDown", m.body).value,
       checks: $$(".renv-check", m.body).map((r) => ({ command: $("[data-cc]", r).value.trim(), required: $("[data-cr]", r).checked })).filter((c) => c.command),
     };

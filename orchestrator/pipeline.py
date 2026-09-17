@@ -18,7 +18,7 @@ import traceback
 from pathlib import Path
 
 from . import config as C
-from . import designcheck, environment, gitops, github, judge, lessons, protocol, repo_env
+from . import commitguard, designcheck, environment, gitops, github, judge, lessons, protocol, repo_env
 from .runner import Interrupted, Stopped, TurnTimeout
 from .util import APP_DIR, new_id, now, quiet, read_text, truncate, write_text
 
@@ -35,6 +35,22 @@ _CONFIG_ERRORS = re.compile(
 
 def _config_error(text: str) -> bool:
     return bool(_CONFIG_ERRORS.search(text or ""))
+
+
+def suite_not_run_reason(cmd: str, res: dict) -> str:
+    """Why a failing test command never got to run the tests (collection/import errors), or "" when tests did run."""
+    out = res.get("output") or ""
+    tail = out[-6000:]
+    if "pytest" in cmd or "py.test" in cmd:
+        m = re.search(r"Interrupted: (\d+) errors? during collection", tail)
+        if m or (res.get("rc") in (2, 3, 4) and re.search(r"\bERROR collecting\b|ImportError while importing", tail)):
+            err = re.search(r"^E\s+((?:ImportError|ModuleNotFoundError|OSError)[^\n]*)", tail, re.M)
+            n = m.group(1) if m else "some"
+            return f"pytest stopped during collection ({n} error(s))" + (f": {err.group(1).strip()}" if err else "")
+    err = re.search(r"cannot open shared object file[^\n]*|Error: Cannot find module '[^']+'", tail)
+    if err and "passed" not in tail and "Tests:" not in tail:
+        return f"the command failed before running tests: {err.group(0).strip()}"
+    return ""
 
 
 class TurnBudget(RuntimeError):
@@ -202,6 +218,7 @@ class Pipeline:
                 continue
             sess = res["session"]
             self.sessions[role] = sess
+            self.guard_commits(role, agent)
             self.save()
             if not res.get("ok"):
                 failures += 1
@@ -244,6 +261,27 @@ class Pipeline:
                 raise RuntimeError(f"{_label(agent)} ({role}) did not return a valid protocol envelope after {nudges} attempts.")
             self.r.timeline(role, "Missing protocol envelope", f"Asking {_label(agent)} to restate its reply ({nudges})")
             prompt = protocol.nudge(role)
+
+    def guard_commits(self, role, agent):
+        """Agents never commit (Relay does at delivery): undo any commit made during the turn, keeping its changes."""
+        expected = self.state.get("head")
+        if not expected or not self.wt:
+            return
+        info = commitguard.rewind(self.wt, expected, self.branch)
+        if not info:
+            return
+        if not info["rewound"]:
+            self.r.timeline("git", f"{_label(agent)} ({role}) moved HEAD", f"Not undone: {info['reason']}")
+            return
+        if info["pushed"]:
+            self.state["agent_pushed"] = info["from"]
+        listed = "; ".join(info["commits"]) or f"{info['from'][:10]} (HEAD moved back)"
+        self.r.timeline("git", "Agent commit undone", f"{_label(agent)} ({role}) committed: {truncate(listed, 240)} · changes kept in the working tree")
+        self.r.msg(role="orchestrator", agent=None, kind="notice", turn=self.state.get("turn"),
+                   content=f"{_label(agent)} ({role}) made commits during its turn ({truncate(listed, 400)}). Agents never commit, so Relay "
+                           f"soft-reset them to {expected[:10]}: every change is still in the working tree and Relay commits it at delivery.")
+        note = commitguard.supervisor_note(info, role)
+        self.state["judge_note"] = (self.state.get("judge_note") + "\n\n" if self.state.get("judge_note") else "") + note
 
     # ------------------------------------------------------------ questions
     def ask_human(self, asker_role, env):
@@ -312,6 +350,9 @@ class Pipeline:
         """Install the repository's dependencies before any agent starts, so nobody improvises one."""
         cmd = environment.setup_command(t, self.cfg, self.wt)
         info = {"command": cmd, "ok": None, "skipped": False, "duration": 0, "screenshot": environment.screenshot_tool()}
+        info["system_packages"] = self.ensure_system_packages()
+        if self.wt and environment.is_python(self.wt):
+            environment.exclude_python_artifacts(self.wt)  # also when a saved or custom setup replaces detection
         if not cmd:
             info["skipped"] = True
         elif environment.already_prepared(self.wt) and not (t.get("workflow") or {}).get("setup_command"):
@@ -335,6 +376,30 @@ class Pipeline:
             self.start_services()
         self.m.set_meta(self.tid, environment=info)
         return info
+
+    def ensure_system_packages(self):
+        """apt packages the repository environment lists (unixodbc for pyodbc …), installed before its own setup."""
+        from . import syspkgs
+        pkgs = (getattr(self, "repo_env", None) or {}).get("system_packages") or []
+        if not pkgs:
+            detected = syspkgs.detect(self.wt) if self.wt else []
+            if detected:
+                # Not installed without the operator's say-so, but visible before a test run fails on it.
+                self.r.timeline("system", "System packages suggested",
+                                "; ".join(f"{d['dependency']} needs {' '.join(d['packages'])}" for d in detected)
+                                + " · add them under Repositories → Environment → System packages")
+            return {"packages": [], "suggested": [p for d in detected for p in d["packages"]]}
+        timeout = float(self.cfg.get("env_prepare_timeout_minutes") or 20) * 60
+        res = syspkgs.ensure(pkgs, lambda c, to: self.r.run_shell(c, self.wt, "setup", timeout=to, title=f"Install system packages · {' '.join(pkgs)}"),
+                             timeout)
+        if res["ok"] and res["installed"]:
+            self.r.timeline("system", "System packages installed", " ".join(res["installed"]))
+        elif not res["ok"]:
+            self.record_blocked([{"check": f"System packages ({' '.join(res['missing'] or pkgs)})", "action_required": True,
+                                  "reason": truncate(res["reason"], 300),
+                                  "impact": "code that loads these libraries (imports, native builds, tests) fails until they are installed"}])
+            self.r.timeline("system", "System packages could not be installed", truncate(res["reason"], 200))
+        return {k: res[k] for k in ("ok", "packages", "installed", "missing", "skipped", "reason")}
 
     def start_services(self):
         cmd = self.repo_env["services_up"]
@@ -463,11 +528,20 @@ class Pipeline:
             elif not res["ok"]:
                 base = self.baseline_result(c, timeout)
                 pre_existing = bool(base and not base["ok"])
+            not_run = "" if res["ok"] or cannot_run else suite_not_run_reason(c, res)
+            if not_run:
+                # Excused or not, a suite that stopped while collecting proved nothing: say so where people look.
+                from . import syspkgs
+                hint = syspkgs.missing_library_hint(res.get("output") or "")
+                self.record_blocked([{"check": c, "action_required": bool(hint),
+                                      "reason": truncate(not_run + (f"; {hint}" if hint else ""), 400),
+                                      "impact": "the test suite did not run, so this check proves nothing about the change"}])
             optional = c in getattr(self, "optional_checks", set())
             items.append({"command": c, "ok": res["ok"] or pre_existing or optional, "rc": res.get("rc"), "skipped": skipped,
                           "pre_existing": pre_existing, "optional": optional, "passed": res["ok"],
                           "duration": round(res.get("duration") or 0, 1)})
             verdict = ("SKIPPED (no tests collected)" if skipped else "PASS" if res["ok"]
+                       else "PRE-EXISTING FAILURE, THE SUITE DID NOT RUN (also fails on the starting commit; proves nothing)" if pre_existing and not_run
                        else "PRE-EXISTING FAILURE (also fails on the starting commit; does not block)" if pre_existing
                        else "FAIL (optional check; reported, does not block)" if optional else "FAIL")
             head = f"$ {c}\n{verdict} (exit {res.get('rc')}, {round(res.get('duration') or 0)}s)"
@@ -530,11 +604,16 @@ class Pipeline:
             self.state["environment"] = self.prepare_environment(t)
         self.repo_env = repo_env.load(t["repo"]) if t.get("repo") else repo_env.empty()
         self.r.set_masker(repo_env.masker(self.repo_env))
+        if resumable and self.repo_env.get("system_packages") and self.state.get("phase") not in ("done", "delivered"):
+            self.ensure_system_packages()  # a recreated container loses what apt installed; dpkg makes this a no-op otherwise
         if resumable and self.repo_env.get("services_up") and self.state.get("phase") != "delivered":
             self.start_services()
         self.base = t.get("base_commit") or gitops.base_commit(self.wt, t.get("repo"))
         repo_full = t.get("github_repo") or github.remote_repo_name(t.get("repo"))
         self.m.set_meta(self.tid, worktree=str(self.wt), branch=self.branch, run_dir=str(self.run_dir), github_repo=repo_full, base_commit=self.base)
+        if not self.state.get("head"):
+            # The commit agents work on top of; anything they commit after it is undone (guard_commits).
+            self.state["head"] = commitguard.head(self.wt)
         self.repo_full = repo_full
 
         if t.get("issue"):
@@ -1222,11 +1301,13 @@ class Pipeline:
         title = t.get("github_issue_title") or t["name"]
         committed = gitops.commit_all(self.r, self.wt, f"{prefix} {title}".strip())
         self.r.timeline("git", "Committed" if committed else "Nothing new to commit", self.branch)
+        self.state["head"] = commitguard.head(self.wt)
+        self.save()
 
         pr = {"url": t.get("pr_url"), "number": t.get("pr_number")}
         if self.repo_full and cfg.get("github_auto_push_on_pass", True):
             self.r.status("delivering", "Pushing the task branch to GitHub")
-            gitops.push_branch(self.r, self.wt, self.branch)
+            gitops.push_branch(self.r, self.wt, self.branch, lease=self.state.get("agent_pushed") or "")
             self.r.timeline("github", "Branch pushed", self.branch)
             if cfg.get("github_auto_create_pr", True):
                 existing = github.pr_for_branch(self.repo_full, self.branch)
