@@ -1025,3 +1025,20 @@ html.nav-collapsed .nav-user .org-user-btn, html[data-view="work"] .nav-user .or
 .org-filters .grow input { width: 100%; }
 .card-head select, .org-main select:not(.input):not([class*="select"]) { height: 30px; border: 1px solid var(--border); border-radius: var(--r); background: var(--panel); color: var(--text); padding: 0 8px; font-size: var(--fs-xs); }
 .org-step.done .org-step-n, .org-step.next .org-step-n { color: var(--on-accent); }
+@media (max-width: 760px) {
+  .dx { grid-template-rows: minmax(150px, 38%) minmax(0, 1fr); }
+  .dx-files { max-height: none; min-height: 150px; }
+  .tp-head { max-height: 46vh; overflow-y: auto; }
+}
+@media (max-width: 760px) {
+  .settings-nav, .org-nav { display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 2px; padding-bottom: 4px; scrollbar-width: none; margin: 0 -16px; padding-left: 16px; padding-right: 16px; }
+  .settings-nav::-webkit-scrollbar, .org-nav::-webkit-scrollbar { display: none; }
+  .sn-group { display: contents; }
+  .sn-label, .org-nav-group { display: none; }
+  .settings-nav a, .org-nav a { flex: none; white-space: nowrap; }
+}
+@media (max-width: 760px) {
+  /* Charts drawn in a wide viewBox keep readable axis labels by scrolling inside their card instead of shrinking. */
+  #dailyWrap { overflow-x: auto; }
+  #dailyWrap .org-chart { min-width: 620px; }
+}
