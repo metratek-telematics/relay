@@ -8,6 +8,36 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Mission Control** (`web/js/views/mission.js`, `/api/mission`). The home screen answers what the agent teams are doing,
+  what needs you and how it is going: live agent cards (repositories, phase, the tool call running now, elapsed, cost,
+  work-package progress), Needs you with questions, approvals and design approvals answered in place, the queue lane with
+  ETAs, dependencies and drag reorder, deliveries with scorecards, a 14-day success trend, limits and spend. The digest
+  is the same screen over 24 hours, 3 days or 7 days.
+- **Work board** (`views/work.js`): tasks in every state, GitHub issues and the queue in six columns (Ideas, Queued,
+  Running, Needs you, Review, Done), with filters, drag to queue, reorder or unqueue, and bulk actions.
+- **Task page layout**: a phase outline (plan, design, build with work packages, verify, review, deliver), views for the
+  conversation, the **live theatre** (relay track with animated handoffs, editor pane with the diff being written,
+  terminal tail, step feed), the design, **Changes** across every repository (file navigator in merge order beside the
+  diff, commits, Try it, file editor), checks and logs, and a details rail whose sections fold.
+- **Review cockpit** (`#/review/<id>`, `views/review.js`): verdict strip, design and merge order, acceptance evidence,
+  every diff, verification and review findings, follow-ups; **Approve and merge** merges each pull request in order with
+  the GitHub CLI and stops at the first failure (`POST /api/tasks/<id>/merge`, `orchestrator/mission.py`), **Request
+  changes** opens a follow-up task with your comments and the chosen findings.
+- **Shareable status** (`#/status/<id>`): a read-only live page for stakeholders, behind the same sign-in.
+- **Command palette**: "create task: …" detects the repositories named in the text (open the dialog or queue at once),
+  `#12` jumps to a task, and actions for the task in front of you.
+- **Knowledge** gathers the system map, repositories, connectors, lessons, learning, worktrees, branch graph and watched
+  GitHub repositories. Settings are grouped and searchable.
+- Design system: `web/tokens.css` (house palette in light and dark, state colours reserved for status), self-hosted
+  Hanken Grotesk and JetBrains Mono (`web/fonts`, SIL Open Font License), motion that stops under reduced motion.
+
+### Changed
+
+- Navigation is five labelled places (Mission Control, Work, Knowledge, Agents, Settings); the task sidebar and the
+  autopilot bar are gone, and the old addresses redirect (`#/inbox`, `#/digest`, `#/tasks`, `#/issues`, `#/github`,
+  `#/repos/*`, `#/lessons`, `#/learning`, `#/settings/connectors`, old task tabs). The dashboard and Issues pages are
+  removed; see `docs/UX_AUDIT.md` for why.
+
 - **Learning engine** (`orchestrator/learning_engine.py`, Learning page, `/api/learning`). Every finished run is recorded
   in an append-only outcome dataset (`DATA_DIR/learning/outcomes.jsonl`): repositories, task type, request size, team
   (agent, model, effort per role), prompt and rule version hashes, lessons injected, cost, judge events, verification

@@ -234,7 +234,7 @@ export function mountTask(main, id) {
     const events = [...(t.events || [])].slice(-4).reverse();
     $("#tpOutline", page).innerHTML = `
       <h2 class="ol-h">Progress</h2>
-      <ol class="outline">${ph.steps.map((s) => `<li class="ol-step st-${s.state}">
+      <ol class="ol-list">${ph.steps.map((s) => `<li class="ol-step st-${s.state}">
           <button type="button" class="ol-btn" data-step="${s.key}"><span class="ol-dot" aria-hidden="true">${s.state === "done" ? icon("check", "sm") : s.state === "fail" ? icon("x", "sm") : ""}</span><span class="ol-label">${esc(s.label)}</span>${s.note ? `<span class="ol-note mono">${esc(s.note)}</span>` : ""}</button>
           ${s.key === "build" && pkRows ? `<ol class="ol-subs">${pkRows}</ol>` : ""}
           ${s.key === "review" && reviewRounds ? `<ol class="ol-subs"><li class="ol-sub ${t.review?.verdict === "PASS" ? "done" : ""}"><button type="button" data-step="review"><span class="ol-sub-dot"></span><span>Round ${esc(reviewRounds)}${t.review?.verdict ? ` · ${esc(t.review.verdict)}` : ""}</span></button></li></ol>` : ""}

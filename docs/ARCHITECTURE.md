@@ -59,7 +59,19 @@ The pipeline writes a `checkpoint` (phase, turn, awaiting role, plan, last instr
 - `worktrees/<repo>-<id>` – isolated checkouts on branch `<prefix>/<slug>-<id>`.
 
 ## Browser
-ES modules without a build step: `web/js/app.js` (routing, SSE, sidebar), `views/task.js` (workspace), `views/conversation.js`
-(incremental message rendering), `views/inspector.js` (tabs), `views/dashboard.js`, `views/newtask.js` (wizard),
-`views/settings.js`, `views/agents.js`, `views/github.js`. `ui.js` contains the safe markdown renderer, icons, toasts,
-modals, menus and the command palette.
+ES modules without a build step. Five places, each a view in `web/js/views/`:
+
+| Place | Route | Module | Data |
+| --- | --- | --- | --- |
+| Mission Control (home; `#/home/24h` etc. is the digest) | `#/`, `#/home/<range>` | `mission.js` | `/api/mission` (`orchestrator/mission.py`: digest + live activity + 14-day trend) |
+| Work board | `#/work` | `work.js` | task list from the event stream, `/api/issues` |
+| Task page | `#/task/<id>/<view>` | `task.js`, `theatre.js` (Live), `changes.js` (Changes), `inspector.js` (details rail, Design, Checks, Logs) | messages over SSE, `/api/tasks/<id>/changes`, `/repo-diff` |
+| Review cockpit, shareable status | `#/review/<id>`, `#/status/<id>` | `review.js`, `status.js` | `/api/tasks/<id>/merge` merges the change set in order |
+| Knowledge | `#/knowledge/<tab>` | `knowledge.js` hosting `repos.js`, `systemmap.js`, `connectors.js`, `lessons.js`, `learning.js`, `github.js` | |
+| Agents, Settings | `#/agents`, `#/settings/<section>` | `agents.js`, `settings.js` | |
+
+`app.js` holds the shell (navigation, redirects from older addresses such as `#/inbox`, `#/digest`, `#/repos/*`, the event
+stream, keyboard), `live.js` what each running task is doing now (phases, current tool call), `commands.js` the command
+palette ("create task: …" with repository detection). Styling: `tokens.css` (the only literal colours; light and dark
+themes, type, spacing, motion), `styles.css` (shared components), `app.css` (shell and Mission Control screens).
+`ui.js` contains the safe markdown renderer, icons, toasts, modals, menus and the command palette.

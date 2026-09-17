@@ -347,6 +347,7 @@ export function palette(getItems, { initial = "", placeholder = "Type a command 
     if (e.key === "Enter") { e.preventDefault(); run(sel); }
   };
   document.addEventListener("keydown", onKey, true);
+  addEventListener("hashchange", () => back.isConnected && close(), { once: true });
   input.addEventListener("input", () => { sel = 0; render(); });
   back.addEventListener("mousedown", (e) => { if (e.target === back) close(); });
   render();
