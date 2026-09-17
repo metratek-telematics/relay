@@ -945,3 +945,27 @@ pre.diff .dl { white-space: pre; min-height: 1.5em; }
 .panel .nx-item[data-kind="blocked"] { border-left-color: var(--red); }
 .rv-team dd { display: flex; align-items: center; gap: 6px; }
 .repo-title .badge { align-self: center; line-height: 18px; }
+.rail-head { display: none; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.rail-head h2 { margin: 0; font-size: var(--t-h3); }
+@media (max-width: 1100px) { .rail-head { display: flex; } }
+.team { gap: 3px; }
+.team-member + .team-member { margin-left: 0; }
+.team-member { box-shadow: none; }
+.team-member.on { box-shadow: 0 0 0 2px var(--panel), 0 0 0 3.5px var(--green); }
+.act-detail.plain { font-family: var(--font); font-size: 1em; }
+.wc-progress .pk-bar { width: auto; min-width: 0; }
+.wc-progress .mono { flex: none; }
+/* The board fits all six columns: the navigation folds to icons while it is open. */
+html[data-view="work"] { --nav: var(--rail); }
+html[data-view="work"] .nav { padding: 14px 10px 12px; align-items: center; }
+html[data-view="work"] .nav .lbl, html[data-view="work"] .brand-name, html[data-view="work"] .nav-collapse { display: none; }
+html[data-view="work"] .nav-top { margin: 0 0 8px; }
+html[data-view="work"] .nav-new { width: 40px; padding: 0; justify-content: center; }
+html[data-view="work"] .nav-item { width: 42px; justify-content: center; padding: 0; }
+html[data-view="work"] .nav-item.active::before { left: -10px; }
+html[data-view="work"] .nav-count { position: absolute; top: 2px; right: -2px; min-width: 16px; height: 16px; font-size: 9.5px; padding: 0 4px; }
+html[data-view="work"] .ap-card { padding: 6px; flex-direction: column; border: 0; background: transparent; }
+html[data-view="work"] .nav-search { width: 42px; justify-content: center; padding: 0; }
+html[data-view="work"] .nav-tool-row { flex-direction: column; }
+html[data-view="work"] .conn { justify-content: center; border-top: 0; }
+html[data-view="work"] .board { grid-auto-columns: minmax(204px, 1fr); gap: 10px; }

@@ -96,6 +96,7 @@ function route() {
   const same = view && S.route.view === r.view && S.route.id === r.id;
   S.route = r;
   root.classList.toggle("bare", r.view === "status");
+  root.dataset.view = r.view;
   if (r.id) { markSeen(r.id); renderAttention(); }
   $$("[data-nav]").forEach((b) => { const on = b.dataset.nav === NAV_OF_VIEW[r.view]; b.classList.toggle("active", on); on ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"); });
   if (same) { view.update && view.update("route"); bus.emit("route"); return; }

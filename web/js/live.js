@@ -57,7 +57,7 @@ export function activityHtml(t, { compact = false } = {}) {
   }
   if (p.state === "running") {
     const quiet = Number(p.silent_for || 0) > 15;
-    return `<span class="act">${icon("brain", "sm")}<span class="act-text"><b>${esc(who)}</b> <span class="act-detail">${quiet ? `is thinking · quiet for ${fmtSec(p.silent_for)}` : "is working"}</span></span></span>`;
+    return `<span class="act">${icon("brain", "sm")}<span class="act-text"><b>${esc(who)}</b> <span class="act-detail plain">${quiet ? `is thinking · quiet for ${fmtSec(p.silent_for)}` : "is thinking"}</span></span></span>`;
   }
   return `<span class="act muted">${icon("clock", "sm")}<span class="act-text">${esc(t.detail || statusOf(t).label)}</span></span>`;
 }

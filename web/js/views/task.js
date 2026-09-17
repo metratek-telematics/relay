@@ -34,7 +34,9 @@ export function mountTask(main, id) {
   const views = VIEWS();
   let view = views.some(([k]) => k === S.route.tab) ? S.route.tab : "conversation";
   const mounted = {};
-  let railOpen = (() => { try { return localStorage.getItem("relay.rail") !== "0"; } catch { return true; } })();
+  const overlayRail = () => matchMedia("(max-width: 1100px)").matches;
+  // Below 1100px the rail covers the page, so it starts closed there whatever was remembered.
+  let railOpen = overlayRail() ? false : (() => { try { return localStorage.getItem("relay.rail") !== "0"; } catch { return true; } })();
 
   main.innerHTML = `<div class="tp" id="tp">
     <header class="tp-head">
@@ -72,6 +74,11 @@ export function mountTask(main, id) {
   const convo = new Conversation($("#convo", page), getTask);
   convo.setJumpButton($("#jumpLatest", page));
   const rail = mountInspector($("#tpRail", page), getTask, { tabs: ["overview"] });
+  $("#tpRail", page).insertAdjacentHTML("afterbegin", `<div class="rail-head"><h2>Details</h2><button type="button" class="btn xs ghost icon" id="tpRailClose" aria-label="Close details">${icon("x")}</button></div>`);
+  $("#tpRailClose", page).onclick = () => { setRail(false); $("#tpRailToggle", page).focus(); };
+  page.addEventListener("keydown", (e) => { if (e.key === "Escape" && railOpen && overlayRail()) { setRail(false); $("#tpRailToggle", page).focus(); } });
+  document.addEventListener("mousedown", onOutside);
+  function onOutside(e) { if (railOpen && overlayRail() && !e.target.closest("#tpRail") && !e.target.closest("#tpRailToggle") && !e.target.closest(".modal-backdrop, .menu-pop")) setRail(false); }
   const railObserver = collapsibleSections($("#tpRail", page));
 
   const toggle = (btnId, key, cls) => { $(`#${btnId}`, page).onclick = (e) => { S.ui[key] = !S.ui[key]; $("#convo", page).classList.toggle(cls, !S.ui[key]); e.currentTarget.classList.toggle("on", S.ui[key]); e.currentTarget.setAttribute("aria-pressed", S.ui[key]); }; };
@@ -83,7 +90,8 @@ export function mountTask(main, id) {
     railOpen = open;
     $("#tpBody", page).classList.toggle("rail-hidden", !open);
     $("#tpRailToggle", page).setAttribute("aria-pressed", open);
-    try { localStorage.setItem("relay.rail", open ? "1" : "0"); } catch {}
+    if (!overlayRail()) { try { localStorage.setItem("relay.rail", open ? "1" : "0"); } catch {} }
+    if (open && overlayRail()) requestAnimationFrame(() => $("#tpRailClose", page)?.focus());
   }
   $("#tpRailToggle", page).onclick = () => setRail(!railOpen);
 
@@ -375,7 +383,7 @@ export function mountTask(main, id) {
       if (c === "guidance") { showView("conversation"); $("#guidance", page)?.focus(); return; }
       act(c);
     },
-    destroy() { clearInterval(timer); clearInterval(prTimer); rail.destroy(); railObserver.disconnect(); for (const m of Object.values(mounted)) m?.destroy?.(); offRoute(); offPr(); },
+    destroy() { clearInterval(timer); clearInterval(prTimer); document.removeEventListener("mousedown", onOutside); rail.destroy(); railObserver.disconnect(); for (const m of Object.values(mounted)) m?.destroy?.(); offRoute(); offPr(); },
   };
 }
 

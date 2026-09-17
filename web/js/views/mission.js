@@ -115,7 +115,7 @@ export function mountMission(main, tab) {
     const cap = u.daily_cap_usd || ap.daily_cap_usd || 0;
     const running = liveTasks().length, par = ap.max_parallel || S.queue?.max_parallel || 1;
     $("#mcMetrics", page).innerHTML = `
-      <a class="metric" href="#/work"><span class="m-label">Running</span><span class="m-value">${running}<small>/${par}</small></span><span class="m-sub">${ap.queued || 0} queued${ap.waiting_dependencies ? ` · ${ap.waiting_dependencies} waiting on others` : ""}</span></a>
+      <a class="metric" href="#/work"><span class="m-label">Running</span><span class="m-value">${running}</span><span class="m-sub">limit ${par} · ${ap.queued || 0} queued${ap.waiting_dependencies ? ` · ${ap.waiting_dependencies} waiting on others` : ""}</span></a>
       <a class="metric ${h.needs_you ? "is-attn" : ""}" href="#needs" data-scroll-needs><span class="m-label">Needs you</span><span class="m-value">${h.needs_you || 0}</span><span class="m-sub">${h.needs_you ? "answer below, work continues" : "the queue is unblocked"}</span></a>
       <div class="metric"><span class="m-label">Delivered</span><span class="m-value">${h.delivered || 0}</span><span class="m-sub">${h.failed ? `${h.failed} failed` : "no failures"} · ${range === "today" ? "today" : RANGES.find(([k]) => k === range)[1]}</span></div>
       <div class="metric"><span class="m-label">Success, 7 days</span><span class="m-value">${r7 == null ? "—" : `${Math.round(r7 * 100)}<small>%</small>`}</span><span class="m-sub">${delta == null ? "no earlier week to compare" : delta === 0 ? "same as the week before" : `<span class="delta ${delta > 0 ? "up" : "down"}">${delta > 0 ? "▲" : "▼"} ${Math.abs(delta)} pts</span> vs the week before`}</span></div>
@@ -149,7 +149,7 @@ export function mountMission(main, tab) {
   function drawLive() {
     const rows = liveTasks();
     const ap = S.autopilot || {};
-    $("#mcLiveMeta", page).textContent = rows.length ? `${rows.length} of ${ap.max_parallel || S.queue?.max_parallel || 1} slots` : "";
+    $("#mcLiveMeta", page).textContent = rows.length ? `${rows.length} running · parallel limit ${ap.max_parallel || S.queue?.max_parallel || 1}` : "";
     const host = $("#mcLive", page);
     if (!rows.length) {
       const next = d?.next?.[0];

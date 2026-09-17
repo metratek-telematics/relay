@@ -118,7 +118,7 @@ export function mountTheatre(host, getTask) {
       ${hit.ed.diff ? diffHtml(hit.ed.diff) : `<div class="th-empty small"><p>Changed through a shell command, so there is no inline diff. Open <b>Changes</b> for the full diff.</p></div>`}`;
     const pre = $("pre.diff", box);
     if (pre && fresh && !reduced()) { $$(".dl", pre).slice(0, 60).forEach((l, i) => { l.style.setProperty("--i", i); l.classList.add("reveal"); }); }
-    const firstAdd = $(".dl.add", box); if (firstAdd && fresh) firstAdd.scrollIntoView({ block: "center" });
+    const firstAdd = $(".dl.add", box); if (firstAdd && fresh) box.scrollTop = Math.max(0, firstAdd.offsetTop - box.clientHeight / 3);
   }
 
   function drawTerminal() {
