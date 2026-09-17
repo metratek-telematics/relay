@@ -270,7 +270,9 @@ def agent_test(name):
     scratch.mkdir(parents=True, exist_ok=True)
     if not (scratch / ".git").exists():
         quiet(["git", "init", "-q"], cwd=scratch, timeout=30)
-    args, env, stdin, session = ad.build("Reply with exactly the single word: pong", scratch, cfg, body().get("model") or "", None, scratch, "test")
+    # Test what tasks will actually use: the model asked for, else the agent's default model from settings.
+    model = body().get("model") or ((cfg.get("agent_defaults") or {}).get(name) or {}).get("model") or ""
+    args, env, stdin, session = ad.build("Reply with exactly the single word: pong", scratch, cfg, model, None, scratch, "test")
     ctx = TurnContext()
     started = time.time()
     lines = []

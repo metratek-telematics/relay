@@ -116,16 +116,21 @@ class Pipeline:
     def role_agent(self, role):
         r = self.roles.get(role) or {}
         agent = (r.get("agent") or "").strip()
+        # The global role's model only applies when that role uses the same agent: a Codex model name
+        # handed to Kilo or Claude would fail (or silently pick a paid default).
+        glob = self.cfg.get("roles", {}).get(role, {}) or {}
+        same = (glob.get("agent") or "").strip() == agent
         model = ((r.get("model") or "").strip()
-                 or (self.cfg.get("roles", {}).get(role, {}).get("model") or "").strip()
+                 or ((glob.get("model") or "").strip() if same else "")
                  or ((self.cfg.get("agent_defaults", {}).get(agent) or {}).get("model") or "").strip())
         return agent, model
 
     def role_effort(self, role):
         r = self.roles.get(role) or {}
         agent = (r.get("agent") or "").strip()
+        glob = self.cfg.get("roles", {}).get(role, {}) or {}
         eff = ((r.get("effort") or "").strip()
-               or (self.cfg.get("roles", {}).get(role, {}).get("effort") or "").strip()
+               or ((glob.get("effort") or "").strip() if (glob.get("agent") or "").strip() == agent else "")
                or ((self.cfg.get("agent_defaults", {}).get(agent) or {}).get("effort") or "").strip())
         allowed = C.AGENTS.get(agent, {}).get("efforts") or []
         return eff if eff in allowed else ""
