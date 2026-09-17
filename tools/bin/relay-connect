@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+"""relay-connect: look at the real environments behind the code from an agent's shell.
+
+Relay performs every call itself: the credentials stay in Relay, the access rules are enforced there,
+output is masked and truncated, and each call is recorded in the task. This tool only needs
+RELAY_CONNECT_URL and RELAY_CONNECT_TOKEN, which Relay exports for the task's agents.
+
+  relay-connect list
+  relay-connect http <name> GET /path [--json '{"a":1}' | --json @body.json] [--header K:V] [--confirm-prod]
+  relay-connect schema <name> [table]
+  relay-connect sql <name> "select …" [--limit 50] [--write] [--confirm-prod]
+  relay-connect logs <name> [--container c] [--since 10m] [--tail 200] [--grep error]
+  relay-connect docker <name> status|inspect|restart [--container c] [--confirm-prod]
+  relay-connect browser <name> [--goto /path] [--screenshot out.png] [--click sel] [--fill 'sel=value']
+                              [--text sel] [--width 1440] [--height 900] [--theme light|dark] [--wait ms] [--no-login]
+
+Exit codes: 0 ok · 1 the call ran but failed (HTTP ≥ 400, SQL error) · 2 usage · 3 refused by an access rule ·
+4 connectors unavailable (no token, Relay unreachable, service down).
+"""
+import argparse
+import base64
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+
+def fail(msg, code=4):
+    print(f"relay-connect: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def call(method, path, payload=None):
+    base = os.environ.get("RELAY_CONNECT_URL", "").rstrip("/")
+    token = os.environ.get("RELAY_CONNECT_TOKEN", "")
+    if not base or not token:
+        fail("RELAY_CONNECT_URL / RELAY_CONNECT_TOKEN are not set: this task has no connectors")
+    data = json.dumps(payload).encode() if payload is not None else None
+    req = urllib.request.Request(base + path, data=data, method=method,
+                                 headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=180) as r:
+            return r.status, json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read() or b"{}")
+        except ValueError:
+            return e.code, {"error": f"HTTP {e.code}"}
+    except (urllib.error.URLError, OSError) as e:
+        fail(f"Relay is unreachable at {base}: {getattr(e, 'reason', e)}")
+
+
+def main():
+    p = argparse.ArgumentParser(prog="relay-connect", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--raw", action="store_true", help="print Relay's JSON answer")
+    sub = p.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("list")
+
+    h = sub.add_parser("http")
+    h.add_argument("name"); h.add_argument("method"); h.add_argument("path")
+    h.add_argument("--json", dest="body"); h.add_argument("--header", action="append", default=[])
+    h.add_argument("--confirm-prod", action="store_true")
+
+    s = sub.add_parser("sql")
+    s.add_argument("name"); s.add_argument("sql")
+    s.add_argument("--limit", type=int); s.add_argument("--write", action="store_true"); s.add_argument("--confirm-prod", action="store_true")
+
+    sc = sub.add_parser("schema")
+    sc.add_argument("name"); sc.add_argument("table", nargs="?")
+
+    lg = sub.add_parser("logs")
+    lg.add_argument("name"); lg.add_argument("--container"); lg.add_argument("--since", default="10m")
+    lg.add_argument("--tail", type=int); lg.add_argument("--grep")
+
+    d = sub.add_parser("docker")
+    d.add_argument("name"); d.add_argument("action", choices=["status", "inspect", "restart"])
+    d.add_argument("--container"); d.add_argument("--confirm-prod", action="store_true")
+
+    b = sub.add_parser("browser")
+    b.add_argument("name"); b.add_argument("--goto", default="/"); b.add_argument("--screenshot")
+    b.add_argument("--click", action="append", default=[]); b.add_argument("--fill", action="append", default=[])
+    b.add_argument("--text"); b.add_argument("--width", type=int); b.add_argument("--height", type=int)
+    b.add_argument("--theme", default="light"); b.add_argument("--wait", type=int, default=1000); b.add_argument("--no-login", action="store_true")
+
+    a = p.parse_args()
+    if a.cmd == "list":
+        status, res = call("GET", "/api/connect")
+        if status != 200:
+            fail(res.get("error") or f"HTTP {status}")
+        if a.raw:
+            print(json.dumps(res, indent=2)); return
+        for c in res.get("connectors") or []:
+            print(f"{c['name']:<24} {c['type']:<9} {c['environment']:<8} {c['access']:<6} {c.get('target') or ''}"
+                  + (f"  — {c['description']}" if c.get("description") else ""))
+        if not res.get("connectors"):
+            print("(no connectors for this task)")
+        return
+
+    payload, op = {}, a.cmd
+    if a.cmd == "http":
+        body = a.body
+        if body and body.startswith("@"):
+            body = open(body[1:], encoding="utf-8").read()
+        if body:
+            try:
+                body = json.loads(body)
+            except ValueError:
+                pass  # sent as text
+        headers = {}
+        for raw in a.header:
+            if ":" not in raw:
+                fail(f"--header needs Name: value, got {raw!r}", 2)
+            k, v = raw.split(":", 1)
+            headers[k.strip()] = v.strip()
+        payload = {"method": a.method.upper(), "path": a.path, "body": body, "headers": headers, "confirm_prod": a.confirm_prod}
+    elif a.cmd == "sql":
+        payload = {"sql": a.sql, "limit": a.limit, "write": a.write, "confirm_prod": a.confirm_prod}
+    elif a.cmd == "schema":
+        payload = {"table": a.table}
+    elif a.cmd == "logs":
+        payload = {"container": a.container, "since": a.since, "tail": a.tail, "grep": a.grep}
+    elif a.cmd == "docker":
+        payload = {"action": a.action, "container": a.container, "confirm_prod": a.confirm_prod}
+    elif a.cmd == "browser":
+        actions = [{"action": "click", "selector": s} for s in a.click]
+        for f in a.fill:
+            sel, _, val = f.partition("=")
+            actions.append({"action": "fill", "selector": sel, "value": val})
+        payload = {"goto": a.goto, "screenshot": bool(a.screenshot), "actions": actions, "text": a.text, "width": a.width,
+                   "height": a.height, "theme": a.theme, "wait": a.wait, "login": not a.no_login}
+
+    status, res = call("POST", f"/api/connect/{a.name}/{op}", payload)
+    shot = res.pop("screenshot_png_base64", None)
+    if a.cmd == "browser" and a.screenshot and shot:
+        os.makedirs(os.path.dirname(os.path.abspath(a.screenshot)), exist_ok=True)
+        with open(a.screenshot, "wb") as f:
+            f.write(base64.b64decode(shot))
+    if a.raw:
+        print(json.dumps(res, indent=2))
+    else:
+        label = res.get("operation") or op
+        state = res.get("call_status") or ("ok" if res.get("ok") else "error")
+        print(f"[{res.get('connector', a.name)} · {res.get('environment', '?')}] {label} · {state} · {res.get('duration', 0)} s")
+        if res.get("output") or res.get("error"):
+            print(res.get("output") or res.get("error"))
+        if a.cmd == "browser" and a.screenshot and shot:
+            print(f"screenshot saved to {a.screenshot}")
+    if status == 401:
+        sys.exit(4)
+    if status == 403 or res.get("refused"):
+        sys.exit(3)
+    if res.get("unavailable") or status >= 500:
+        sys.exit(4)
+    sys.exit(0 if res.get("ok") else 1)
+
+
+if __name__ == "__main__":
+    main()

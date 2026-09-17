@@ -194,7 +194,7 @@ class Manager:
             raise ValueError("The task this follows up no longer exists.")
         tid = new_task_id()
         depends_on = self.clean_dependencies(tid, payload.get("depends_on"))
-        name = (payload.get("name") or "").strip() or (requirements.splitlines()[0][:60] if requirements else f"Issue #{issue}")
+        name = (payload.get("name") or "").strip() or (gitops.auto_task_name(requirements) or requirements[:60] if requirements else f"Issue #{issue}")
         branch = self.branch_for(payload, repo, name, requirements, issue)
         t = {
             "id": tid, "name": name, "repo": repo, "requirements": requirements, "issue": issue,
@@ -221,6 +221,8 @@ class Manager:
             t["cost_cap_usd"] = max(0.0, float(payload.get("cost_cap_usd") or 0))
         if parent:
             t["follow_up_of"] = parent
+        if isinstance(payload.get("connectors"), list):  # None keeps the repository's default connectors
+            t["connectors"] = [str(n) for n in payload["connectors"]][:50]
         self.store.add(t)
         C.remember_repo(repo)
         self.config_changed()
@@ -245,6 +247,8 @@ class Manager:
             allowed["retry_policy"] = {"infra": max(0, int(patch["retry_policy"].get("infra") or 0))}
         if "cost_cap_usd" in patch:
             allowed["cost_cap_usd"] = max(0.0, float(patch.get("cost_cap_usd") or 0))
+        if "connectors" in patch and (patch["connectors"] is None or isinstance(patch["connectors"], list)):
+            allowed["connectors"] = patch["connectors"]
         if "workflow" in patch and isinstance(patch["workflow"], dict):
             wf = dict(t.get("workflow") or {})
             for k in ("max_turns", "max_review_rounds", "verify_mode", "approval_before_delivery", "allow_agent_questions"):
@@ -669,6 +673,9 @@ class Manager:
                 return {"applied": "resumed"}
             except (ValueError, KeyError) as e:
                 return {"applied": "next_boundary", "note": str(e)}
+        if not r and t.get("status") in TERMINAL:
+            # A finished task has no next turn: nothing would ever read this (seen: a question left unanswered after delivery).
+            return {"applied": "finished", "note": "This task has finished, so no agent will read it. Start a follow-up task to act on it."}
         return {"applied": "next_boundary"}
 
     def edit_acceptance(self, tid, ops: dict):

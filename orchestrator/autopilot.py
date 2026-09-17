@@ -1040,7 +1040,7 @@ class Autopilot:
             pending = lessons.listing().get("queue") or []
         except Exception:
             pending = []
-        running = [t for t in rows if t["id"] in self.m.runners or t.get("status") in _active()]
+        running = [t for t in rows if t.get("status") in _active()]  # parked tasks are not running
         st = self.status()
         d = build_digest(rows, cards, since_ts, ts, queue_order=self.m.queue_order(rows), running=running,
                          parallel=self.m.max_parallel, lessons_pending=pending, settings=s,

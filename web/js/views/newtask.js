@@ -2,6 +2,7 @@
 import { $, $$, esc, icon, modal, toast, basename } from "../ui.js";
 import { S, agentLabel, agentInitial, navigate, defaultModelLabel } from "../state.js";
 import { api } from "../api.js";
+import { connectorPicker } from "./connectors.js";
 
 export function workflowEditor(host, wf, { agents, presets, showAdvanced = true, onChange }) {
   const health = S.agents || {};
@@ -79,13 +80,14 @@ export function openNewTask(prefill = {}) {
   const parent = prefill.followUp;
   const data = {
     repo: edit?.repo || parent?.repo || prefill.repo || S.config.recent_repos?.[0] || "",
-    name: edit?.name || (parent ? `Follow-up: ${parent.name}` : ""), requirements: edit?.requirements || prefill.requirements || "", issue: edit?.issue || prefill.issue || "",
+    name: edit?.name || (parent ? `Follow-up: ${String(parent.name || "").replace(/^(Follow-up:\s*)+/i, "")}` : ""), requirements: edit?.requirements || prefill.requirements || "", issue: edit?.issue || prefill.issue || "",
     template: edit?.template || parent?.template || "feature", priority: edit?.priority || parent?.priority || "normal", tags: (edit?.tags || parent?.tags || []).join(", "),
     workflow: edit ? JSON.parse(JSON.stringify(edit.workflow)) : parent?.workflow ? JSON.parse(JSON.stringify(parent.workflow)) : defaultWorkflow(), queue: true,
     branch: parent ? (parent.branch || parent.branch_name || "") : "", branchEdited: !!parent,
     // Autopilot: run after other tasks, automatic retries of agent crashes, a cost cap.
     depends_on: edit?.depends_on ? [...edit.depends_on] : parent && parent.status !== "done" ? [parent.id] : [],
     retry: edit?.retry_policy?.infra ?? "", cost_cap: edit?.cost_cap_usd || "",
+    connectors: edit?.connectors || parent?.connectors || null, // null: the repository's default connectors
   };
   let step = edit || parent ? 1 : 0;
   const parentNote = parent ? `<div class="followup-note">${icon("retry", "sm")}<div><strong>Follows up <a href="#/task/${encodeURIComponent(parent.id)}">${esc(parent.name)}</a></strong>
@@ -225,9 +227,18 @@ export function openNewTask(prefill = {}) {
         ${warn.length ? `<div class="modal-error" style="margin-top:12px">${warn.map(esc).join("<br>")}<br><a href="#/agents" data-close>Open Agents page</a></div>` : ""}
         ${!edit ? `<div class="field" style="margin-top:14px"><label>Branch</label><input id="tbranch" class="mono" value="${esc(data.branch)}" placeholder="suggesting…" spellcheck="false"><div class="help">${parent && data.branch === (parent.branch || parent.branch_name) ? `The branch ${esc(parent.name)} delivered; this task adds commits on top of it.` : "Suggested from the task name. Edit it freely; an existing branch is built on."}</div></div>` : ""}
         ${autopilotOptions(data, edit)}
+        <details class="field conn-task" id="connBox" style="margin-top:14px"><summary class="field-label">Advanced · connectors <span class="muted" id="connSum">loading…</span></summary>
+          <div id="connPick" style="margin-top:8px"></div><div class="help">Real environments the agents may check through Relay. The default is the repository's connectors, never production.</div></details>
         ${!edit ? `<div class="field inline" style="margin-top:14px"><label>Queue immediately (and start the queue if idle)</label><span class="switch ${data.queue ? "on" : ""}" id="qSwitch"></span></div>` : ""}
         <div class="modal-actions"><button type="button" class="btn" id="wBack">Back</button><span style="flex:1"></span><button type="button" class="btn primary" id="wCreate">${icon(edit ? "save" : "sparkles")}${edit ? "Save" : data.queue ? "Create & queue" : "Create draft"}</button></div>`;
       $("#wBack", body).onclick = () => go(2);
+      api.connectorsForRepo(data.repo).then((r) => {
+        const host = $("#connPick", body); if (!host) return;
+        const sum = (names) => { const s = $("#connSum", body); if (s) s.textContent = `· ${names.length ? names.join(", ") : "none"}${data.connectors ? "" : " (repository default)"}`; };
+        const current = data.connectors || r.defaults;
+        sum(current);
+        connectorPicker(host, { connectors: r.connectors, selected: current, onChange: (names) => { data.connectors = names; sum(names); } });
+      }).catch(() => { const s = $("#connSum", body); if (s) s.textContent = "· unavailable"; });
       const bInput = $("#tbranch", body);
       if (bInput) {
         bInput.addEventListener("input", () => { data.branch = bInput.value.trim(); data.branchEdited = true; });
@@ -248,6 +259,7 @@ export function openNewTask(prefill = {}) {
             tags: data.tags.split(",").map((x) => x.trim()).filter(Boolean), workflow: data.workflow, queue: data.queue, branch: edit ? undefined : data.branch, follow_up_of: parent?.id,
             depends_on: data.depends_on, cost_cap_usd: Number(data.cost_cap) || 0 };
           if (String(data.retry).trim() !== "") payload.retry_policy = { infra: Math.max(0, Number(data.retry) || 0) };
+          if (data.connectors) payload.connectors = data.connectors; // untouched: the repository's defaults apply when the task starts
           if (edit) { await api.updateTask(edit.id, payload); toast("success", "Task updated"); m.close(); return; }
           const t = await api.createTask(payload);
           m.close();
