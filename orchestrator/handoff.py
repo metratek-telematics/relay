@@ -117,5 +117,18 @@ def build(task: dict, cfg: dict | None = None) -> dict:
     sections.append({"id": "cleanup", "title": "Clean up", "text": "After merging or when you no longer want the result. `branch -d` refuses to delete unmerged work; use `-D` to discard it.",
                      "commands": cleanup})
 
-    return {"ready": True, "ide": ide_link(ide_url, wt) if wt_exists else "", "environment": task.get("environment"), "branch": branch, "base": base, "worktree": str(wt), "worktree_exists": wt_exists, "repo": str(repo),
-            "pushed": pushed, "pr_url": task.get("pr_url"), "pr_number": pr, "diffstat": stat, "sections": sections}
+    out = {"ready": True, "ide": ide_link(ide_url, wt) if wt_exists else "", "environment": task.get("environment"), "branch": branch, "base": base, "worktree": str(wt), "worktree_exists": wt_exists, "repo": str(repo),
+           "pushed": pushed, "pr_url": task.get("pr_url"), "pr_number": pr, "diffstat": stat, "sections": sections}
+    # A multi-repository task: the same steps for every other repository it changed.
+    related = []
+    for name, w in (task.get("repo_worktrees") or {}).items():
+        if not w.get("worktree"):
+            continue
+        sub = build({"worktree": w["worktree"], "repo": w.get("repo"), "branch": w.get("branch"), "pr_number": w.get("pr_number"),
+                     "pr_url": w.get("pr_url"), "base_commit": w.get("base_commit"), "environment": w.get("environment")}, cfg)
+        if sub.get("ready"):
+            related.append({"name": name, "github_repo": w.get("github_repo") or "", "reason": w.get("reason") or "", **sub})
+    if related:
+        out["repo_name"] = repo.name
+        out["repos"] = related
+    return out

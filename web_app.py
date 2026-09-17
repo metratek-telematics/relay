@@ -19,6 +19,7 @@ sys.path.insert(0, str(ROOT))
 
 from orchestrator import agents, config as C, github, gitops, handoff, history, repo_env, repos  # noqa: E402
 from orchestrator import issues, stacks  # noqa: E402
+from orchestrator import multirepo, systemmap  # noqa: E402
 from orchestrator import agent_info, installer, lessons  # noqa: E402
 from orchestrator.scorecard import repo_label  # noqa: E402
 
@@ -935,7 +936,7 @@ def task_busy(t):
 def repo_arg(raw):
     # Task repositories chosen outside the repositories folder stay reachable, but
     # only the exact paths Relay already recorded, never anything the client names.
-    return repos.resolve_repo(raw, [t["repo"] for t in manager.tasks if t.get("repo")])
+    return repos.resolve_repo(raw, [r for t in manager.tasks for r in multirepo.task_repo_paths(t)])
 
 
 @app.get("/api/repos")
@@ -1035,6 +1036,94 @@ def worktrees_cleanup_preview():
 @app.post("/api/worktrees/cleanup")
 def worktrees_cleanup():
     return jsonify(repos.cleanup(body().get("paths") or [], manager.tasks, task_busy))
+
+
+# ----------------------------------------------------------------------------- system map (orchestrator/systemmap.py)
+@app.get("/api/system")
+def system_get():
+    return jsonify(systemmap.view())
+
+
+@app.post("/api/system/scan")
+def system_scan():
+    b = body()
+    paths = [str(repo_arg(p)) for p in b.get("paths") or []]
+    return jsonify(systemmap.scan(paths or None, extra=[r for t in manager.tasks for r in multirepo.task_repo_paths(t)]))
+
+
+@app.post("/api/system/components")
+def system_component_add():
+    return jsonify(systemmap.add_component(body()))
+
+
+@app.patch("/api/system/components/<cid>")
+def system_component_patch(cid):
+    return jsonify(systemmap.update_component(cid, body()))
+
+
+@app.delete("/api/system/components/<cid>")
+def system_component_delete(cid):
+    return jsonify(systemmap.remove_component(cid))
+
+
+@app.post("/api/system/edges")
+def system_edge_add():
+    return jsonify(systemmap.add_edge(body()))
+
+
+@app.patch("/api/system/edges/<eid>")
+def system_edge_patch(eid):
+    return jsonify(systemmap.set_edge(eid, body()))
+
+
+@app.delete("/api/system/edges/<eid>")
+def system_edge_delete(eid):
+    return jsonify(systemmap.remove_edge(eid))
+
+
+@app.get("/api/system/discover")
+def system_discover():
+    try:
+        return jsonify(systemmap.discover(force=request.args.get("force") == "1"))
+    except RuntimeError as e:
+        return jsonify({"error": str(e), "repos": []}), 502
+
+
+@app.post("/api/system/discover/clone")
+def system_discover_clone():
+    return jsonify(systemmap.clone_and_scan([str(x) for x in body().get("repos") or []]))
+
+
+@app.post("/api/system/describe")
+def system_describe():
+    try:
+        return jsonify(systemmap.describe_with_agent(manager.cfg(), body().get("components") or None))
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 502
+
+
+@app.get("/api/system/related")
+def system_related():
+    raw = (request.args.get("repo") or "").strip()
+    if not raw or not Path(raw).exists():
+        return jsonify({"component": None, "suggestions": []})
+    return jsonify(systemmap.related(raw))
+
+
+@app.post("/api/tasks/<tid>/repos")
+def task_repos_add(tid):
+    """Add a related repository to a task that is not running (a running team asks for one itself)."""
+    t = task_or_404(tid)
+    b = body()
+    ref = str(b.get("repo") or "").strip()
+    if not ref:
+        return jsonify({"error": "Name a repository"}), 400
+    try:
+        _, path = systemmap.ensure_local(ref)
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 502
+    current = [r for r in t.get("repos") or [] if r.get("role") != "primary"]
+    return jsonify(manager.update_task(tid, {"repos": current + [{"repo": path, "reason": b.get("reason") or "", "component": b.get("component") or ""}]}))
 
 
 # ----------------------------------------------------------------------------- connectors

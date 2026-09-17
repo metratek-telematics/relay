@@ -368,7 +368,10 @@ def source_for(svc: dict, task: dict) -> tuple[Path | None, str]:
     """Where a service is built from: the task's worktree for its repository, else that repository's checkout."""
     if not svc.get("repo"):
         return None, "image"
-    # Multi-repository tasks record one worktree per repository.
+    # Multi-repository tasks record one worktree per related repository (orchestrator/multirepo.py).
+    for w in (task.get("repo_worktrees") or {}).values():
+        if w.get("repo") and _same(w["repo"], svc["repo"]) and w.get("worktree") and Path(w["worktree"]).exists():
+            return Path(w["worktree"]), "task worktree"
     for repo, wt in (task.get("worktrees") or {}).items():
         if _same(repo, svc["repo"]) and wt and Path(wt).exists():
             return Path(wt), "task worktree"
@@ -1164,7 +1167,7 @@ def pipeline_prepare(p) -> None:
 
 
 def _pipeline_up(p, title) -> dict:
-    task = {**p.task, "id": p.tid, "worktree": str(p.wt)}
+    task = {**p.task, "id": p.tid, "worktree": str(p.wt), "repo_worktrees": (p.task_meta() or {}).get("repo_worktrees") or {}}
     mask = masker(p.stack)
     m = p.r.msg(role="setup", agent=None, kind="command", content=f"relay-stack up ({p.stack['name']})", title=f"{title} · {p.stack['name']}", status="running")
     lines = []
@@ -1215,7 +1218,7 @@ def pipeline_verify(p) -> tuple[list[dict], list[str]]:
         _record_checks(p, d, [{"name": c["name"], "kind": c["kind"], "required": c["required"], "passed": False, "rc": 1,
                                "cannot_run": docker_missing, "duration": 0, "output": truncate(reason, 1500)} for c in d["checks"]])
         return items, parts
-    task = {**p.task, "id": p.tid, "worktree": str(p.wt)}
+    task = {**p.task, "id": p.tid, "worktree": str(p.wt), "repo_worktrees": (p.task_meta() or {}).get("repo_worktrees") or {}}
 
     def run_command(cmd, cwd, timeout):
         return p.r.run_shell(cmd, cwd, "verify", timeout=timeout, title=f"End-to-end · {cmd}")

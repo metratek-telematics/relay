@@ -558,6 +558,11 @@ def with_lessons(prompt: str, block: str) -> str:
     return prompt[:at] + block + "\n\n" + prompt[at:]
 
 
+def with_block(prompt: str, block: str) -> str:
+    """Add a context block (repositories, system map, system design) to a kickoff prompt, before the session instructions."""
+    return with_lessons(prompt, block)
+
+
 def pr_body(cfg, task, summary, details, issue_number=None) -> str:
     issue_close = f"Closes #{issue_number}" if issue_number else ""
     tpl = cfg.get("github_pr_body_template") or "{summary}\n\n{details}\n\n{issue_close}\n"

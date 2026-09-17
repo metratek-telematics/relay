@@ -14,7 +14,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from . import gitops
+from . import gitops, multirepo
 from .github import clone_root, normalize_repo_full_name
 from .store import ACTIVE, WAITING
 from .util import WORKTREES_DIR, quiet, truncate
@@ -182,7 +182,8 @@ def _relay_worktrees(repo) -> list[dict]:
 
 
 def repo_tasks(path, tasks) -> list[dict]:
-    return [t for t in tasks if _same(t.get("repo"), path)]
+    # A multi-repository task belongs to every repository it changes.
+    return [t for t in tasks if _same(t.get("repo"), path) or any(_same(p, path) for p in multirepo.task_repo_paths(t)[1:])]
 
 
 def summarize(path: Path, tasks) -> dict:
@@ -255,7 +256,7 @@ def pull(path: Path, tasks) -> dict:
 # ----------------------------------------------------------------------------- worktrees
 def _task_for(path, tasks):
     for t in tasks:
-        if _same(t.get("worktree"), path):
+        if any(_same(w["worktree"], path) for w in multirepo.task_worktrees(t)):
             return t
     return None
 
@@ -309,7 +310,7 @@ def _wt_row(repo, e, facts, tasks, busy) -> dict:
 
 def _known_repos(tasks) -> list[Path]:
     seen, out = set(), []
-    for p in candidate_repos() + [Path(t["repo"]) for t in tasks if t.get("repo")]:
+    for p in candidate_repos() + [Path(r) for t in tasks for r in multirepo.task_repo_paths(t)]:
         try:
             r = p.resolve()
         except OSError:
@@ -332,18 +333,19 @@ def list_worktrees(tasks, busy) -> dict:
     # A task whose worktree git no longer lists (removed, or its folder deleted and
     # pruned) still has a branch worth judging: merged branches can be deleted from here.
     for t in tasks:
-        wt, repo = t.get("worktree"), t.get("repo")
-        if not wt or not repo:
-            continue
-        p = Path(wt).resolve()
-        if p in claimed or root not in p.parents or not (Path(repo) / ".git").exists():
-            continue
-        claimed.add(p)
-        repo = Path(repo).resolve()
-        if repo not in facts:
-            facts[repo] = _repo_facts(repo)
-        jobs.append((repo, {"path": str(p), "head": None, "branch": t.get("branch") or t.get("branch_name"), "prunable": True,
-                            "locked": False, "detached": False, "record_only": True}))
+        for w in multirepo.task_worktrees(t):
+            wt, repo = w["worktree"], w["repo"]
+            if not wt or not repo:
+                continue
+            p = Path(wt).resolve()
+            if p in claimed or root not in p.parents or not (Path(repo) / ".git").exists():
+                continue
+            claimed.add(p)
+            repo = Path(repo).resolve()
+            if repo not in facts:
+                facts[repo] = _repo_facts(repo)
+            jobs.append((repo, {"path": str(p), "head": None, "branch": w.get("branch"), "prunable": True,
+                                "locked": False, "detached": False, "record_only": True}))
     rows = list(_pool.map(lambda j: _wt_row(j[0], j[1], facts[j[0]], tasks, busy), jobs))
     # Folders git does not know about (a repository was moved, or git metadata was lost) still take disk space.
     try:

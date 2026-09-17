@@ -222,6 +222,19 @@ def announce(full: str, number, task: dict, comment: bool, label: str) -> list:
     return notes
 
 
+def related_repos(local: str) -> list[dict]:
+    """Repositories the system map says this one depends on or is used by (approved dependencies only), cloned if needed."""
+    from . import systemmap
+    out = []
+    for sug in systemmap.related(local, include_proposed=False)["suggestions"]:
+        try:
+            _, path = systemmap.ensure_local(sug["component"])
+            out.append({"repo": path, "reason": sug["reason"], "component": sug["component"]})
+        except Exception:
+            continue  # a repository Relay cannot clone must not stop the issue's own task
+    return out
+
+
 def create_tasks(manager, payload: dict) -> dict:
     """Create one task per issue, in the order given.
 
@@ -264,8 +277,9 @@ def create_tasks(manager, payload: dict) -> dict:
             title = issue.get("title") or f"Issue #{number}"
             # The branch comes from the title alone; the issue number is added once, not twice through the "#12" in the name.
             branch = manager.branch_for({"template": payload.get("template") or "feature"}, local, title, "", number)
+            related = related_repos(local) if payload.get("related_repos", True) else []
             t = manager.create_task({
-                "repo": local, "name": f"#{number} {title}"[:120], "issue": number, "branch": branch,
+                "repo": local, "name": f"#{number} {title}"[:120], "issue": number, "branch": branch, "repos": related,
                 "requirements": requirements_for(full, issue),
                 "template": payload.get("template") or "feature", "priority": priority,
                 # Created unqueued and queued below, once its chain is recorded, so the scheduler never sees it half-made.
