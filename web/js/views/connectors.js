@@ -1,6 +1,6 @@
 // Connectors: named ways for agents to look at the real environments behind the code
 // (HTTP APIs, PostgreSQL, logs, containers, the running app in a browser). See orchestrator/connectors.py.
-import { $, $$, esc, icon, toast, modal, confirm, timeAgo, basename } from "../ui.js";
+import { $, $$, esc, icon, toast, modal, confirm, timeAgo, basename, skeleton } from "../ui.js";
 import { api } from "../api.js";
 
 const MASK = "●●●●";
@@ -252,7 +252,7 @@ export function mountConnectors(body) {
       };
     });
   };
-  body.innerHTML = `<div class="card"><div class="card-body"><div class="empty small">${icon("spinner", "spin")} Loading connectors…</div></div></div>`;
+  body.innerHTML = skeleton("cards", 3);
   load();
 }
 

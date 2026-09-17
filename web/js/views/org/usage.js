@@ -1,5 +1,5 @@
 // Usage & budgets: spend, tokens and agent time per project and person, with monthly budgets.
-import { $, $$, esc, icon, toast } from "../../ui.js";
+import { $, $$, esc, icon, toast, skeleton } from "../../ui.js";
 import { S, navigate } from "../../state.js";
 import { orgApi, ORG, can, xicon, avatar, money, currentProject } from "./org.js";
 
@@ -32,7 +32,7 @@ function hideTip() { if (tip) tip.hidden = true; }
 export function mountUsage(body) {
   let month = thisMonth(), project = currentProject() === "all" ? "" : currentProject(), user = "";
   let data = null, alive = true, users = null, thresholds = [50, 80, 100], orgBudget = 0;
-  body.innerHTML = `<div class="empty small">Loading…</div>`;
+  body.innerHTML = skeleton("cards", 4);
 
   const colorOf = (id, i) => (ORG.projects.find((p) => p.id === id) || {}).color || FALLBACK[i % FALLBACK.length];
 

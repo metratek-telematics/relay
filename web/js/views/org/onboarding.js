@@ -1,5 +1,5 @@
 // Getting started: the first-run checklist, filled in from what Relay can observe, plus a sample task.
-import { $, $$, esc, icon, toast, modal } from "../../ui.js";
+import { $, $$, esc, icon, toast, modal, skeleton } from "../../ui.js";
 import { S, navigate } from "../../state.js";
 import { orgApi, ORG, loadMe, can, xicon } from "./org.js";
 
@@ -15,7 +15,7 @@ const agentName = (a) => (S.agentMeta?.[a] || {}).label || a;
 
 export function mountWelcome(body) {
   let data = null, alive = true, busy = false;
-  body.innerHTML = `<div class="empty small">Loading…</div>`;
+  body.innerHTML = skeleton("list", 5);
 
   async function load() {
     try { data = await orgApi.onboarding(); } catch (e) { if (alive && !data) body.innerHTML = `<div class="empty">${icon("alert", "lg")}<p>${esc(e.message)}</p></div>`; return; }

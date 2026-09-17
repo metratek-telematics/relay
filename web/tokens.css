@@ -165,12 +165,23 @@ html[data-theme="dark"] { --panel: hsl(var(--surface-container)); --panel-2: hsl
   --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px; --s6: 24px; --s8: 32px; --s10: 40px;
   /* shape */
   --r-sm: 6px; --r: 8px; --r-lg: 12px; --r-xl: 16px;
-  /* motion */
+  /* motion · one scale for the whole app. --ease-out is the house curve: quick away, soft landing. */
   --ease: cubic-bezier(.16, 1, .3, 1);
   --ease-in-out: cubic-bezier(.65, 0, .35, 1);
+  --ease-out: cubic-bezier(.2, .8, .2, 1);
+  --ease-in: cubic-bezier(.4, 0, 1, 1);
   --dur-1: 120ms; --dur-2: 200ms; --dur-3: 360ms;
+  --dur-press: 90ms;   /* hover and press feedback */
+  --dur-enter: 160ms;  /* menus, popovers, a view arriving */
+  --dur-panel: 200ms;  /* navigation, drawers, modals */
+  --dur-exit: 130ms;   /* anything leaving goes quicker than it came */
   /* layout */
-  --nav: 232px; --rail: 64px; --sidebar: 0px; --inspector: 380px;
+  --nav: 232px; --nav-wide: 232px; --rail: 64px; --sidebar: 0px; --inspector: 380px;
   --pad: 16px;
 }
+/* The navigation width and its label opacity are registered so both interpolate: one transition on the root
+   element animates the whole shell, and every rule below reads the same two values. */
+@property --nav { syntax: "<length>"; inherits: true; initial-value: 232px; }
+@property --nav-label { syntax: "<number>"; inherits: true; initial-value: 1; }
+:root { --nav-label: 1; }
 html[data-density="compact"] { --fs: 12.5px; --fs-sm: 11.5px; --fs-xs: 10.5px; --pad: 12px; }
