@@ -267,6 +267,12 @@ class Manager:
         """Re-queue runs a restart interrupted, and restart the queue if it was running."""
         cfg = self.cfg()
         resumed = []
+        # Commands and tool calls that were running when the process stopped never got their final update,
+        # so they would show a spinner and a growing timer forever. Nothing is running at startup.
+        for t in self.store.list():
+            for m in self.store.messages(t["id"]):
+                if m.get("status") == "running":
+                    self.store.update_message(t["id"], m["id"], {"status": "interrupted"})
         if cfg.get("auto_resume_interrupted", True):
             for t in self.store.list():
                 if t.get("status") != "interrupted" or t.get("archived"):

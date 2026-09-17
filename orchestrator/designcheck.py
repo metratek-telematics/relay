@@ -137,6 +137,10 @@ def check(wt, base: str, forbidden_terms=(), config: dict | None = None) -> dict
     sep = r"(?:[\s_\-.]|\\[sSwWbB][*+?]?)*"
     term_res = [(t, re.compile(sep.join(re.escape(w) for w in t.split()), re.I)) for t in terms]
     errors, warnings = [], []
+    # A repository whose own files and folders are named after a term is an integration for it: its
+    # modules and tests must carry the name, so the term is not enforced there (see _in_tree).
+    established = [t for t, rx in term_res if base and _in_tree(wt, base, t, rx)]
+    term_res = [(t, rx) for t, rx in term_res if t not in established]
 
     def hit(bucket, path, line, rule, message, text):
         bucket.append({"file": path, "line": line, "rule": rule, "message": message, "text": text.strip()[:160]})
@@ -183,30 +187,15 @@ def check(wt, base: str, forbidden_terms=(), config: dict | None = None) -> dict
                 hit(warnings, path, no, "deep-override", "Deep selector override of a child component; restyle the component instead", text)
             if cfg.get("warn_backdrop") and "backdrop-filter" in code:
                 hit(warnings, path, no, "glass", "backdrop-filter (glassmorphism) needs a reason", text)
-    return {"ok": not errors, "errors": errors, "warnings": warnings}
+    return {"ok": not errors, "errors": errors, "warnings": warnings, "established_terms": len(established)}
 
 
-def report_text(result: dict, limit: int = 60) -> str:
-    lines = [f"Design gate: {'PASS' if result['ok'] else 'FAIL'} · {len(result['errors'])} error(s), {len(result['warnings'])} warning(s)"]
-    for kind, rows in (("error", result["errors"]), ("warning", result["warnings"])):
-        for r in rows[:limit]:
-            lines.append(f"{kind}: {r['file']}:{r['line']} [{r['rule']}] {r['message']}" + (f"\n    {r['text']}" if r["text"] and r["rule"] != "forbidden-term" else ""))
-        if len(rows) > limit:
-            lines.append(f"…and {len(rows) - limit} more {kind}s")
-    return "\n".join(lines)
+def _in_tree(wt: Path, base: str, term: str, rx) -> bool:
+    """Whether the repository at `base` already names files or folders after `term`.
 
-
-if __name__ == "__main__":
-    import argparse
-    ap = argparse.ArgumentParser(description="Relay design gate")
-    ap.add_argument("--base", required=True, help="commit the task started from")
-    ap.add_argument("--path", default=".", help="worktree (default: current directory)")
-    ap.add_argument("--forbid", action="append", default=[], help="forbidden term (repeatable)")
-    ap.add_argument("--forbid-file", help="file with one forbidden term per line")
-    args = ap.parse_args()
-    terms = list(args.forbid)
-    if args.forbid_file and Path(args.forbid_file).is_file():
-        terms += Path(args.forbid_file).read_text(encoding="utf-8").splitlines()
-    res = check(Path(args.path).resolve(), args.base, terms)
-    print(report_text(res))
-    sys.exit(0 if res["ok"] else 1)
+    That marks a codebase built around the term (an integration or client for it), where new modules and
+    tests inevitably carry the name. A mention in content alone does not count, so an ordinary repo keeps
+    the rule even if an old line slipped through.
+    """
+    names = (quiet(["git", "ls-tree", "-r", "--name-only", base], cwd=wt, timeout=60).stdout or "")
+    return bool(rx.search(names))

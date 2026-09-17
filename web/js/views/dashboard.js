@@ -1,12 +1,14 @@
 // Dashboard: KPIs, 14-day insights, agent health, usage, recent activity, open PRs.
 import { $, $$, esc, icon, fmtDur, fmtNum, fmtCost, timeAgo, toast, basename } from "../ui.js";
-import { S, agentLabel, agentInitial, statusOf, navigate, LIVE } from "../state.js";
+import { S, agentLabel, agentInitial, agentIds, statusOf, navigate, LIVE } from "../state.js";
 import { api } from "../api.js";
 import { openNewTask } from "./newtask.js";
 import { agentHealthRow } from "./agents.js";
 
 const OUTCOMES = [["done", "Delivered"], ["failed", "Failed"], ["stopped", "Stopped"]];
-const AGENT_ORDER = ["codex", "claude", "gemini"];
+// Built-in agents always show; pack agents once installed.
+const agentOrder = () => agentIds().filter((a) => AGENT_ORDER_BUILTIN.includes(a) || (S.agents || {})[a]?.installed);
+const AGENT_ORDER_BUILTIN = ["codex", "claude", "gemini"];
 const SVG_NS = 'xmlns="http://www.w3.org/2000/svg"';
 
 // ---------------------------------------------------------------------------- chart helpers
@@ -136,14 +138,14 @@ export function mountDashboard(main) {
     const days = ins.days || [];
     const finished14 = days.reduce((a, x) => a + x.done + x.failed + x.stopped, 0);
     const cost14 = days.reduce((a, x) => a + (x.cost_usd || 0), 0);
-    const agentsUsed = [...AGENT_ORDER, ...Object.keys(agentsTot).filter((a) => !AGENT_ORDER.includes(a))].filter((a) => days.some((x) => (x.cost_by_agent || {})[a]));
+    const agentsUsed = [...agentOrder(), ...Object.keys(agentsTot).filter((a) => !agentOrder().includes(a))].filter((a) => days.some((x) => (x.cost_by_agent || {})[a]));
     const cur = ins.current || {}, prev = ins.previous || {};
     const scroll = $("#dash", main).scrollTop;
     observers.forEach((o) => o.disconnect());
     observers = [];
 
     const legend = (items) => `<div class="chart-legend">${items.map(([cls, l]) => `<span><i class="sw ${cls}"></i>${esc(l)}</span>`).join("")}</div>`;
-    const readyAgents = AGENT_ORDER.filter((a) => health[a]?.ok);
+    const readyAgents = agentOrder().filter((a) => health[a]?.ok);
     const prompts = (S.config.saved_prompts || []).slice(0, 4);
 
     const welcome = `<div class="card welcome"><div class="card-body">
@@ -204,7 +206,7 @@ export function mountDashboard(main) {
           </div></div>`}
         </div>
         <div class="stack" style="gap:16px">
-          <div class="card"><div class="card-head"><h3>Agents</h3><a href="#/agents" class="muted" style="font-size:12px">Manage</a></div><div class="card-body agent-health">${AGENT_ORDER.map((a) => agentHealthRow(a, health[a], { compact: true })).join("")}
+          <div class="card"><div class="card-head"><h3>Agents</h3><a href="#/agents" class="muted" style="font-size:12px">Manage</a></div><div class="card-body agent-health">${agentOrder().map((a) => agentHealthRow(a, health[a], { compact: true })).join("")}
             <div class="row" style="font-size:11px;color:var(--text-3);gap:12px;margin-top:4px"><span>${icon(health.git?.ok ? "check" : "x", "sm")} git</span><span>${icon(health.gh?.ok ? "check" : "x", "sm")} gh ${S.github?.login ? `@${esc(S.github.login)}` : ""}</span></div>
           </div></div>
           ${empty ? "" : `<div class="card"><div class="card-head"><h3>Usage by agent</h3></div><div class="card-body bars">

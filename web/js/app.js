@@ -330,6 +330,7 @@ function onEvent(ev) {
     case "github": S.github = { ...S.github, ...p }; view && view.update && view.update("github", p); break;
     case "config": S.config = p; applyTheme(p.ui_theme, p.ui_density); renderQueue(); break;
     case "queue": S.queue = { ...S.queue, ...p }; renderQueue(); break;
+    case "agents": { const j = p.job; if (j) toast(j.state === "done" ? "success" : "error", `${agentLabel(p.agent)} ${j.action === "remove" ? "removal" : j.action} ${j.state === "done" ? "finished" : "failed"}`, j.error || ""); view && view.update && view.update("agents"); break; }
   }
 }
 
@@ -431,11 +432,24 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+// Avatars take each agent's colour from the registry, so agents added later need no stylesheet change.
+function paintAgentColors() {
+  let tag = document.getElementById("agentColors");
+  if (!tag) { tag = document.createElement("style"); tag.id = "agentColors"; document.head.appendChild(tag); }
+  // Every agent avatar shows the product's own logo; the brand colour is only the fallback.
+  tag.textContent = Object.entries(S.agentMeta || {}).map(([id, m]) => {
+    const sel = `.av.${CSS.escape(id)}`;
+    const color = m.color && /^#[0-9a-f]{3,8}$/i.test(m.color) ? `background-color:${m.color};` : "";
+    return m.logo ? `${sel}{${color}background-image:url(${encodeURI(m.logo)});color:transparent;background-position:center;background-size:cover;background-repeat:no-repeat;box-shadow:inset 0 0 0 1px rgba(128,128,128,.22)}` : (color ? `${sel}{${color}}` : "");
+  }).join("\n");
+}
+
 // ---------------------------------------------------------------------------- bootstrap
 async function bootstrap() {
   let st;
   try { st = await api.state(); } catch (e) { main.innerHTML = `<div class="page"><div class="empty">${icon("alert", "lg")}<h3>Backend unreachable</h3><p>${esc(e.message)}</p></div></div>`; renderConn(); setTimeout(bootstrap, 3000); return; }
-  S.build = st.build; S.config = st.config || {}; S.agents = st.agents || {}; S.agentMeta = st.agent_meta || {}; S.presets = st.presets || []; S.templates = st.templates || [];
+  S.build = st.build; S.config = st.config || {}; S.agents = st.agents || {}; S.agentMeta = st.agent_meta || {};
+  paintAgentColors(); S.presets = st.presets || []; S.templates = st.templates || [];
   S.github = st.github || {}; S.queue = st.queue || {}; S.notifications = st.notifications || [];
   S.tasks = new Map((st.tasks || []).map((t) => [t.id, t]));
   applyTheme(S.config.ui_theme, S.config.ui_density);

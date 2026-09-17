@@ -22,6 +22,9 @@ services:
         GEMINI_VERSION: ${GEMINI_VERSION:-latest}
     image: relay:local
     container_name: relay
+    # Gemini CLI encrypts saved logins with a key derived from the hostname; a random container
+    # hostname would invalidate them on every recreate.
+    hostname: relay
     restart: unless-stopped
     init: false  # tini is the entrypoint already
 
@@ -40,6 +43,9 @@ services:
       GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
 
     volumes:
+      # ---- Relay's own home: logins and settings of agents installed from the Agents
+      # page live here, so they survive restarts. The host logins below sit on top of it.
+      - ${RELAY_DATA}/home:/home/relay
       # ---- Host agent logins and settings (read-write: CLIs refresh their tokens here)
       - ${HOST_HOME:-~}/.codex:/home/relay/.codex
       - ${HOST_HOME:-~}/.claude:/home/relay/.claude
@@ -76,16 +82,29 @@ services:
     container_name: relay-ide
     restart: unless-stopped
     user: "${RELAY_UID:-1000}:${RELAY_GID:-1000}"
+    # Same hostname and home as Relay: an agent signed in from this terminal is signed in for Relay,
+    # including CLIs that encrypt their saved login with a hostname-derived key.
+    hostname: relay
     ports:
       - "127.0.0.1:${RELAY_IDE_PORT:-8768}:8080"
     environment:
-      HOME: /home/coder
+      HOME: /home/relay
+      # Agents installed from the Agents page, first on PATH in the terminal.
+      PATH: ${RELAY_DATA}/agents/npm/bin:${RELAY_DATA}/agents/bin:/home/relay/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      # Headless logins: print a link and ask for the code instead of redirecting to localhost.
+      NO_BROWSER: "true"
     volumes:
+      - ${RELAY_DATA}/home:/home/relay
+      - ${RELAY_DATA}/agents:${RELAY_DATA}/agents
+      - ${HOST_HOME:-~}/.codex:/home/relay/.codex
+      - ${HOST_HOME:-~}/.claude:/home/relay/.claude
+      - ${HOST_HOME:-~}/.claude.json:/home/relay/.claude.json
+      - ${HOST_HOME:-~}/.gemini:/home/relay/.gemini
+      - ${HOST_HOME:-~}/.gitconfig:/home/relay/.gitconfig:ro
       - ${RELAY_REPOS}:${RELAY_REPOS}
       - ${RELAY_DATA}/worktrees:${RELAY_DATA}/worktrees
       # Run folders (logs, artifacts, screenshots) for "Open run folder", read-only.
       - ${RELAY_DATA}/runtime:${RELAY_DATA}/runtime:ro
-      - ${RELAY_CACHE:-./.cache}/ide:/home/coder/.local/share/code-server
-      - ${RELAY_CACHE:-./.cache}/npm:/home/coder/.npm
-      - ${HOST_HOME:-~}/.gitconfig:/home/coder/.gitconfig:ro
+      - ${RELAY_CACHE:-./.cache}/ide:/home/relay/.local/share/code-server
+      - ${RELAY_CACHE:-./.cache}/npm:/home/relay/.npm
 

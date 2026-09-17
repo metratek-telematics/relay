@@ -18,6 +18,10 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 from orchestrator import agents, config as C, github, gitops, handoff, history, repos  # noqa: E402
+from orchestrator import installer  # noqa: E402
+
+# Agents installed from the Agents page must be found by health checks, runs and verification alike.
+installer.extend_path()
 from orchestrator.manager import Manager  # noqa: E402
 from orchestrator.util import IN_DOCKER, IS_WINDOWS, RUNTIME_DIR, quiet, read_text  # noqa: E402
 
@@ -219,6 +223,28 @@ def agents_get():
     return jsonify({"health": agents.agent_health(manager.cfg(), force=request.args.get("force") == "1"), "meta": C.AGENTS})
 
 
+@app.post("/api/agents/<name>/install")
+def agent_install(name):
+    """Install, update or remove a pack agent's CLI in the background (poll /api/agents/jobs)."""
+    spec = C.AGENTS.get(name)
+    if not spec or not spec.get("install"):
+        return jsonify({"error": f"{name} cannot be installed from Relay"}), 400
+    action = body().get("action") or "install"
+
+    def done(agent):
+        agents.invalidate_health()
+        broadcast("agents", {"agent": agent, "job": installer.job(agent)})
+    try:
+        return jsonify(installer.start({"id": name, **spec}, action, on_done=done))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 409
+
+
+@app.get("/api/agents/jobs")
+def agent_jobs():
+    return jsonify({name: installer.job(name) for name in C.AGENTS if installer.job(name)})
+
+
 @app.post("/api/agents/<name>/test")
 def agent_test(name):
     """Run a one-line prompt through the agent to prove auth + structured output work."""
@@ -234,7 +260,7 @@ def agent_test(name):
     started = time.time()
     lines = []
     try:
-        p = subprocess.run(args, cwd=str(scratch), input=stdin, capture_output=True, text=True, encoding="utf-8",
+        p = subprocess.run(args, cwd=str(scratch), input=stdin, stdin=None if stdin is not None else subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
                            errors="replace", timeout=180, env=env, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         out = (p.stdout or "") + "\n" + (p.stderr or "")
         for line in out.splitlines():

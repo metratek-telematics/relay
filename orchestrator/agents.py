@@ -26,6 +26,7 @@ import re
 
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import config as C
@@ -190,7 +191,7 @@ class AgentAdapter:
             info["hint"] = self.install_hint()
             return info
         try:
-            p = quiet(windows_cli(self.binary, ["--version"]), timeout=40, env=self.env(cfg))
+            p = quiet(windows_cli(self.binary, list(self.version_args)), timeout=40, env=self.env(cfg))
             out = ((p.stdout or "") + (p.stderr or "")).strip().splitlines()
             info["version"] = next((l.strip() for l in out if re.search(r"\d+\.\d+", l)), (out[0] if out else "")).strip()
             info["ok"] = p.returncode == 0
@@ -203,10 +204,35 @@ class AgentAdapter:
         self.extra_health(info, cfg)
         return info
 
+    version_args = ["--version"]
+
+    @property
+    def spec(self) -> dict:
+        return C.AGENTS[self.name]
+
     def extra_health(self, info, cfg):
-        pass
+        """Pack agents: `--version` works without any login, so look for the credentials too."""
+        auth = self.spec.get("auth")
+        if not auth or not info["ok"]:
+            return
+        signed = self.signed_in(self.env(cfg))
+        info["signed_in"] = signed
+        if not signed:
+            info["ok"] = False
+            info["error"] = "Not signed in"
+            info["hint"] = f"Run `{self.spec.get('login')}` in a terminal, or add an API key under Configure."
+
+    def signed_in(self, env) -> bool:
+        auth = self.spec.get("auth") or {}
+        if any(env.get(k) for k in auth.get("env") or []):
+            return True
+        home = Path(env.get("HOME") or Path.home())
+        return any((home / f).is_file() for f in auth.get("files") or [])
 
     def install_hint(self) -> str:
+        inst = self.spec.get("install") or {}
+        if inst:
+            return f"Install {self.label} from the Agents page, then run `{self.spec.get('login')}` once to sign in."
         return ""
 
     # ---- environment ----------------------------------------------------
@@ -577,6 +603,11 @@ class GeminiAdapter(AgentAdapter):
         # Vertex AI and Cloud Shell use ambient credentials once chosen in settings.json.
         if auth in ("vertex-ai", "cloud-shell", "compute-default-credentials"):
             return True
+        # Newer builds keep an API key or a Google login in their own encrypted file instead of
+        # oauth_creds.json or the environment. It is keyed to the hostname, so it only counts as
+        # signed in when it was written on this machine; the smoke test proves it either way.
+        if auth in ("gemini-api-key", "oauth-personal") and (home / "gemini-credentials.json").is_file():
+            return True
         # Builds that keep the Google token in the system keychain still record the account here.
         if auth == "oauth-personal":
             try:
@@ -674,6 +705,12 @@ ADAPTERS: dict[str, AgentAdapter] = {
 }
 
 
+# The agent pack (orchestrator/pack/*.py): one adapter per extra CLI, registered by name.
+from .pack import PACK_ADAPTERS  # noqa: E402  (pack modules import the helpers above)
+
+ADAPTERS.update(PACK_ADAPTERS)
+
+
 def adapter(name: str) -> AgentAdapter:
     a = ADAPTERS.get((name or "").lower())
     if not a:
@@ -685,12 +722,15 @@ def agent_health(cfg: dict, force: bool = False) -> dict:
     """Health of all agents (cached 45 s)."""
     if not force and _health_cache["data"] and time.time() - _health_cache["at"] < 45:
         return _health_cache["data"]
-    data = {}
-    for name, a in ADAPTERS.items():
+    def one(item):
+        name, a = item
         try:
-            data[name] = a.health(cfg)
+            return name, a.health(cfg)
         except Exception as e:
-            data[name] = {"agent": name, "label": a.label, "installed": False, "ok": False, "error": str(e)}
+            return name, {"agent": name, "label": a.label, "installed": False, "ok": False, "error": str(e)}
+    # Fourteen `--version` calls one after another would hold the Agents page for many seconds.
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        data = dict(pool.map(one, ADAPTERS.items()))
     data["git"] = {"agent": "git", "label": "Git", "installed": bool(which("git")), "ok": bool(which("git")), "path": which("git")}
     data["gh"] = {"agent": "gh", "label": "GitHub CLI", "installed": bool(which("gh")), "ok": bool(which("gh")), "path": which("gh")}
     _health_cache["data"] = data

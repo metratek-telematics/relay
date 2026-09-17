@@ -17,12 +17,112 @@ AGENTS = {
     "gemini": {"label": "Gemini", "vendor": "Google",    "binary": "gemini", "color": "#3a9d8a",
                "efforts": []},
 }
+for _a in AGENTS.values():
+    _a["builtin"] = True
+
+# The agent pack: more coding CLIs Relay can install from the Agents page and drive like the
+# built-in three. They start uninstalled and unconfigured; nothing runs until someone signs in.
+#   install: how the Agents page installs it (see orchestrator/installer.py)
+#   auth:    what counts as signed in: any of these env vars, or any of these files under HOME
+#   login:   command to run once in a terminal (browser VS Code shares the same home folder)
+PACK_AGENTS = {
+    "opencode": {"label": "OpenCode", "vendor": "SST", "binary": "opencode", "color": "#211e1e",
+                 "efforts": ["minimal", "low", "medium", "high", "max"],
+                 "install": {"kind": "npm", "package": "opencode-ai"},
+                 "auth": {"env": ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY"],
+                          "files": [".local/share/opencode/auth.json"]},
+                 "login": "opencode auth login", "models_hint": "provider/model, e.g. anthropic/claude-sonnet-5",
+                 "docs": "https://opencode.ai/docs/cli/"},
+    "kilo": {"label": "Kilo Code", "vendor": "Kilo", "binary": "kilo", "color": "#f8f675",
+             "efforts": ["minimal", "low", "medium", "high", "max"],
+             "install": {"kind": "npm", "package": "@kilocode/cli"},
+             "auth": {"env": ["KILO_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY"],
+                      "files": [".local/share/kilo/auth.json"]},
+             "login": "kilo auth login", "models_hint": "provider/model, e.g. kilo/anthropic/claude-sonnet-5",
+             "docs": "https://kilo.ai/docs/cli"},
+    "copilot": {"label": "GitHub Copilot", "vendor": "GitHub", "binary": "copilot", "color": "#000000",
+                "efforts": ["low", "medium", "high"],
+                "install": {"kind": "npm", "package": "@github/copilot"},
+                "auth": {"env": ["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"],
+                         "files": [".copilot/config.json"]},
+                "login": "copilot login   (answer y to store the token in plain text)", "models_hint": "e.g. claude-sonnet-5, gpt-5",
+                "docs": "https://docs.github.com/copilot/how-tos/use-copilot-agents/use-copilot-cli"},
+    "cline": {"label": "Cline", "vendor": "Cline", "binary": "cline", "color": "#000000",
+              "efforts": ["low", "medium", "high"], "resume": False,
+              "install": {"kind": "npm", "package": "cline"},
+              "auth": {"files": [".cline/data/settings/providers.json"]},
+              "login": "cline auth --provider anthropic --apikey <key> --modelid claude-sonnet-5",
+              "models_hint": "provider:model, e.g. anthropic:claude-sonnet-5",
+              "docs": "https://docs.cline.bot/cline-cli/overview"},
+    "qwen": {"label": "Qwen Code", "vendor": "Alibaba", "binary": "qwen", "color": "#615ced",
+             "efforts": [],
+             "install": {"kind": "npm", "package": "@qwen-code/qwen-code"},
+             "auth": {"env": ["OPENAI_API_KEY", "DASHSCOPE_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"],
+                      "files": [".qwen/settings.json"]},
+             "login": "qwen   (then choose an API provider)", "models_hint": "e.g. qwen3-coder-plus",
+             "docs": "https://qwenlm.github.io/qwen-code-docs/"},
+    "amp": {"label": "Amp", "vendor": "Amp", "binary": "amp", "color": "#f34e3f",
+            "efforts": ["low", "medium", "high", "ultra"],
+            "install": {"kind": "npm", "package": "@ampcode/cli"},
+            "auth": {"env": ["AMP_API_KEY"], "files": [".local/share/amp/secrets.json"]},
+            "login": "amp login", "models_hint": "Amp picks the model; effort sets its mode",
+            "docs": "https://ampcode.com/manual"},
+    "cursor": {"label": "Cursor", "vendor": "Anysphere", "binary": "cursor-agent", "color": "#000000",
+               "efforts": ["low", "medium", "high"],
+               # The script installs under $HOME/.local; point it at Relay's agents folder and link the binary.
+               "install": {"kind": "script", "command": "curl -fsS https://cursor.com/install | HOME=\"$PREFIX\" bash && ln -sf \"$PREFIX/.local/bin/cursor-agent\" \"$BIN_DIR/cursor-agent\""},
+               "auth": {"env": ["CURSOR_API_KEY", "CURSOR_AUTH_TOKEN"], "files": [".config/cursor/auth.json"]},
+               "login": "cursor-agent login", "models_hint": "e.g. gpt-5, sonnet-4.5",
+               "docs": "https://cursor.com/docs/cli/overview"},
+    "crush": {"label": "Crush", "vendor": "Charm", "binary": "crush", "color": "#6b50ff",
+              "efforts": ["low", "medium", "high"],
+              "install": {"kind": "npm", "package": "@charmland/crush"},
+              "auth": {"env": ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "HYPER_API_KEY"],
+                       "files": [".local/share/crush/crush.json", ".config/crush/crush.json"]},
+              "login": "crush login", "models_hint": "provider/model, e.g. anthropic/claude-sonnet-5",
+              "docs": "https://github.com/charmbracelet/crush"},
+    "goose": {"label": "Goose", "vendor": "Block", "binary": "goose", "color": "#000000",
+              "efforts": [],
+              "install": {"kind": "script", "command": "curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh | CONFIGURE=false GOOSE_BIN_DIR=\"$BIN_DIR\" bash"},
+              "auth": {"env": ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "GOOGLE_API_KEY"],
+                       "files": [".config/goose/config.yaml"]},
+              "login": "goose configure", "models_hint": "provider:model, e.g. anthropic:claude-sonnet-5, or a model for GOOSE_PROVIDER",
+              "docs": "https://block.github.io/goose/docs/guides/goose-cli-commands"},
+    "aider": {"label": "Aider", "vendor": "Aider", "binary": "aider", "color": "#14b014",
+              "efforts": ["low", "medium", "high"], "edit_only": True,
+              "install": {"kind": "pip", "package": "aider-chat"},
+              "auth": {"env": ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "DEEPSEEK_API_KEY"],
+                       "files": [".aider/oauth-keys.env"]},
+              "login": "set an API key under Configure", "models_hint": "e.g. sonnet, gpt-5, openrouter/…",
+              "docs": "https://aider.chat/docs/usage.html"},
+    "continue": {"label": "Continue", "vendor": "Continue", "binary": "cn", "color": "#000000",
+                 "efforts": [],
+                 "install": {"kind": "npm", "package": "@continuedev/cli"},
+                 "auth": {"env": ["ANTHROPIC_API_KEY"],  # cn only auto-configures from this key; others need config.yaml
+                          "files": [".continue/config.yaml", ".continue/auth.json"]},
+                 "login": "cn   (then type /login)", "models_hint": "blank = model from ~/.continue/config.yaml; or a Continue Hub slug owner/model",
+                 "docs": "https://docs.continue.dev/cli/overview"},
+}
+AGENTS.update(PACK_AGENTS)
+for _id, _a in AGENTS.items():
+    _a["logo"] = f"agents/{_id}.svg"  # web/agents, see SOURCES.md there
 
 # Editable model catalog shown in the model pickers (Settings → Agents). Free text is always allowed too.
 DEFAULT_MODELS = {
     "codex": ["gpt-6-astra", "gpt-5.3-codex", "gpt-5.2-codex", "gpt-5.1-codex-max", "gpt-5.1-codex-mini"],
     "claude": ["fable[1m]", "opus", "sonnet", "haiku", "claude-fable-5-1", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"],
     "gemini": ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-3-pro-preview"],
+    "opencode": ["anthropic/claude-sonnet-5", "anthropic/claude-opus-5", "openai/gpt-5.3-codex"],
+    "kilo": ["kilo/anthropic/claude-sonnet-5", "kilo/openai/gpt-5.3-codex"],
+    "copilot": ["claude-sonnet-5", "gpt-5.3-codex", "gpt-5"],
+    "cline": ["anthropic:claude-sonnet-5", "openai:gpt-5.3-codex"],
+    "qwen": ["qwen3-coder-plus", "qwen3-coder-flash"],
+    "amp": [],
+    "cursor": ["auto", "sonnet-4.5", "gpt-5"],
+    "crush": ["anthropic/claude-sonnet-5", "openai/gpt-5.3-codex"],
+    "goose": ["claude-sonnet-5", "gpt-5.3-codex"],
+    "aider": ["sonnet", "opus", "gpt-5"],
+    "continue": [],
 }
 
 ROLES = ["supervisor", "worker", "reviewer"]
@@ -240,7 +340,9 @@ def _migrate(cfg: dict) -> dict:
         out["agent_defaults"][a] = d
         out["model_recent"].setdefault(a, [])
         if not isinstance(out["models"].get(a), list):
-            out["models"][a] = list(DEFAULT_MODELS[a])
+            out["models"][a] = list(DEFAULT_MODELS.get(a, []))
+        out["pricing"].setdefault(a, {"input": 0.0, "cached": 0.0, "output": 0.0})
+        out["subagent_models"].setdefault(a, "")
     out["saved_prompts"] = _clean_prompts(out.get("saved_prompts"))
     out["build"] = BUILD
     return out
