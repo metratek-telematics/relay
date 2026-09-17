@@ -238,6 +238,17 @@ class Manager:
             t["repos"] = repos
         if isinstance(payload.get("connectors"), list):  # None keeps the repository's default connectors
             t["connectors"] = [str(n) for n in payload["connectors"]][:50]
+        if payload.get("critical"):
+            t["critical"] = True  # autopilot never explores other teams on it
+        if payload.get("team_locked"):
+            t["team_locked"] = True  # the team was chosen by hand: autopilot's auto-pick leaves it alone
+        if payload.get("team_source") in ("manual", "recommended"):
+            t["team_source"] = payload["team_source"]
+        try:
+            # Pre-flight forecast (risk + recommended team), compared with the outcome later (orchestrator/learning_engine.py).
+            t["preflight"] = self.learning.engine.preflight_record(t, payload)
+        except Exception:
+            traceback.print_exc()
         self.store.add(t)
         C.remember_repo(repo)
         self.config_changed()

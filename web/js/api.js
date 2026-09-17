@@ -129,6 +129,16 @@ export const api = {
   rejectLesson: (id) => post(`/api/lessons/${encodeURIComponent(id)}/reject`),
   updateLesson: (id, body) => patch(`/api/lessons/${encodeURIComponent(id)}`, body),
   deleteLesson: (id) => del(`/api/lessons/${encodeURIComponent(id)}`),
+  // Learning engine (web_learning.py)
+  learning: () => get("/api/learning"),
+  learningPreflight: (body) => post("/api/learning/preflight", body),
+  learningProposal: (id, action) => post(`/api/learning/proposals/${encodeURIComponent(id)}/${action}`),
+  learningRetire: (id, reason) => post(`/api/learning/lessons/${encodeURIComponent(id)}/retire`, { reason }),
+  learningPin: (repo, team_key) => post("/api/learning/pin", { repo, team_key }),
+  learningBackfill: () => post("/api/learning/backfill"),
+  playbookSeed: (repo, repo_path) => post("/api/learning/playbook/seed", { repo, repo_path }),
+  playbookRefresh: (repo) => post("/api/learning/playbook/refresh", { repo }),
+  playbookEdit: (body) => patch("/api/learning/playbook", body),
 };
 
 // ---------------------------------------------------------------------------- SSE

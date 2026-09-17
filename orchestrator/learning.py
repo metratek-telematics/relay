@@ -20,6 +20,7 @@ import time
 from datetime import datetime, timedelta
 
 from . import github, lessons, retro, scorecard
+from .learning_engine import LearningEngine
 from .util import RUNTIME_DIR
 
 log = logging.getLogger("relay.learning")
@@ -33,6 +34,7 @@ class Learning:
         self._retro_thread = None
         self._started = False
         self._lock = threading.Lock()
+        self.engine = LearningEngine(manager)  # outcomes, recommendations, risk, autopsies, lesson effects, playbooks
 
     # ------------------------------------------------------------ lifecycle
     def start(self):
@@ -73,6 +75,10 @@ class Learning:
                 retro.run(self.m, tid)
             except Exception:
                 log.exception("retrospective for %s failed", tid)
+            try:
+                self.engine.after_retro(tid)
+            except Exception:
+                log.exception("learning after the retrospective of %s failed", tid)
 
     # ------------------------------------------------------------ scorecards
     def score(self, tid: str, messages=None, pr=None) -> dict | None:
@@ -87,6 +93,7 @@ class Learning:
         card = scorecard.compute(t, messages, pr=pr if pr is not None else ((prev.get("pr") or None) if same_run else None))
         self.cards.put(card)
         self.m.store.update(tid, touch=False, scorecard=card)
+        self.engine.record(tid, card)  # the outcome dataset, and an autopsy when the run failed or scored low
         self.m.emit_task(tid)
         return card
 
@@ -119,13 +126,49 @@ class Learning:
             card = self.cards.get(t["id"])
             if not card or not card.get("pr") or card.get("finished_at") != t.get("finished_at"):
                 continue
+            if not force_tid and card["pr"].get("state") == "merged" and self._revert_due(card, cfg):
+                n += self.check_revert(t["id"], card, cfg)
+                continue
             if not force_tid and ((card.get("finished_at") or "") < cutoff or card["pr"].get("state") in ("merged", "closed")):
                 continue
             pr = scorecard.fetch_pr(card, cfg, github.gh_json)
             if pr != card.get("pr"):
-                self.score(t["id"], pr=pr)
+                card = self.score(t["id"], pr=pr) or card
                 n += 1
+            if pr.get("state") == "merged":
+                n += self.check_revert(t["id"], card, cfg)
         return n
+
+    def _revert_due(self, card: dict, cfg: dict) -> bool:
+        pr = card.get("pr") or {}
+        days = int(((cfg.get("learning") or {}).get("revert_window_days")) or 14)
+        if pr.get("reverted") or not pr.get("merged_at"):
+            return False
+        try:
+            merged = datetime.fromisoformat(pr["merged_at"].replace("Z", "+00:00")).replace(tzinfo=None)
+        except ValueError:
+            return False
+        if datetime.utcnow() - merged > timedelta(days=days + 1):
+            return False
+        last = pr.get("revert_checked_at") or ""
+        return not last or last < (datetime.now() - timedelta(hours=6)).isoformat(timespec="seconds")
+
+    def check_revert(self, tid: str, card: dict, cfg: dict) -> int:
+        """A merged pull request reverted on its base branch within the window loses its success."""
+        days = int(((cfg.get("learning") or {}).get("revert_window_days")) or 14)
+        try:
+            hit = scorecard.fetch_revert(card, github.gh_json, days)
+        except Exception as e:
+            log.info("revert check for %s: %s", tid, e)
+            return 0
+        if hit is None:
+            return 0
+        pr = {**(card.get("pr") or {}), "revert_checked_at": datetime.now().isoformat(timespec="seconds")}
+        if hit:
+            pr.update(reverted=True, revert_sha=hit.get("sha"), revert_subject=hit.get("subject"))
+            self.m.timeline(tid, "github", "Pull request reverted", hit.get("subject") or "")
+        self.score(tid, pr=pr)
+        return 1 if hit else 0
 
     def _background(self):
         try:
@@ -134,11 +177,21 @@ class Learning:
                 log.info("backfilled %d scorecard(s)", done)
         except Exception:
             log.exception("scorecard backfill failed")
+        try:
+            done = self.engine.backfill()
+            if done:
+                log.info("backfilled %d outcome record(s)", done)
+        except Exception:
+            log.exception("outcome backfill failed")
         while True:
             try:
                 self.refresh_prs()
             except Exception:
                 log.exception("pull request refresh failed")
+            try:
+                self.engine.maybe_refresh_playbooks()
+            except Exception:
+                log.exception("playbook refresh failed")
             minutes = max(5, int(self.m.cfg().get("scorecard_refresh_minutes") or 30))
             time.sleep(minutes * 60)
 

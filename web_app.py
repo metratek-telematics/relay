@@ -97,6 +97,9 @@ def broadcast(typ, payload):
 
 manager = Manager(broadcast)
 
+import web_learning  # noqa: E402  learning engine API (recommendations, risk, proposals, playbooks)
+app.register_blueprint(web_learning.init(manager, broadcast))
+
 
 @app.after_request
 def no_cache(resp):
