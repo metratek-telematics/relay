@@ -2,7 +2,8 @@
    Only design tokens from styles.css; every class is prefixed lx- so the module can move as a whole. */
 
 /* ---------- page */
-.lx-page { display: grid; gap: 16px; align-content: start; }
+.lx-page { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-content: start; }
+.lx-page > * { min-width: 0; }
 .lx-page .page-head { margin-bottom: 4px; flex-wrap: wrap; }
 .lx-page .page-head p { max-width: 78ch; }
 .lx-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }

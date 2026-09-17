@@ -169,7 +169,7 @@ class LearningEngine:
                     "started_at": card.get("started_at"), "finished_at": card.get("finished_at"), "template": card.get("template"),
                     "error": card.get("failure_detail") or "", "retro": parse_retro_md(_read(RUNTIME_DIR / tid / "RETRO.md") or "")}
             res = None
-            if autopsy.needs_autopsy(card, int(self.settings().get("autopsy_score_threshold") or 60)):
+            if autopsy.needs_autopsy(card, int(self.settings().get("autopsy_score_threshold") or 60), task):
                 res = self.diagnose(tid, task, card, msgs, persist=False)
             rec = outcomes.build({**task, "autopsy": res}, card, msgs)
             rec.update(deleted=True, lessons_known=False)
@@ -180,7 +180,7 @@ class LearningEngine:
     # ------------------------------------------------------------ autopsy + proposals
     def diagnose(self, tid: str, task: dict, card: dict, messages=None, persist: bool = True) -> dict | None:
         s = self.settings()
-        if not autopsy.needs_autopsy(card, int(s.get("autopsy_score_threshold") or 60)):
+        if not autopsy.needs_autopsy(card, int(s.get("autopsy_score_threshold") or 60), task):
             if task.get("autopsy") and persist:
                 self.m.store.update(tid, touch=False, autopsy=None)
             return None
@@ -604,6 +604,9 @@ class LearningEngine:
         def bucket(rows):
             n = len(rows)
             return {"n": n, "success_rate": round(sum(1 for r in rows if r.get("success")) / n, 3) if n else None,
+                    # clean: a success with a score of 60+ and every required criterion proven (outcomes.failed)
+                    "clean_rate": round(sum(1 for r in rows if not outcomes.failed(r)) / n, 3) if n else None,
+                    "blocked_avg": round(sum(int(r.get("blocked_checks") or 0) for r in rows) / n, 2) if n else None,
                     "avg_score": round(sum(r.get("score") or 0 for r in rows) / n, 1) if n else None,
                     "median_cost": round(sorted(float(r.get("cost_usd") or 0) for r in rows)[n // 2], 2) if n else None,
                     "first_pass": (lambda fp: round(sum(1 for r in fp if r["verification"]["first_ok"]) / len(fp), 2) if fp else None)(

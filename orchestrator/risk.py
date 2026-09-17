@@ -4,7 +4,7 @@
 
 base
     The similarity-weighted failure rate of past runs (orchestrator/recommend.py weights; a run
-    "failed" when it was not a success or scored under 60), shrunk towards the global failure rate
+    "failed" when it was not a success, scored under 60 or left a required criterion unproven), shrunk towards the global failure rate
     with K = 4, and towards 0.25 before there is any history.
 
 factors (each has an id, a weight in log-odds, a sentence of evidence and mitigations)

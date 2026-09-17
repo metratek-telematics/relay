@@ -25,7 +25,8 @@ Relevance selection
                     · +1.5 category suits the task type · +0.8 per word shared with the request (max 3)
                     · +1.0 per component or path mentioned in both (max 2) · +1.0 proven helpful · −3 flagged as hurting
     Lessons scoring under 1.5 are left out: a repository lesson needs one more reason than its repository,
-    a global one needs two. The rest go in best first, up to the limit. Each chosen lesson carries its reason.
+    a global one needs a category that suits the task or real overlap with the request. The rest go in best
+    first, up to the limit. Each chosen lesson carries its reason (`lessons_selection` on the task).
 
 Support (auto-approval)
     When retrospectives on different tasks propose the same or nearly the same lesson (word overlap

@@ -39,7 +39,7 @@ _MODULE = re.compile(r"(?:ModuleNotFoundError|ImportError): No module named '([A
 _NODE_MODULE = re.compile(r"Cannot find module '([^']+)'")
 _NOT_FOUND = re.compile(r"(?:^|\s)([A-Za-z0-9_.-]+): (?:command )?not found", re.M)
 _REQ_WORDS = re.compile(r"requirement|unclear|ambigu|misunderst|scope|expectation|what the (?:user|owner) wanted|clarif", re.I)
-_LIB_LOOSE = re.compile(r"\b(lib[A-Za-z0-9_+-]+\.so(?:\.[0-9]+)*)\b(?=[^\n]{0,40}?\b(?:missing|not found|unresolved|could not be loaded)\b)|"
+_LIB_LOOSE = re.compile(r"\b(lib[A-Za-z0-9_+-]+\.so(?:\.[0-9]+)*)\b(?=[^\n]{0,40}?\b(?:missing|not found|not installed|not available|unresolved|could not be loaded)\b)|"
                         r"\b(?:missing|unresolved)\s+(lib[A-Za-z0-9_+-]+\.so(?:\.[0-9]+)*)", re.I)
 _RATE = re.compile(r"rate.?limit|usage limit|quota|too many requests|\b429\b|overloaded", re.I)
 
@@ -56,9 +56,17 @@ def libraries(text: str) -> list[dict]:
     return libs
 
 
-def needs_autopsy(card: dict, threshold: int = 60) -> bool:
+def unproven_criteria(task: dict | None) -> list[dict]:
+    """Required acceptance criteria that were neither met nor waived when the run ended."""
+    return [c for c in (task or {}).get("acceptance") or [] if c.get("required", True) and c.get("status") not in ("met", "waived")]
+
+
+def needs_autopsy(card: dict, threshold: int = 60, task: dict | None = None) -> bool:
+    """Failed, stopped after real work, scored low, or delivered blind: a blocked check or an unproven required criterion."""
     if not card:
         return False
+    if card.get("outcome") in ("delivered_pr", "done_no_pr") and (int(card.get("blocked_checks") or 0) or unproven_criteria(task)):
+        return True
     if card.get("outcome") == "failed":
         return True
     if card.get("outcome") == "stopped":
@@ -133,6 +141,11 @@ def classify(card: dict, task: dict, messages: list[dict], text: str = "", retro
     env_blocked = [b for b in blocked if re.search(r"environment|system package|did not run|could not run|setup|services", f"{b.get('check')} {b.get('reason')} {b.get('impact')}", re.I)]
     if env_blocked:
         hit("environment", 1.5 + 0.5 * min(3, len(env_blocked)), f"{len(env_blocked)} check(s) blocked by the environment")
+    unproven = unproven_criteria(task)
+    if unproven and (libs or mods or node_mods or cmds or env_blocked):
+        hit("environment", 1, f"{len(unproven)} required criteria delivered unproven while the environment blocked checks")
+    elif unproven:
+        hit("agent_capability", 1.5, f"{len(unproven)} required criteria delivered unproven")
     if card.get("failure_category") == "setup":
         hit("environment", 2, "worktree or environment setup failed")
     if (task.get("environment") or {}).get("ok") is False:

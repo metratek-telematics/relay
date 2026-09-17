@@ -39,7 +39,7 @@ ESCALATIONS = {"Acceptance criteria not proven", "A blocking finding keeps comin
                "Work-package budget reached", "Review rounds used up", "Verification still failing"}
 
 # Signals that decide whether a new line is worth appending (anything else is bookkeeping).
-_SIGNAL_KEYS = ("outcome", "failure_category", "score", "success", "post_merge", "lessons_injected", "autopsy_cause")
+_SIGNAL_KEYS = ("outcome", "failure_category", "score", "success", "post_merge", "lessons_injected", "autopsy_cause", "acceptance_unmet")
 
 
 # ----------------------------------------------------------------------------- helpers
@@ -192,6 +192,7 @@ def build(task: dict, card: dict, messages: list[dict] | None = None) -> dict:
         },
         "verification": card.get("verification") or {},
         "blocked_checks": int(card.get("blocked_checks") or 0),
+        "acceptance_unmet": sum(1 for c in task.get("acceptance") or [] if c.get("required", True) and c.get("status") not in ("met", "waived")),
         "blocked_action_required": int(card.get("blocked_action_required") or 0),
         "e2e": {"runs": len(e2e), "final": [{"name": k, "passed": bool(v.get("passed"))} for k, v in last_e2e.items()][:10],
                 "final_ok": all(v.get("passed") for v in last_e2e.values()) if last_e2e else None},
@@ -234,8 +235,9 @@ def _prediction(task: dict):
 
 
 def failed(rec: dict, threshold: int = 60) -> bool:
-    """For risk and calibration: a run counts as failed when it was not a success or scored under the threshold."""
-    return (not rec.get("success")) or int(rec.get("score") or 0) < threshold
+    """For risk and calibration: a run counts as failed when it was not a success, scored under the threshold,
+    or was delivered with required acceptance criteria still unproven."""
+    return (not rec.get("success")) or int(rec.get("score") or 0) < threshold or int(rec.get("acceptance_unmet") or 0) > 0
 
 
 # ----------------------------------------------------------------------------- store

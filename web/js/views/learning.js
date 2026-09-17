@@ -58,7 +58,7 @@ export function mountLearning(main) {
         ${(p.evidence || []).length ? `<div class="lx-evidence">${icon("eye", "sm")}<span>${esc(p.evidence.join(" · "))}</span></div>` : ""}
         <div class="lx-prop-meta muted">${esc(p.repo_label || p.repo || "")}${p.task_id ? ` · from <a href="#/task/${esc(p.task_id)}">${esc(p.task_name || p.task_id)}</a>` : ""}${(p.task_ids || []).length > 1 ? ` · seen in ${p.task_ids.length} runs` : ""} · ${esc(timeAgo(p.created_at))}
           ${p.status === "applied" ? ` · <b>applied</b> ${esc(timeAgo(p.applied_at))}: ${esc(p.applied_result || "")}` : ""}${p.status === "dismissed" ? " · dismissed" : ""}${p.recurred_after_apply ? ` · <span class="tone-red">recurred ${p.recurred_after_apply}× after applying</span>` : ""}</div>
-        ${imp && (imp.before.n || imp.after.n) ? `<div class="lx-impact">Before: <b>${num(imp.before.avg_score)}</b> avg, ${pct(imp.before.success_rate)} success (n ${imp.before.n}) → after: <b>${num(imp.after.avg_score)}</b> avg, ${pct(imp.after.success_rate)} success (n ${imp.after.n})</div>` : ""}
+        ${imp && (imp.before.n || imp.after.n) ? `<div class="lx-impact" title="Clean: delivered, scored 60 or more, and every required acceptance criterion proven">Runs here before: <b>${pct(imp.before.clean_rate)}</b> clean, ${num(imp.before.avg_score)} avg, ${imp.before.blocked_avg ?? "—"} blocked checks (n ${imp.before.n}) → after: <b>${pct(imp.after.clean_rate)}</b> clean, ${num(imp.after.avg_score)} avg, ${imp.after.blocked_avg ?? "—"} blocked checks (n ${imp.after.n})</div>` : ""}
       </div>
       ${open ? `<div class="lx-prop-act"><button class="btn sm primary" data-apply="${esc(p.id)}">${icon("zap")}Apply</button><button class="btn sm ghost" data-dismiss="${esc(p.id)}">Dismiss</button></div>` : ""}
     </li>`;
@@ -105,7 +105,7 @@ export function mountLearning(main) {
     return `<div class="card"><div class="card-head"><div><h3>Recommendations and calibration</h3><p class="card-sub">Each task's pre-flight forecast compared with how it went</p></div>
         ${c.brier !== null ? `<span class="badge ${c.brier <= c.baseline_brier ? "green" : "amber"}" title="Brier score: mean squared error of the predicted failure chance (0 is perfect); baseline always predicts the average">Brier ${c.brier} · baseline ${c.baseline_brier}</span>` : ""}</div>
       <div class="card-body stack" style="gap:14px">
-        ${c.levels.length ? `<table class="lx-table"><thead><tr><th>Predicted risk</th><th>Runs</th><th>Predicted failure</th><th>Actual failure</th></tr></thead><tbody>${c.levels.map((l) => `<tr><td><span class="badge ${{ low: "green", medium: "amber", high: "red" }[l.level]}">${esc(l.level)}</span></td><td>${l.n}</td><td>${pct(l.predicted)}</td><td><b>${pct(l.actual)}</b></td></tr>`).join("")}</tbody></table>`
+        ${c.levels.length ? `<div class="lx-scroll"><table class="lx-table"><thead><tr><th>Predicted risk</th><th>Runs</th><th>Predicted failure</th><th>Actual failure</th></tr></thead><tbody>${c.levels.map((l) => `<tr><td><span class="badge ${{ low: "green", medium: "amber", high: "red" }[l.level]}">${esc(l.level)}</span></td><td>${l.n}</td><td>${pct(l.predicted)}</td><td><b>${pct(l.actual)}</b></td></tr>`).join("")}</tbody></table></div>`
           : `<div class="chart-empty">${c.predictions ? "" : "No finished task had a forecast yet. Tasks created from now on are forecast when they are created."}</div>`}
         ${rec ? `<div class="lx-followed">Recommended team used: <b>${rec.followed}</b> run(s), ${num(rec.followed_avg)} avg · another team: <b>${rec.ignored}</b> run(s), ${num(rec.ignored_avg)} avg</div>` : ""}
         ${recent.length ? `<div class="lx-scroll"><table class="lx-table"><thead><tr><th>Task</th><th>Risk</th><th>Recommended</th><th>Team used</th><th>Score</th></tr></thead><tbody>${recent.slice(0, 12).map((r) => `<tr>
@@ -144,6 +144,7 @@ export function mountLearning(main) {
       <div class="lx-kpis">
         <div class="lx-kpi"><b>${data.records}</b><span>runs recorded</span></div>
         <div class="lx-kpi"><b>${pct(o.success_rate)}</b><span>success</span></div>
+        <div class="lx-kpi" title="Delivered, scored 60 or more, and every required acceptance criterion proven"><b>${pct(o.clean_rate)}</b><span>clean (all criteria proven)</span></div>
         <div class="lx-kpi"><b class="tone-${tone(o.avg_score)}">${num(o.avg_score)}</b><span>avg score</span></div>
         <div class="lx-kpi"><b>${pct(o.first_pass)}</b><span>verification first pass</span></div>
         <div class="lx-kpi"><b class="${open.length ? "tone-amber" : ""}">${open.length}</b><span>open proposals</span></div>
@@ -154,7 +155,7 @@ export function mountLearning(main) {
           ${done.length ? `<details class="lx-done"><summary>${done.length} applied or dismissed</summary><ul class="lx-props">${done.slice(0, 30).map(proposalCard).join("")}</ul></details>` : ""}</div></div>
       <div class="card"><div class="card-head"><div><h3>Success by week</h3><p class="card-sub">Share of runs delivered and not rejected or reverted, last 12 weeks</p></div></div><div class="card-body">${trend()}</div></div>
       <div class="lx-grid">
-        <div class="card"><div class="card-head"><h3>By repository</h3></div><div class="card-body">${bars(data.by_repo)}</div></div>
+        <div class="card"><div class="card-head"><h3>By repository</h3></div><div class="card-body">${bars(data.by_repo.map((r) => ({ ...r, label: String(r.label || r.key).split("/").pop() })))}</div></div>
         <div class="card"><div class="card-head"><h3>By team</h3></div><div class="card-body">${bars(data.by_team)}</div></div>
         <div class="card"><div class="card-head"><h3>By task type</h3></div><div class="card-body">${bars(data.by_type)}</div></div>
         <div class="card"><div class="card-head"><h3>Root causes</h3><span class="muted">autopsies</span></div><div class="card-body">${bars(data.causes)}</div></div>
