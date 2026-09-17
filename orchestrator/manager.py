@@ -172,6 +172,8 @@ class Manager:
         }
         if parent:
             t["follow_up_of"] = parent
+        if isinstance(payload.get("connectors"), list):  # None keeps the repository's default connectors
+            t["connectors"] = [str(n) for n in payload["connectors"]][:50]
         self.store.add(t)
         C.remember_repo(repo)
         self.config_changed()
@@ -189,6 +191,8 @@ class Manager:
         for k in ("name", "requirements", "priority", "tags", "archived"):
             if k in patch:
                 allowed[k] = patch[k]
+        if "connectors" in patch and (patch["connectors"] is None or isinstance(patch["connectors"], list)):
+            allowed["connectors"] = patch["connectors"]
         if "workflow" in patch and isinstance(patch["workflow"], dict):
             wf = dict(t.get("workflow") or {})
             for k in ("max_turns", "max_review_rounds", "verify_mode", "approval_before_delivery", "allow_agent_questions"):

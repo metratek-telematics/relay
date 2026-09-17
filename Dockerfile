@@ -63,7 +63,10 @@ RUN python3 -m venv /opt/venv \
 COPY --chown=${UID}:${GID} . .
 RUN chmod +x /app/docker/entrypoint.sh /app/run.sh \
  && printf '#!/bin/sh\nexec node /app/tools/screenshot.cjs "$@"\n' > /usr/local/bin/relay-screenshot \
- && chmod 755 /usr/local/bin/relay-screenshot
+ && chmod 755 /usr/local/bin/relay-screenshot \
+ && chmod 755 /app/tools/bin/relay-connect \
+ && ln -sf /app/tools/bin/relay-connect /usr/local/bin/relay-connect
+# relay-connect: agents reach the environments behind the code through Relay (see orchestrator/connectors.py).
 
 ENV PATH=/opt/venv/bin:$PATH \
     HOME=/home/relay \

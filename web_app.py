@@ -969,6 +969,111 @@ def worktrees_cleanup():
     return jsonify(repos.cleanup(body().get("paths") or [], manager.tasks, task_busy))
 
 
+# ----------------------------------------------------------------------------- connectors
+from orchestrator import connectors  # noqa: E402
+
+
+@app.get("/api/connectors")
+def connectors_list():
+    return jsonify({"connectors": [connectors.public(c) for c in connectors.load_all()], "docker": connectors.docker_status(),
+                    "types": connectors.TYPES, "environments": connectors.ENVIRONMENTS, "defaults": connectors.DEFAULTS})
+
+
+@app.post("/api/connectors")
+def connectors_save():
+    try:
+        return jsonify(connectors.public(connectors.save(body())))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.delete("/api/connectors/<name>")
+def connectors_delete(name):
+    connectors.delete(name)
+    return jsonify({"ok": True})
+
+
+@app.post("/api/connectors/<name>/test")
+def connectors_test(name):
+    c = connectors.get(name)
+    if not c:
+        return jsonify({"error": f"No connector named {name}"}), 404
+    res = connectors.test(c)
+    res.pop("screenshot_png_base64", None)
+    connectors.record_call({"connector": name, "type": c["type"], "environment": c["environment"], "operation": "test",
+                            "status": res.get("call_status"), "duration": res.get("duration"), "summary": res.get("summary"), "source": "settings"})
+    return jsonify(res)
+
+
+@app.get("/api/connectors/calls")
+def connectors_calls():
+    return jsonify({"calls": connectors.recent_calls(request.args.get("name") or None, int(request.args.get("limit") or 50))})
+
+
+@app.get("/api/connectors/for-repo")
+def connectors_for_repo():
+    path = request.args.get("path") or ""
+    return jsonify({"connectors": [connectors.public(c) for c in connectors.load_all()],
+                    "defaults": connectors.default_names(path) if path else [],
+                    "saved": connectors.repo_defaults(path) if path else None})
+
+
+@app.put("/api/connectors/repo-defaults")
+def connectors_repo_defaults():
+    b = body()
+    path = repo_arg(b.get("path"))
+    return jsonify({"saved": connectors.set_repo_defaults(path, b.get("names")), "defaults": connectors.default_names(path)})
+
+
+def _connect_scope():
+    """The task token an agent sent. Raises PermissionError."""
+    return connectors.check_token(request.headers.get("Authorization") or "")
+
+
+@app.get("/api/connect")
+def connect_list():
+    try:
+        scope = _connect_scope()
+    except PermissionError as e:
+        return jsonify({"error": str(e)}), 401
+    rows = [connectors.public(c) for c in connectors.load_all() if c["name"] in scope["names"]]
+    return jsonify({"connectors": [{k: c[k] for k in ("name", "type", "environment", "access", "description", "target")} for c in rows]})
+
+
+@app.post("/api/connect/<name>/<op>")
+def connect_call(name, op):
+    """An agent's call through relay-connect: performed here, recorded in the task."""
+    try:
+        scope = _connect_scope()
+    except PermissionError as e:
+        return jsonify({"error": str(e), "call_status": "refused"}), 401
+    tid = scope["tid"]
+    c = connectors.get(name)
+    args = body()
+    if not c or name not in scope["names"]:
+        res = {"ok": False, "refused": True, "call_status": "refused", "connector": name, "environment": (c or {}).get("environment", "?"),
+               "type": (c or {}).get("type", "?"), "operation": connectors.operation_label(op, args), "duration": 0,
+               "summary": "refused", "output": f"Connector {name} is not available to this task", "error": "not in scope"}
+        code = 403
+    else:
+        res = connectors.run(c, op, args)
+        code = 403 if res.get("call_status") == "refused" else 200
+    runner = manager.runners.get(tid)
+    cur = (runner.current if runner else {}) or {}
+    fields = {"role": cur.get("role") or "orchestrator", "agent": cur.get("agent"), "kind": "connector", "connector": name,
+              "ctype": res.get("type"), "environment": res.get("environment"), "operation": res.get("operation"),
+              "status": res.get("call_status"), "duration": res.get("duration"), "summary": res.get("summary"),
+              "output": (res.get("output") or "")[:4000], "turn": (manager.get(tid) or {}).get("current_turn")}
+    try:
+        runner.msg(**fields) if runner else manager.message(tid, fields)
+    except Exception:
+        app.logger.exception("Could not record a connector call")
+    connectors.record_call({"connector": name, "type": res.get("type"), "environment": res.get("environment"), "operation": res.get("operation"),
+                            "status": res.get("call_status"), "duration": res.get("duration"), "summary": res.get("summary"),
+                            "task": tid, "role": fields["role"], "agent": fields["agent"]})
+    return jsonify(res), code
+
+
 # ----------------------------------------------------------------------------- errors
 @app.errorhandler(404)
 def not_found(exc):

@@ -1,6 +1,7 @@
 // Repository environment editor: variables, local config files, setup, services and the checks that prove the work.
 import { $, $$, esc, icon, toast, modal } from "../ui.js";
 import { api } from "../api.js";
+import { mountRepoConnectors } from "./connectors.js";
 
 const MASK = "●●●●";
 const secretName = (n) => /PASS|SECRET|TOKEN|KEY|PWD|CREDENTIAL|AUTH|COOKIE|TOTP|PRIVATE/i.test(n || "");
@@ -38,6 +39,7 @@ export async function openRepoEnv(repo, { onSaved } = {}) {
     <div class="renv-sec"><div class="row between"><h3>Checks that prove the work</h3><button class="btn xs" id="reAddCheck">${icon("plus", "sm")}Add check</button></div>
       <p class="hint">Relay runs these itself after each work package. Required checks block delivery; optional ones are reported. Leave empty to detect them.</p>
       <div id="reChecks" class="stack" style="gap:6px">${env.checks.map(checkRow).join("")}</div></div>
+    <div class="renv-sec" id="reConnectors"></div>
     <div class="modal-actions"><span class="muted" style="margin-right:auto">${env.updated ? `Saved ${esc(new Date(env.updated).toLocaleString())}` : "Not saved yet"}</span><button class="btn" data-close>Cancel</button><button class="btn primary" id="reSave">Save</button></div>`, { wide: true });
 
   const bindDel = () => $$("[data-del]", m.body).forEach((b) => (b.onclick = () => b.closest(".renv-var,.renv-file,.renv-check").remove()));
@@ -48,6 +50,7 @@ export async function openRepoEnv(repo, { onSaved } = {}) {
   });
   const add = (id, html) => { $(id, m.body).insertAdjacentHTML("beforeend", html); bindDel(); bindSecret(); };
   bindDel(); bindSecret();
+  mountRepoConnectors($("#reConnectors", m.body), repo);
   $("#reAddVar", m.body).onclick = () => { add("#reVars", varRow()); $$("[data-vn]", m.body).pop().focus(); };
   $("#reAddFile", m.body).onclick = () => add("#reFiles", fileRow());
   $("#reAddCheck", m.body).onclick = () => add("#reChecks", checkRow());

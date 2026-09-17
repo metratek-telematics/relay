@@ -76,6 +76,20 @@ class Runner:
         self.log_file = Path(p)
         self.log_file.parent.mkdir(parents=True, exist_ok=True)
 
+    def set_agent_env(self, extra: dict):
+        """Variables every agent turn of this task gets (the connector token); RELAY_CONNECT_BIN is prepended to PATH."""
+        self._agent_env = dict(extra or {})
+
+    def _with_connect(self, env):
+        extra = getattr(self, "_agent_env", None)
+        if env is None or not extra:
+            return
+        for k, v in extra.items():
+            if k == "RELAY_CONNECT_BIN":
+                env["PATH"] = str(v) + os.pathsep + env.get("PATH", "")
+            else:
+                env[k] = str(v)
+
     def set_masker(self, fn):
         """Replace saved secret values in everything this run logs or shows."""
         self._mask = fn
@@ -270,6 +284,7 @@ class Runner:
                            + "\n\n--- Relay now says ---\n" + prompt)
         args, env, stdin_text, session = ad.build(sent_prompt, Path(cwd), cfg, model, session, Path(run_dir), role, effort=effort or "")
         _with_repo_env(env, cwd, override=False)
+        self._with_connect(env)
         _with_venv(env, cwd)
         ctx = TurnContext()
         tool_msgs: dict = {}

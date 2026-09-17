@@ -71,6 +71,17 @@ services:
       #   - ${HOST_HOME}/.npmrc:/home/relay/.npmrc:ro
       - ${RELAY_CACHE:-./.cache}/npm:/home/relay/.npm
 
+      # ---- Optional: logs and docker connectors (Settings -> Connectors) read container logs and
+      # state through the Docker socket. Not mounted by default. Mounting it gives Relay the Docker
+      # API of this host: ":ro" only stops the socket file being replaced, not API writes, so Relay
+      # itself limits every connector to the containers it lists and only restarts when allowed.
+      # Agents run inside this container as the same user, so they could open the socket directly
+      # and bypass those limits: only mount it on a host where that is acceptable.
+      # Relay's user also needs the socket's group:
+      #   - /var/run/docker.sock:/var/run/docker.sock:ro
+      # and, at the service level:
+      # group_add: ["${DOCKER_GID:-999}"]   # getent group docker | cut -d: -f3
+
     # Agents run shells, test suites and dev servers. Give them room.
     shm_size: "1gb"
     stop_grace_period: 30s

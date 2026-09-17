@@ -5,8 +5,9 @@ import { api } from "../api.js";
 import { workflowEditor } from "./newtask.js";
 import { NOTIFY_EVENTS, chime, permission, requestPermission, showDesktop } from "../notify.js";
 import { openShortcuts, keysFor } from "../shortcuts.js";
+import { mountConnectors } from "./connectors.js";
 
-const SECTIONS = [["workflow", "Workflow", "layers"], ["agents", "Agents", "bot"], ["budget", "Usage & budget", "gauge"], ["verification", "Verification", "shield"], ["git", "Git & GitHub", "github"], ["appearance", "Appearance", "sun"], ["notifications", "Notifications", "bell"], ["prompts", "Saved prompts", "message"], ["rules", "Rules", "docs"], ["about", "About", "info"]];
+const SECTIONS = [["workflow", "Workflow", "layers"], ["agents", "Agents", "bot"], ["budget", "Usage & budget", "gauge"], ["verification", "Verification", "shield"], ["git", "Git & GitHub", "github"], ["connectors", "Connectors", "zap"], ["appearance", "Appearance", "sun"], ["notifications", "Notifications", "bell"], ["prompts", "Saved prompts", "message"], ["rules", "Rules", "docs"], ["about", "About", "info"]];
 
 // Scorecards, retrospectives and lessons (orchestrator/learning.py).
 function learningCard(c) {
@@ -293,6 +294,8 @@ export function mountSettings(main, section) {
       renderNotifications(c);
     } else if (cur === "prompts") {
       renderPrompts(c);
+    } else if (cur === "connectors") {
+      mountConnectors(body);
     } else if (cur === "rules") {
       body.innerHTML = `<div class="card"><div class="card-head"><h3>Engineering rules</h3><span class="muted" style="font-size:12px">Injected into agent prompts by role</span></div><div class="card-body"><div class="row wrap" id="ruleList"></div><div id="ruleEd" style="margin-top:12px"></div></div></div>`;
       api.rules().then((rows) => {
