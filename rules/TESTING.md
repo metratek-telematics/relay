@@ -48,6 +48,13 @@ Verification exists to catch real problems, not to produce paperwork. Use the re
 
 Do not build new verification infrastructure (browser harnesses, fixture recorders, mock servers, screenshot matrices, results tables) unless the task asks for it.
 
+## Cross-service behaviour (integration stacks)
+When the task has an integration stack (listed in your environment section), a change that crosses a service boundary is proven through the stack, not with mocks of the other service:
+- `relay-stack up` builds every service from the task's branches and starts them together; `relay-stack status`, `relay-stack url <service>` and `$STACK_<SERVICE>_URL` tell you where they are.
+- Exercise the real call path (request into one service, observe the effect through another) and read `relay-stack logs <service>` when it fails; the cause is often in the other service.
+- `relay-stack check` runs the end-to-end checks Relay enforces at verification. Fix the code, not the check. If the stack cannot start for an environment reason, report it in `blocked_checks`.
+- Never run `docker` directly or leave extra containers behind.
+
 ## Frontend verification
 Run the app and look at the result: the design loop in `DESIGN.md` (desktop and phone width, both themes) is the browser check. While it is open, note console errors and failed requests caused by the change, and try the main interactions you touched.
 

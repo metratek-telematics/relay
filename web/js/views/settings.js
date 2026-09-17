@@ -249,6 +249,15 @@ export function mountSettings(main, section) {
         <div class="grid2"><div class="field"><label>Setup timeout (minutes)</label><input type="number" min="1" data-cfg="env_prepare_timeout_minutes" value="${esc(c.env_prepare_timeout_minutes || 20)}"></div>
         <div class="field"><label>Browser VS Code URL</label><input data-cfg="ide_url" value="${esc(c.ide_url || "")}" placeholder="https://relay.example.com/code"><div class="help">code-server base URL. Enables Open in VS Code on tasks and repositories, and preview links in Try it.</div></div></div>
         <div class="help">Registry credentials come from the files mounted into Relay (for example <code>~/.npmrc</code>). A failed install is recorded as a blocked check; agents never install dependencies themselves.</div>
+      </div></div>
+      <div class="card" style="margin-top:14px"><div class="card-head"><h3>Integration stacks</h3></div><div class="card-body">
+        <div class="help" style="margin-top:0">Per-task containers built from the task's branches (Repositories → Environment → Integration stack). Needs the Docker socket; see docker-compose.yml.</div>
+        <div class="grid2"><div class="field"><label>Start the stack</label><select data-cfg="stack_start"><option value="prepare" ${(c.stack_start || "prepare") === "prepare" ? "selected" : ""}>Before agents work (they get service URLs)</option><option value="verify" ${c.stack_start === "verify" ? "selected" : ""}>Only at verification</option></select></div>
+        <div class="field"><label>Stacks running at once</label><input type="number" min="1" max="20" data-cfg="stack_max_concurrent" value="${esc(c.stack_max_concurrent || 2)}"></div>
+        <div class="field"><label>Memory per container</label><input data-cfg="stack_memory_limit" value="${esc(c.stack_memory_limit || "1g")}"></div>
+        <div class="field"><label>Host port range (127.0.0.1 only)</label><input data-cfg="stack_port_range" value="${esc(c.stack_port_range || "20000-29999")}"></div>
+        <div class="field"><label>Build timeout (minutes)</label><input type="number" min="1" data-cfg="stack_build_timeout_minutes" value="${esc(c.stack_build_timeout_minutes || 15)}"></div></div>
+        <div class="field inline"><label>Keep the stack running after the task ends (otherwise removed, logs saved to the run folder)</label><span class="switch ${c.stack_keep_after_task ? "on" : ""}" data-sw-cfg="stack_keep_after_task"></span></div>
       </div></div>`;
       bindAuto();
     } else if (cur === "git") {

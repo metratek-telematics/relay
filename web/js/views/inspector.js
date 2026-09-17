@@ -7,6 +7,7 @@ import { packetHtml, blockedHtml } from "../packet.js";
 import { acceptanceCardHtml, bindAcceptance } from "../acceptance.js";
 import { openTaskFolder } from "../ide.js";
 import { scorecardCard, bindScorecard } from "./success.js";
+import { stackCardHtml, bindStackCard } from "./stacks.js";
 
 export const TABS = [
   ["overview", "Overview", "layers"], ["result", "Try it", "play"], ["history", "History", "clock"], ["timeline", "Timeline", "activity"], ["changes", "Changes", "branch"],
@@ -20,6 +21,7 @@ export function mountInspector(container, getTask) {
   const state = { tab: S.ui.inspectorTab || "overview", repo: { open: new Set(), file: null, dirty: false, tree: null }, diffPath: null, logFilter: "", logAgent: "all", logAuto: true, changes: null,
     hist: { id: null, data: null, open: new Set(), diff: null, scroll: 0 }, work: { id: null, data: null, count: -1, at: 0, busy: false } };
   let logTimer = null;
+  let stopStackCard = () => {};
 
   const setTab = (tab) => {
     state.tab = tab; S.ui.inspectorTab = tab;
@@ -94,6 +96,7 @@ export function mountInspector(container, getTask) {
         ${t.summary ? `<div class="card"><div class="card-head"><h3>Summary</h3></div><div class="card-body md">${md(t.summary)}</div></div>` : ""}
         ${acceptanceCardHtml(t, { editing: bindAcceptance.editing })}
         ${scorecardCard(t)}
+        ${stackCardHtml(t)}
         ${workCard(t)}
         <div class="card"><div class="card-head"><h3>Team</h3><span class="badge outline">${esc(wf.preset || "custom")}</span></div><div class="card-body stack">
           ${roles.map((role) => `<div class="row between"><span class="row"><span class="av sm ${esc(roleAgent(t, role))}">${esc(agentInitial(roleAgent(t, role)))}</span><strong>${esc(agentLabel(roleAgent(t, role)))}</strong><span class="muted">${esc(ROLE_LABEL[role])}</span></span><span class="mono muted">${esc(roleModel(t, role) || "default model")}${roleEffort(t, role) ? ` · ${esc(roleEffort(t, role))} effort` : ""}</span></div>`).join("")}
@@ -121,6 +124,8 @@ export function mountInspector(container, getTask) {
     $$("[data-copy-path]", body).forEach((b) => (b.onclick = () => copyText(b.dataset.copyPath)));
     bindAcceptance(body, t, () => { if (state.tab === "overview") renderOverview(getTask()); });
     bindScorecard(body, t, () => state.tab === "overview" && render());
+    stopStackCard();
+    stopStackCard = bindStackCard(body, t, { isCurrent: () => state.tab === "overview" && getTask()?.id === t.id && body.contains($("#stackBody", body)) });
     loadWork(t);
   }
 

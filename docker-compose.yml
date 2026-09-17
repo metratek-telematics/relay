@@ -71,6 +71,20 @@ services:
       #   - ${HOST_HOME}/.npmrc:/home/relay/.npmrc:ro
       - ${RELAY_CACHE:-./.cache}/npm:/home/relay/.npm
 
+      # ---- Integration stacks (optional). Tasks can build and run their services together in
+      # Docker (Repositories -> Environment -> Integration stack). That needs the host's Docker socket.
+      #
+      # SECURITY: access to the Docker socket is root on the host. Agents run shell commands inside
+      # this container, so with the socket mounted an agent (or a prompt injected into one) can
+      # control every container on the host and read any host file. Only enable it on a machine
+      # dedicated to Relay, never on a host running production services, and keep Relay's UI private.
+      # Relay labels everything it creates (relay.instance, relay.task) and only removes its own.
+      #   - /var/run/docker.sock:/var/run/docker.sock
+    # The relay user must be allowed to use the socket: add the socket's group id
+    # (stat -c %g /var/run/docker.sock) here when you enable the mount above.
+    # group_add:
+    #   - "${DOCKER_GID:-999}"
+
     # Agents run shells, test suites and dev servers. Give them room.
     shm_size: "1gb"
     stop_grace_period: 30s

@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 from orchestrator import agents, config as C, github, gitops, handoff, history, repo_env, repos  # noqa: E402
-from orchestrator import issues  # noqa: E402
+from orchestrator import issues, stacks  # noqa: E402
 from orchestrator import agent_info, installer, lessons  # noqa: E402
 from orchestrator.scorecard import repo_label  # noqa: E402
 
@@ -969,6 +969,157 @@ def worktrees_cleanup():
     return jsonify(repos.cleanup(body().get("paths") or [], manager.tasks, task_busy))
 
 
+# ----------------------------------------------------------------------------- integration stacks
+stack_jobs: dict[str, dict] = {}
+
+
+@app.get("/api/stacks")
+def stacks_list():
+    return jsonify({"stacks": [stacks.public(d) for d in stacks.list_defs()], "docker": stacks.docker_status(force=request.args.get("force") == "1")})
+
+
+@app.post("/api/stacks")
+def stacks_save():
+    try:
+        return jsonify(stacks.public(stacks.save_def(body())))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.delete("/api/stacks/<sid>")
+def stacks_delete(sid):
+    stacks.delete_def(sid)
+    return jsonify({"ok": True})
+
+
+@app.post("/api/stacks/import")
+def stacks_import():
+    """A draft definition from a docker-compose file pasted in, or read from a repository."""
+    b = body()
+    text, repo, compose_dir = b.get("text") or "", "", "."
+    if b.get("repo"):
+        repo = str(repo_arg(b.get("repo")))
+    if not text:
+        if not repo:
+            return jsonify({"error": "Paste a compose file or choose a repository"}), 400
+        rel = repo_env._clean_rel(b.get("file") or "docker-compose.yml")
+        path = Path(repo) / rel
+        if not path.is_file():
+            return jsonify({"error": f"{rel} not found in {Path(repo).name}"}), 404
+        text = path.read_text(encoding="utf-8", errors="replace")
+        compose_dir = str(Path(rel).parent)
+    try:
+        return jsonify(stacks.import_compose(text, repo, compose_dir))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+
+def _task_stack_view(tid):
+    t = task_or_404(tid)
+    d = stacks.def_for_task(t)
+    st = stacks.status(tid) if stacks.load_state(tid) else {}
+    for svc in (st.get("services") or {}).values():
+        svc.pop("env_hash", None)
+    return {"definition": stacks.public(d) if d else None, "state": st, "docker": stacks.docker_status(),
+            "job": stack_jobs.get(tid), "summary": t.get("stack")}
+
+
+@app.get("/api/tasks/<tid>/stack")
+def task_stack(tid):
+    return jsonify(_task_stack_view(tid))
+
+
+@app.post("/api/tasks/<tid>/stack/<action>")
+def task_stack_action(tid, action):
+    t = task_or_404(tid)
+    if action not in ("up", "down", "restart", "check"):
+        return jsonify({"error": f"Unknown action {action}"}), 404
+    job = stack_jobs.get(tid)
+    if job and job.get("running"):
+        return jsonify({"error": f"A stack {job['action']} is already running for this task"}), 409
+    b = body()
+    service = b.get("service") or ""
+    job = {"action": action, "service": service, "running": True, "started": time.time(), "log": [], "error": ""}
+    stack_jobs[tid] = job
+
+    def log(line):
+        job["log"] = (job["log"] + [str(line)])[-200:]
+
+    def work():
+        try:
+            task = manager.get(tid) or t
+            cfg = manager.cfg()
+            if action == "up":
+                stacks.up(task, cfg, log=log, owner="ui")
+            elif action == "down":
+                stacks.down(tid, log=log, reason="stopped from the task page")
+            elif action == "restart":
+                stacks.restart(task, cfg, service, log=log)
+            elif action == "check":
+                d = stacks.def_for_task(task)
+                if not d:
+                    raise stacks.StackError("This task has no integration stack")
+                if stacks.load_state(tid).get("status") != "up":
+                    stacks.up(task, cfg, log=log, owner="ui")
+                items = stacks.run_checks(task, d, cfg, log=log)
+                manager.set_meta(tid, stack={"id": d["id"], "name": d["name"], "ok": all(i["passed"] or not i["required"] for i in items),
+                                             "time": time.strftime("%Y-%m-%dT%H:%M:%S"), "status": "up",
+                                             "checks": [{k: i[k] for k in ("name", "kind", "required", "passed", "duration", "cannot_run")} for i in items]})
+        except Exception as e:
+            job["error"] = str(e)
+        finally:
+            job["running"] = False
+            job["finished"] = time.time()
+            manager.emit_task(tid)
+
+    threading.Thread(target=work, daemon=True).start()
+    return jsonify({"ok": True, "job": job})
+
+
+@app.get("/api/tasks/<tid>/stack/logs/<service>")
+def task_stack_logs(tid, service):
+    task_or_404(tid)
+    try:
+        return jsonify({"service": service, "text": stacks.logs(tid, service, int(request.args.get("tail") or 300))})
+    except stacks.StackError as e:
+        return jsonify({"error": str(e)}), 400
+
+
+_HOP = {"connection", "keep-alive", "transfer-encoding", "te", "trailer", "upgrade", "proxy-authorization", "proxy-authenticate",
+        "content-encoding", "content-length", "host", "cookie", "set-cookie", "authorization"}
+
+
+@app.route("/api/tasks/<tid>/stack/open/<service>/", defaults={"sub": ""}, methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+@app.route("/api/tasks/<tid>/stack/open/<service>/<path:sub>", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+def task_stack_open(tid, service, sub):
+    """Reach a stack service through Relay, so its ports never need to be published beyond the host's loopback.
+
+    Relay's own cookies and credentials are not forwarded to the service.
+    """
+    import urllib.error
+    import urllib.request
+    task_or_404(tid)
+    st = stacks.ensure_attached(stacks.load_state(tid))
+    svc = (st.get("services") or {}).get(service)
+    if st.get("status") not in ("up", "starting") or not svc or not svc.get("url"):
+        return jsonify({"error": f"Service {service} is not running"}), 404
+    url = svc["url"].rstrip("/") + "/" + sub + (("?" + request.query_string.decode()) if request.query_string else "")
+    headers = {k: v for k, v in request.headers.items() if k.lower() not in _HOP}
+    req = urllib.request.Request(url, data=request.get_data() or None, method=request.method, headers=headers)
+    try:
+        resp = urllib.request.urlopen(req, timeout=60)
+        status, data, rh = resp.status, resp.read(), resp.headers
+    except urllib.error.HTTPError as e:
+        status, data, rh = e.code, e.read() if e.fp else b"", e.headers
+    except Exception as e:
+        return jsonify({"error": f"{service} did not answer: {e}"}), 502
+    out = Response(data, status=status)
+    for k, v in (rh or {}).items():
+        if k.lower() not in _HOP:
+            out.headers[k] = v
+    return out
+
+
 # ----------------------------------------------------------------------------- errors
 @app.errorhandler(404)
 def not_found(exc):
@@ -1003,6 +1154,15 @@ if __name__ == "__main__":
     if "--no-browser" not in sys.argv:
         threading.Thread(target=launch_browser, daemon=True).start()
     from waitress import serve
+    try:
+        # Stacks left behind by a previous run (crash, restart, deleted task) are removed before tasks resume.
+        # Stacks a person started from a task page for review are kept while that task exists.
+        keep = {t["id"] for t in manager.tasks if (stacks.load_state(t["id"]).get("owner") == "ui")}
+        collected = stacks.gc(keep, log=lambda s: None)
+        if collected:
+            print(f"Removed {len(collected)} orphaned integration stack(s)")
+    except Exception as exc:
+        app.logger.warning("Stack cleanup failed: %s", exc)
     try:
         resumed = manager.recover_on_start()
         if resumed:

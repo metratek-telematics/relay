@@ -53,7 +53,7 @@ def _path(repo) -> Path:
 
 
 def empty() -> dict:
-    return {"vars": [], "files": [], "write_dotenv": True, "setup": "", "services_up": "", "services_down": "", "checks": []}
+    return {"vars": [], "files": [], "write_dotenv": True, "setup": "", "services_up": "", "services_down": "", "checks": [], "stack": ""}
 
 
 def load(repo) -> dict:
@@ -100,7 +100,7 @@ def save(repo, incoming: dict) -> dict:
             content = old_files[rel]["content"]
         out["files"].append({"path": rel, "content": str(content or ""), "secret": bool(f.get("secret", True))})
     out["write_dotenv"] = bool(incoming.get("write_dotenv", True))
-    for k in ("setup", "services_up", "services_down"):
+    for k in ("setup", "services_up", "services_down", "stack"):
         out[k] = str(incoming.get(k) or "").strip()
     for c in incoming.get("checks") or []:
         cmd = str(c.get("command") or "").strip()

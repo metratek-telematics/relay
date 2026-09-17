@@ -44,6 +44,22 @@ RUN npm install -g "playwright-core@${PLAYWRIGHT_VERSION}" \
  && npm cache clean --force \
  && rm -rf /var/lib/apt/lists/*
 
+# Docker client (static binary) and buildx, for per-task integration stacks (orchestrator/stacks.py).
+# Only the client: stacks run on the host's daemon when you mount its socket (see docker-compose.yml).
+# Without the socket Relay works as before and says plainly that stacks are unavailable.
+ARG DOCKER_VERSION=29.3.1
+ARG BUILDX_VERSION=0.33.0
+RUN set -eux; \
+    if ! command -v docker >/dev/null; then \
+      arch="$(uname -m)"; case "$arch" in x86_64) bx=amd64 ;; aarch64) bx=arm64 ;; *) bx="$arch" ;; esac; \
+      curl -fsSL "https://download.docker.com/linux/static/stable/${arch}/docker-${DOCKER_VERSION}.tgz" \
+        | tar -xz -C /usr/local/bin --strip-components=1 docker/docker; \
+      mkdir -p /usr/local/lib/docker/cli-plugins; \
+      curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx \
+        "https://github.com/docker/buildx/releases/download/v${BUILDX_VERSION}/buildx-v${BUILDX_VERSION}.linux-${bx}"; \
+      chmod 755 /usr/local/bin/docker /usr/local/lib/docker/cli-plugins/docker-buildx; \
+    fi
+
 # The node image ships a "node" user at 1000:1000. Reuse or re-number it so the
 # container user matches the host user that owns the mounted files.
 RUN set -eux; \
@@ -63,7 +79,9 @@ RUN python3 -m venv /opt/venv \
 COPY --chown=${UID}:${GID} . .
 RUN chmod +x /app/docker/entrypoint.sh /app/run.sh \
  && printf '#!/bin/sh\nexec node /app/tools/screenshot.cjs "$@"\n' > /usr/local/bin/relay-screenshot \
- && chmod 755 /usr/local/bin/relay-screenshot
+ && chmod 755 /usr/local/bin/relay-screenshot \
+ && printf '#!/bin/sh\nexec /opt/venv/bin/python /app/tools/relay_stack.py "$@"\n' > /usr/local/bin/relay-stack \
+ && chmod 755 /usr/local/bin/relay-stack
 
 ENV PATH=/opt/venv/bin:$PATH \
     HOME=/home/relay \

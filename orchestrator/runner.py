@@ -27,6 +27,18 @@ def _with_repo_env(env: dict, cwd, override: bool) -> None:
             env[k] = v
 
 
+def _with_stack(env: dict, tid: str) -> None:
+    """The task id (for relay-stack) and STACK_<SERVICE>_URL while the task's integration stack runs."""
+    if env is None:
+        return
+    env["RELAY_TASK_ID"] = tid
+    try:
+        from . import stacks
+        env.update(stacks.env_for_task(tid))
+    except Exception:
+        pass
+
+
 def _with_venv(env: dict, cwd) -> None:
     """Python repos: the .venv Relay prepared is the python, pip and pytest everyone uses in that worktree."""
     vb = venv_bin(cwd) if cwd else ""
@@ -271,6 +283,7 @@ class Runner:
         args, env, stdin_text, session = ad.build(sent_prompt, Path(cwd), cfg, model, session, Path(run_dir), role, effort=effort or "")
         _with_repo_env(env, cwd, override=False)
         _with_venv(env, cwd)
+        _with_stack(env, self.tid)
         ctx = TurnContext()
         tool_msgs: dict = {}
         delta_msg = {"id": None, "buf": "", "last": 0.0}
@@ -391,6 +404,7 @@ class Runner:
         env["NO_COLOR"] = "1"
         _with_repo_env(env, cwd, override=True)
         _with_venv(env, cwd)
+        _with_stack(env, self.tid)
         env["RELAY_PATH"] = env.get("PATH", "")
         try:
             rc, elapsed = self._spawn(args, cwd, env, None, on_line, timeout, role, None, cmd)

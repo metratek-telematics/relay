@@ -251,6 +251,14 @@ DEFAULTS = {
     "verification_commands": [],
     "auto_detect_verification": True,
     "verification_timeout_minutes": 20,
+    # integration stacks (orchestrator/stacks.py): per-task containers built from the task's branches
+    "stack_start": "prepare",            # prepare: before agents work (they get URLs) · verify: only at verification
+    "stack_max_concurrent": 2,           # stacks running at once across all tasks
+    "stack_memory_limit": "1g",          # per container, unless the service sets its own
+    "stack_port_range": "20000-29999",   # host ports, published on 127.0.0.1 only
+    "stack_build_timeout_minutes": 15,
+    "stack_keep_after_task": False,      # leave the stack running after the task ends (for manual review)
+    "stack_prefix": "relay-stack",       # container, network and image name prefix
     # git
     # Design gate: enforced checks on what agents add (token colours, fonts, forbidden terms); see orchestrator/designcheck.py.
     "design_gate": True,
