@@ -91,8 +91,9 @@ export function openNewTask(prefill = {}) {
     workflow: edit ? JSON.parse(JSON.stringify(edit.workflow)) : parent?.workflow ? JSON.parse(JSON.stringify(parent.workflow)) : defaultWorkflow(), queue: true,
     branch: parent ? (parent.branch || parent.branch_name || "") : "", branchEdited: !!parent,
     // Related repositories of a multi-repository task: {repo, name, reason, component, github, checked, source}.
-    related: ((edit || parent)?.repos || []).filter((r) => r.role !== "primary").map((r) => ({ repo: r.repo, name: basename(r.repo), reason: r.reason || "", component: r.component || "", github: r.github_repo || "", checked: true, source: "task" })),
-    relatedFor: (edit || parent)?.repos?.length ? (edit || parent).repo : "",
+    related: ((edit || parent)?.repos || []).filter((r) => r.role !== "primary").map((r) => ({ repo: r.repo, name: basename(r.repo), reason: r.reason || "", component: r.component || "", github: r.github_repo || "", checked: true, source: "task" }))
+      .concat((prefill.related || []).map((r) => ({ repo: r, name: basename(r), reason: "named in the request", component: "", github: "", checked: true, source: "task" }))),
+    relatedFor: (edit || parent)?.repos?.length ? (edit || parent).repo : (prefill.related || []).length ? prefill.repo : "",
     // Autopilot: run after other tasks, automatic retries of agent crashes, a cost cap.
     depends_on: edit?.depends_on ? [...edit.depends_on] : parent && parent.status !== "done" ? [parent.id] : [],
     retry: edit?.retry_policy?.infra ?? "", cost_cap: edit?.cost_cap_usd || "",
@@ -103,7 +104,7 @@ export function openNewTask(prefill = {}) {
   };
   // What the learning advice (views/advice.js) reads: the draft as it would be created.
   const adviceDraft = () => ({ repo: data.repo, template: data.template, requirements: data.requirements, issue: data.issue, repos: checkedRelated(), workflow: data.workflow });
-  let step = edit || parent ? 2 : 0;
+  let step = edit || parent ? 2 : (prefill.step && data.repo ? prefill.step : 0);
   const parentNote = parent ? `<div class="followup-note">${icon("retry", "sm")}<div><strong>Follows up <a href="#/task/${encodeURIComponent(parent.id)}">${esc(parent.name)}</a></strong>
     <span>Builds on <code>${esc(data.branch)}</code> where it left off, with the same team.</span>
     ${parent.summary ? `<blockquote>${esc(parent.summary.length > 360 ? parent.summary.slice(0, 360) + "…" : parent.summary)}</blockquote>` : ""}</div></div>` : "";
@@ -142,6 +143,7 @@ export function openNewTask(prefill = {}) {
     const list = $("#cloneRepos", body), help = $("#cloneHelp", body); if (!list) return;
     try {
       const r = await api.ghRepos();
+      if (r.error && !r.repos.length) throw new Error(r.error);
       list.innerHTML = r.repos.map((x) => `<option value="${esc(x.repo)}">${esc([x.private ? "private" : "public", x.description].filter(Boolean).join(" · "))}</option>`).join("");
       help.textContent = `${r.repos.length} repositories available. Clones go to ${r.root}; an existing clone is fetched and reused.`;
     } catch (e) { help.textContent = `Could not list GitHub repositories (${e.message}). You can still type owner/repository or a git URL.`; }
@@ -168,7 +170,7 @@ export function openNewTask(prefill = {}) {
       <div class="field"><label>Add another repository</label>
         <div class="clone-row"><select id="relLocal"><option value="">Loading local repositories…</option></select><button type="button" class="btn" id="relAdd">${icon("plus")}Add</button></div>
         <div class="clone-row" style="margin-top:6px"><input id="relClone" placeholder="or clone owner/repository" autocomplete="off"><button type="button" class="btn" id="relCloneBtn">${icon("download")}Clone and add</button></div>
-        <div class="help">Suggestions come from dependencies in the <a href="#/repos/system" data-close>system map</a>; approved ones are ticked.</div></div>
+        <div class="help">Suggestions come from dependencies in the <a href="#/knowledge/system" data-close>system map</a>; approved ones are ticked.</div></div>
       ${nav("Back", "Next: describe the request")}`;
     $$("[data-close]", body).forEach((b) => b.addEventListener("click", m.close));
     $("#wBack", body).onclick = () => go(0);

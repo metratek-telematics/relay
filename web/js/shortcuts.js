@@ -5,31 +5,33 @@ const MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || 
 const MOD = MAC ? "⌘" : "Ctrl";
 
 // Two-key "go to" sequences: press G, then the letter.
-export const GOTO = { d: "#/", t: "#/tasks", a: "#/agents", h: "#/github", i: "#/issues", s: "#/settings", r: "#/repos", l: "#/lessons", n: "#/learning", y: "#/inbox", e: "#/digest" };
+export const GOTO = { h: "#/", d: "#/", w: "#/work", t: "#/work", i: "#/work/issues", k: "#/knowledge", r: "#/knowledge/repositories", l: "#/knowledge/lessons", n: "#/knowledge/learning", m: "#/knowledge/system", a: "#/agents", s: "#/settings", y: "#/home/needs", e: "#/home/24h" };
 
 export const SHORTCUTS = [
-  { id: "palette", group: "General", keys: [MOD, "K"], label: "Command palette" },
+  { id: "palette", group: "General", keys: [MOD, "K"], label: "Search, jump anywhere, run a command or “create task: …”" },
   { id: "help", group: "General", keys: ["?"], label: "Keyboard shortcuts" },
   { id: "new", group: "General", keys: ["N"], label: "New task" },
-  { id: "search", group: "General", keys: ["/"], label: "Search tasks" },
-  { id: "sidebar", group: "General", keys: ["B"], label: "Show or hide the task list" },
+  { id: "search", group: "General", keys: ["/"], label: "Search (the board filter on Work)" },
   { id: "close", group: "General", keys: ["Esc"], label: "Close dialogs, menus and panels" },
-  { id: "goDashboard", group: "Go to", keys: ["G", "D"], label: "Dashboard", then: true },
-  { id: "goTasks", group: "Go to", keys: ["G", "T"], label: "Tasks", then: true },
-  { id: "goAgents", group: "Go to", keys: ["G", "A"], label: "Agents", then: true },
-  { id: "goGithub", group: "Go to", keys: ["G", "H"], label: "GitHub inbox", then: true },
-  { id: "goIssues", group: "Go to", keys: ["G", "I"], label: "Issues", then: true },
-  { id: "goSettings", group: "Go to", keys: ["G", "S"], label: "Settings", then: true },
+  { id: "goHome", group: "Go to", keys: ["G", "H"], label: "Mission Control", then: true },
+  { id: "goWork", group: "Go to", keys: ["G", "W"], label: "Work board", then: true },
+  { id: "goNeeds", group: "Go to", keys: ["G", "Y"], label: "Needs you", then: true },
+  { id: "goDigest", group: "Go to", keys: ["G", "E"], label: "Last 24 hours", then: true },
+  { id: "goIssues", group: "Go to", keys: ["G", "I"], label: "Issues on the board", then: true },
+  { id: "goKnowledge", group: "Go to", keys: ["G", "K"], label: "Knowledge", then: true },
+  { id: "goMap", group: "Go to", keys: ["G", "M"], label: "System map", then: true },
   { id: "goRepos", group: "Go to", keys: ["G", "R"], label: "Repositories", then: true },
   { id: "goLessons", group: "Go to", keys: ["G", "L"], label: "Lessons", then: true },
   { id: "goLearning", group: "Go to", keys: ["G", "N"], label: "Learning", then: true },
-  { id: "goInbox", group: "Go to", keys: ["G", "Y"], label: "Needs you", then: true },
-  { id: "goDigest", group: "Go to", keys: ["G", "E"], label: "Digest", then: true },
-  { id: "next", group: "Task list", keys: ["J"], label: "Open the next task" },
-  { id: "prev", group: "Task list", keys: ["K"], label: "Open the previous task" },
-  { id: "tryIt", group: "Current task", keys: ["T"], label: "Open the Try it tab" },
-  { id: "guidance", group: "Current task", keys: ["."], label: "Focus the guidance box" },
-  { id: "tabs", group: "Current task", keys: ["[", "]"], label: "Previous or next inspector tab" },
+  { id: "goAgents", group: "Go to", keys: ["G", "A"], label: "Agents", then: true },
+  { id: "goSettings", group: "Go to", keys: ["G", "S"], label: "Settings", then: true },
+  { id: "next", group: "Task page", keys: ["J"], label: "Next task on the board" },
+  { id: "prev", group: "Task page", keys: ["K"], label: "Previous task on the board" },
+  { id: "views", group: "Task page", keys: ["1", "5"], label: "Conversation, Live, Changes, Checks, Logs" },
+  { id: "guidance", group: "Task page", keys: ["."], label: "Focus the guidance box" },
+  { id: "tryIt", group: "Task page", keys: ["T"], label: "Try it (commands to run the result)" },
+  { id: "rail", group: "Task page", keys: ["I"], label: "Show or hide the details rail" },
+  { id: "boardKeys", group: "Work board", keys: ["X"], label: "Select the focused card" },
 ];
 
 // Short text for palette items and title attributes, e.g. "G D" or "Ctrl+K".

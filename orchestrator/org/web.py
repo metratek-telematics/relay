@@ -56,9 +56,9 @@ def resolve():
         except PermissionError as e:
             g.org_auth_error = str(e)
             return None
-    h = {"username": request.headers.get("X-Authentik-Username") or request.headers.get("X-Forwarded-User") or "",
-         "email": request.headers.get("X-Authentik-Email") or "", "name": request.headers.get("X-Authentik-Name") or "",
-         "groups": request.headers.get("X-Authentik-Groups") or "", "uid": request.headers.get("X-Authentik-Uid") or ""}
+    hv = lambda *names: identity.clean_text(next((request.headers.get(n) for n in names if request.headers.get(n)), ""))  # noqa: E731  UTF-8 names arrive as Latin-1
+    h = {"username": hv("X-Authentik-Username", "X-Forwarded-User"), "email": hv("X-Authentik-Email"), "name": hv("X-Authentik-Name"),
+         "groups": hv("X-Authentik-Groups"), "uid": hv("X-Authentik-Uid")}
     if OS.identity_mode(data):
         if h["username"] and OS.ip_trusted(ip, data):
             u = identity.upsert_from_headers(h, ip)

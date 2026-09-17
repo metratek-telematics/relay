@@ -81,7 +81,7 @@ export function mountLearning(main) {
             <td><span class="badge ${t}">${l}</span></td>
             <td>${r.enabled !== false && (r.retire || r.verdict !== "helps") ? `<button class="btn xs ${r.retire ? "danger" : "ghost"}" data-retire="${esc(r.id)}">Retire</button>` : ""}</td></tr>`; }).join("")}
         </tbody></table></div>` : '<div class="chart-empty">No approved lessons yet.</div>'}
-        ${high.length ? `<div class="lx-high">${icon("sparkles", "sm")}<span><b>${high.length}</b> proposed lesson${high.length === 1 ? " is" : "s are"} backed by ${esc(data.settings.auto_approve_min_tasks)}+ tasks${data.settings.auto_approve_lessons ? " and will be approved automatically" : ""}: ${high.slice(0, 3).map((q) => `“${esc(q.text)}”`).join(" · ")}</span><a class="btn xs" href="#/lessons">Review</a></div>` : ""}
+        ${high.length ? `<div class="lx-high">${icon("sparkles", "sm")}<span><b>${high.length}</b> proposed lesson${high.length === 1 ? " is" : "s are"} backed by ${esc(data.settings.auto_approve_min_tasks)}+ tasks${data.settings.auto_approve_lessons ? " and will be approved automatically" : ""}: ${high.slice(0, 3).map((q) => `“${esc(q.text)}”`).join(" · ")}</span><a class="btn xs" href="#/knowledge/lessons">Review</a></div>` : ""}
       </div></div>`;
   }
 

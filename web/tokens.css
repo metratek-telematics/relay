@@ -1,0 +1,176 @@
+/* ==========================================================================
+   Relay design tokens · the only file with literal colour values.
+   Light "Daylight Quay" and dark "Night Bridge" (rules/DESIGN.md), authored as
+   HSL triplets so opacity works: hsl(var(--primary) / .12).
+   ========================================================================== */
+@font-face {
+  font-family: "Hanken Grotesk Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url(fonts/hanken-grotesk-latin-wght-normal.woff2) format("woff2-variations");
+}
+@font-face {
+  font-family: "JetBrains Mono Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 800;
+  src: url(fonts/jetbrains-mono-latin-wght-normal.woff2) format("woff2-variations");
+}
+
+:root {
+  color-scheme: light;
+  /* neutrals */
+  --surface: 42 32% 96%;
+  --surface-container-lowest: 42 40% 99%;
+  --surface-container-low: 42 30% 93.5%;
+  --surface-container: 42 28% 91%;
+  --surface-container-high: 40 22% 88%;
+  --surface-container-highest: 40 18% 84%;
+  --on-surface: 214 44% 14%;
+  --on-surface-variant: 214 16% 36%;
+  --on-surface-muted: 214 12% 40%;
+  --outline-variant: 40 20% 85%;
+  --outline: 40 13% 72%;
+  /* brand */
+  --primary: 190 84% 26%;
+  --primary-strong: 190 86% 21%;
+  --primary-container: 188 60% 88%;
+  --on-primary: 42 60% 98%;
+  --accent-brand: 38 58% 46%;
+  /* state: the status truth, never decoration */
+  --state-ok: 150 56% 32%;
+  --state-warn: 32 92% 40%;
+  --state-alarm: 4 76% 46%;
+  --state-info: 212 72% 42%;
+  --state-review: 262 38% 50%;
+  /* the same states as text: darker on light surfaces so small labels on tints keep AA contrast */
+  --state-ok-ink: 150 62% 24%;
+  --state-warn-ink: 28 90% 29%;
+  --state-alarm-ink: 4 76% 38%;
+  --state-info-ink: 212 76% 34%;
+  --state-review-ink: 262 44% 42%;
+  --primary-ink: 190 86% 22%;
+  /* code surfaces stay dark in both themes */
+  --code-surface: 206 34% 11%;
+  --code-ink: 196 22% 86%;
+  --code-muted: 200 12% 58%;
+  --code-add: 150 50% 60%;
+  --code-del: 6 80% 72%;
+  --code-hunk: 205 78% 70%;
+  /* agent brand colours (avatars fall back to them) */
+  --agent-codex: 226 58% 60%;
+  --agent-claude: 15 63% 60%;
+  --agent-gemini: 168 54% 40%;
+  /* elevation: cool navy tint */
+  --shadow-xs: 0 1px 1px hsl(214 44% 14% / .05);
+  --shadow-sm: 0 1px 2px hsl(214 44% 14% / .06), 0 1px 1px hsl(214 44% 14% / .04);
+  --shadow-md: 0 4px 14px hsl(214 44% 14% / .08), 0 1px 3px hsl(214 44% 14% / .06);
+  --shadow-lg: 0 14px 40px hsl(214 44% 14% / .12), 0 3px 10px hsl(214 44% 14% / .07);
+  --shadow-xl: 0 24px 70px hsl(214 44% 14% / .16), 0 6px 16px hsl(214 44% 14% / .08);
+  --scrim: 214 44% 10%;
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --surface: 205 36% 8%;
+  --surface-container-lowest: 205 38% 6%;
+  --surface-container-low: 205 32% 10%;
+  --surface-container: 204 24% 13%;
+  --surface-container-high: 204 22% 16.5%;
+  --surface-container-highest: 204 20% 21%;
+  --on-surface: 190 24% 92%;
+  --on-surface-variant: 195 14% 72%;
+  --on-surface-muted: 196 11% 62%;
+  --outline-variant: 202 16% 21%;
+  --outline: 200 12% 32%;
+  --primary: 186 62% 52%;
+  --primary-strong: 186 66% 62%;
+  --primary-container: 190 60% 20%;
+  --on-primary: 205 36% 8%;
+  --accent-brand: 38 64% 58%;
+  --state-ok: 152 56% 50%;
+  --state-warn: 36 92% 60%;
+  --state-alarm: 6 84% 68%;
+  --state-info: 205 78% 64%;
+  --state-review: 262 62% 76%;
+  --state-ok-ink: 152 60% 60%;
+  --state-warn-ink: 38 94% 66%;
+  --state-alarm-ink: 6 90% 74%;
+  --state-info-ink: 205 84% 72%;
+  --state-review-ink: 262 70% 82%;
+  --primary-ink: 186 66% 62%;
+  --code-surface: 206 40% 6%;
+  --code-ink: 196 22% 86%;
+  --agent-codex: 226 78% 74%;
+  --agent-claude: 15 68% 64%;
+  --agent-gemini: 168 50% 52%;
+  --shadow-xs: 0 1px 1px hsl(206 60% 2% / .45);
+  --shadow-sm: 0 1px 2px hsl(206 60% 2% / .5);
+  --shadow-md: 0 6px 18px hsl(206 60% 2% / .5), 0 1px 3px hsl(206 60% 2% / .45);
+  --shadow-lg: 0 16px 44px hsl(206 60% 2% / .6), 0 4px 12px hsl(206 60% 2% / .45);
+  --shadow-xl: 0 26px 80px hsl(206 60% 2% / .7), 0 6px 16px hsl(206 60% 2% / .5);
+  --scrim: 206 60% 3%;
+}
+
+/* Legacy names used across the older views, mapped onto the tokens above. */
+:root, html[data-theme="dark"] {
+  --bg: hsl(var(--surface));
+  --bg-elev: hsl(var(--surface-container-low));
+  --panel: hsl(var(--surface-container-lowest));
+  --panel-2: hsl(var(--surface-container));
+  --panel-3: hsl(var(--surface-container-high));
+  --hover: hsl(var(--on-surface) / .05);
+  --border: hsl(var(--outline-variant));
+  --border-strong: hsl(var(--outline));
+  --text: hsl(var(--on-surface));
+  --text-2: hsl(var(--on-surface-variant));
+  --text-3: hsl(var(--on-surface-muted));
+  --accent: hsl(var(--primary));
+  --accent-2: hsl(var(--primary-strong));
+  --accent-soft: hsl(var(--primary) / .12);
+  --codex: hsl(var(--agent-codex));
+  --claude: hsl(var(--agent-claude));
+  --gemini: hsl(var(--agent-gemini));
+  --green: hsl(var(--state-ok-ink));
+  --green-soft: hsl(var(--state-ok) / .13);
+  --amber: hsl(var(--state-warn-ink));
+  --amber-soft: hsl(var(--state-warn) / .14);
+  --red: hsl(var(--state-alarm-ink));
+  --red-soft: hsl(var(--state-alarm) / .12);
+  --blue: hsl(var(--state-info-ink));
+  --blue-soft: hsl(var(--state-info) / .12);
+  --purple: hsl(var(--state-review-ink));
+  --purple-soft: hsl(var(--state-review) / .13);
+  --code-bg: hsl(var(--code-surface));
+  --code-fg: hsl(var(--code-ink));
+  --shadow-1: var(--shadow-sm);
+  --shadow-2: var(--shadow-md);
+  --shadow-3: var(--shadow-xl);
+  --on-accent: hsl(var(--on-primary));
+  --brass: hsl(var(--accent-brand));
+  --accent-ink: hsl(var(--primary-ink));
+  /* fills that should stay bright (dots, bars, rings) use the base state colours */
+  --ok-fill: hsl(var(--state-ok)); --warn-fill: hsl(var(--state-warn)); --alarm-fill: hsl(var(--state-alarm)); --info-fill: hsl(var(--state-info));
+}
+html[data-theme="dark"] { --panel: hsl(var(--surface-container)); --panel-2: hsl(var(--surface-container-high)); --panel-3: hsl(var(--surface-container-highest)); }
+
+:root {
+  /* type */
+  --font: "Hanken Grotesk Variable", "Hanken Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+  --fs: 13.5px; --fs-sm: 12.5px; --fs-xs: 11.5px; --fs-lg: 15px;
+  --t-display: 30px; --t-h1: 24px; --t-h2: 18px; --t-h3: 14.5px; --t-eyebrow: 11px; --t-metric: 26px;
+  /* space: 4px grid */
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px; --s6: 24px; --s8: 32px; --s10: 40px;
+  /* shape */
+  --r-sm: 6px; --r: 8px; --r-lg: 12px; --r-xl: 16px;
+  /* motion */
+  --ease: cubic-bezier(.16, 1, .3, 1);
+  --ease-in-out: cubic-bezier(.65, 0, .35, 1);
+  --dur-1: 120ms; --dur-2: 200ms; --dur-3: 360ms;
+  /* layout */
+  --nav: 232px; --rail: 64px; --sidebar: 0px; --inspector: 380px;
+  --pad: 16px;
+}
+html[data-density="compact"] { --fs: 12.5px; --fs-sm: 11.5px; --fs-xs: 10.5px; --pad: 12px; }

@@ -34,6 +34,10 @@ export const del = (url) => request(url, { method: "DELETE" });
 export const api = {
   state: () => get("/api/state"),
   dashboard: () => get("/api/dashboard"),
+  mission: (hours) => get(`/api/mission${hours ? `?hours=${encodeURIComponent(hours)}` : ""}`),
+  changes: (id) => get(`/api/tasks/${encodeURIComponent(id)}/changes`),
+  repoDiff: (id, repo, path) => get(`/api/tasks/${encodeURIComponent(id)}/repo-diff?repo=${encodeURIComponent(repo || "")}&path=${encodeURIComponent(path || "")}`),
+  mergeChangeSet: (id, body) => post(`/api/tasks/${encodeURIComponent(id)}/merge`, body),
   health: (force) => get(`/api/health${force ? "?force=1" : ""}`),
   agents: (force) => get(`/api/agents${force ? "?force=1" : ""}`),
   testAgent: (name, model) => post(`/api/agents/${name}/test`, { model }),

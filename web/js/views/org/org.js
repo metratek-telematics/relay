@@ -121,7 +121,9 @@ export function avatar(u, size = 28) {
   if (!u) return "";
   const style = `width:${size}px;height:${size}px;font-size:${Math.round(size * 0.4)}px;background:${esc(u.color || "var(--text-3)")}`;
   const img = u.avatar_url ? `<img src="${esc(u.avatar_url)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : "";
-  return `<span class="org-av" style="${style}" title="${esc(u.name || u.username)}" aria-hidden="true"><span>${esc(u.initials || "?")}</span>${img}</span>`;
+  // Invisible characters in a name (zero-width spaces from an identity provider) must never become initials.
+  const ini = String(u.initials || "").replace(/[\u0000-\u001f\u007f-\u00bf\u200b-\u200f\u2028-\u202f\u2060-\u206f\ufeff]/g, "").slice(0, 2) || "?";
+  return `<span class="org-av" style="${style}" title="${esc(u.name || u.username)}" aria-hidden="true"><span>${esc(ini)}</span>${img}</span>`;
 }
 
 export const ROLE_TONE = { owner: "purple", admin: "blue", member: "green", viewer: "", anonymous: "red" };

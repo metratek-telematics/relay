@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import re
 import threading
+import unicodedata
 
 from . import settings as OS
 from .common import JsonStore, now_iso, parse_iso, epoch
@@ -55,13 +56,32 @@ def norm_username(s) -> str:
     return re.sub(r"[^A-Za-z0-9@._+-]", "", s)[:120]
 
 
+def clean_text(s) -> str:
+    """A display string as a person would type it.
+
+    WSGI hands over request headers decoded as Latin-1, so a UTF-8 name from the identity provider arrives as
+    mojibake ("Andreas\u00e2\u0080\u008b"). Undo that when it round-trips, then drop zero-width and control
+    characters, which otherwise become visible initials such as "A\u00c2".
+    """
+    s = str(s or "")
+    if any("\u0080" <= ch <= "\u00ff" for ch in s):
+        try:
+            s = s.encode("latin-1").decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            pass
+    s = "".join(ch for ch in s if unicodedata.category(ch) not in ("Cf", "Cc", "Co", "Cn") or ch in "\t")
+    return re.sub(r"\s+", " ", s).strip()
+
+
 def initials(name: str, username: str = "") -> str:
-    words = [w for w in re.split(r"[\s._@-]+", name or username or "?") if w]
-    if not words:
+    words = [w for w in re.split(r"[\s._@-]+", clean_text(name) or clean_text(username) or "?") if w]
+    letters = ["".join(ch for ch in w if ch.isalnum()) for w in words]
+    letters = [w for w in letters if w]
+    if not letters:
         return "?"
-    if len(words) == 1:
-        return words[0][:2].upper()
-    return (words[0][0] + words[-1][0]).upper()
+    if len(letters) == 1:
+        return letters[0][:2].upper()
+    return (letters[0][0] + letters[-1][0]).upper()
 
 
 def avatar_color(key: str) -> str:
@@ -95,7 +115,7 @@ def public(u: dict | None, full: bool = False) -> dict | None:
         return None
     email = (u.get("email") or "").strip().lower()
     out = {
-        "username": u["username"], "name": u.get("name") or u["username"], "email": u.get("email") or "",
+        "username": u["username"], "name": clean_text(u.get("name")) or u["username"], "email": clean_text(u.get("email")),
         "role": u.get("role"), "role_source": u.get("role_source"), "groups": u.get("groups") or [],
         "disabled": bool(u.get("disabled")), "first_seen": u.get("first_seen"), "last_seen": u.get("last_seen"),
         "initials": initials(u.get("name") or "", u["username"]), "color": avatar_color(u["username"]),

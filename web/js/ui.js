@@ -12,6 +12,20 @@ export function el(html) {
 
 // ---------------------------------------------------------------------------- icons (Lucide-style, 24px viewBox, stroke)
 const P = {
+  radar: '<path d="M19.07 4.93A10 10 0 1 0 22 12"/><path d="M16.24 7.76A6 6 0 1 0 18 12"/><circle cx="12" cy="12" r="2"/><path d="m13.4 10.6 6-6"/>',
+  kanban: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 7v7M12 7v4M16 7v9"/>',
+  share: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/>',
+  merge: '<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/>',
+  grip: '<circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/>',
+  target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>',
+  trend: '<path d="m22 7-8.5 8.5-5-5L2 17"/><path d="M16 7h6v6"/>',
+  monitor: '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>',
+  book: '<path d="M2 4h7a3 3 0 0 1 3 3v14a2 2 0 0 0-2-2H2z"/><path d="M22 4h-7a3 3 0 0 0-3 3v14a2 2 0 0 1 2-2h8z"/>',
+  menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
+  columns: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M15 3v18"/>',
+  maximize: '<path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/>',
+  link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
+  checkCircle: '<circle cx="12" cy="12" r="10"/><path d="m8 12 3 3 5-6"/>',
   home: '<path d="M3 11 12 3l9 8v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/>',
   tasks: '<path d="M8 6h13M8 12h13M8 18h13"/><path d="m3 6 1 1 2-2M3 12l1 1 2-2M3 18l1 1 2-2"/>',
   bot: '<rect x="3" y="8" width="18" height="12" rx="2"/><path d="M12 8V4M8 4h8"/><circle cx="9" cy="14" r="1"/><circle cx="15" cy="14" r="1"/>',
@@ -278,43 +292,66 @@ export function menu(anchor, items) {
 }
 
 // ---------------------------------------------------------------------------- command palette
-export function palette(getItems) {
+// Items: { group, label, sub, icon, hint, keywords, onClick, always }. getItems(query) may add items for the query
+// (for example "Create task: …"); matching ranks prefix, word-start, substring, then in-order letters.
+export function fuzzyScore(query, text) {
+  const q = query.toLowerCase().trim(), t = String(text || "").toLowerCase();
+  if (!q) return 1;
+  if (t.startsWith(q)) return 100 - Math.min(40, t.length / 10);
+  const i = t.indexOf(q);
+  if (i >= 0) return (/[\s/#:·._-]/.test(t[i - 1] || "") ? 80 : 60) - Math.min(20, i / 5);
+  const words = q.split(/\s+/).filter(Boolean);
+  if (words.length > 1 && words.every((w) => t.includes(w))) return 50;
+  let j = 0, gaps = 0;
+  for (const c of t) { if (c === q[j]) j++; else if (j) gaps++; if (j === q.length) break; }
+  return j === q.length ? Math.max(1, 30 - gaps / 2) : 0;
+}
+export function palette(getItems, { initial = "", placeholder = "Type a command or task name…" } = {}) {
   $$(".palette-back").forEach((p) => p.remove());
-  const back = el(`<div class="palette-back"><div class="palette" role="dialog" aria-label="Command palette">
-    <div class="palette-input">${icon("search")}<input placeholder="Type a command or task name…" autofocus></div>
-    <div class="palette-list" role="listbox"></div>
-    <div class="palette-foot"><span><kbd>↑↓</kbd> navigate</span><span><kbd>↵</kbd> run</span><span><kbd>esc</kbd> close</span></div>
+  const opener = document.activeElement;
+  const back = el(`<div class="palette-back"><div class="palette" role="dialog" aria-modal="true" aria-label="Command palette">
+    <div class="palette-input">${icon("search")}<input role="combobox" aria-expanded="true" aria-controls="paletteList" aria-autocomplete="list" placeholder="${esc(placeholder)}" autocomplete="off" spellcheck="false"></div>
+    <div class="palette-list" id="paletteList" role="listbox"></div>
+    <div class="palette-foot"><span><kbd>↑↓</kbd> move</span><span><kbd>↵</kbd> run</span><span><kbd>esc</kbd> close</span><span class="palette-tip">Tip: <b>create task:</b> add retries to the api client</span></div>
   </div></div>`);
   document.body.appendChild(back);
   const input = $("input", back), list = $(".palette-list", back);
+  input.value = initial;
   let sel = 0, shown = [];
-  const close = () => { back.remove(); document.removeEventListener("keydown", onKey); };
+  const close = () => { back.remove(); document.removeEventListener("keydown", onKey, true); try { opener?.focus?.(); } catch {} };
   const render = () => {
-    const q = input.value.trim().toLowerCase();
-    const items = getItems();
-    shown = (q ? items.filter((it) => (it.label + " " + (it.group || "") + " " + (it.keywords || "")).toLowerCase().includes(q)) : items).slice(0, 40);
+    const q = input.value;
+    const items = getItems(q) || [];
+    const scored = items.map((it, i) => ({ it, i, s: it.always ? 1000 - i : fuzzyScore(q, `${it.label} ${it.keywords || ""} ${it.sub || ""}`) })).filter((x) => x.s > 0);
+    const groups = new Map();
+    for (const x of scored) { const g = x.it.group || ""; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(x); }
+    const ordered = [...groups.values()].map((xs) => (q.trim() ? xs.sort((a, b) => b.s - a.s || a.i - b.i) : xs))
+      .sort((a, b) => (q.trim() ? Math.max(...b.map((x) => x.s)) - Math.max(...a.map((x) => x.s)) : a[0].i - b[0].i));
+    shown = ordered.flat().slice(0, 60).map((x) => x.it);
     sel = Math.min(sel, Math.max(0, shown.length - 1));
     let lastGroup = null;
     list.innerHTML = shown.length ? shown.map((it, i) => {
-      const g = it.group !== lastGroup ? `<div class="palette-group">${esc(it.group || "")}</div>` : "";
+      const g = it.group !== lastGroup ? `<div class="palette-group" role="presentation">${esc(it.group || "")}</div>` : "";
       lastGroup = it.group;
-      return g + `<button class="palette-item ${i === sel ? "sel" : ""}" data-i="${i}">${it.icon ? icon(it.icon) : ""}<span>${esc(it.label)}</span>${it.hint ? `<kbd>${esc(it.hint)}</kbd>` : ""}</button>`;
-    }).join("") : '<div class="palette-empty">No matches</div>';
+      return g + `<button type="button" class="palette-item ${i === sel ? "sel" : ""}" role="option" aria-selected="${i === sel}" id="pi-${i}" data-i="${i}">${it.icon ? `<span class="pi-ic">${icon(it.icon)}</span>` : ""}<span class="pi-main"><span class="pi-label">${esc(it.label)}</span>${it.sub ? `<span class="pi-sub">${esc(it.sub)}</span>` : ""}</span>${it.hint ? `<kbd>${esc(it.hint)}</kbd>` : ""}</button>`;
+    }).join("") : '<div class="palette-empty">No matches. Try “create task: …” to start new work.</div>';
+    input.setAttribute("aria-activedescendant", shown.length ? `pi-${sel}` : "");
     $$(".palette-item", list).forEach((b) => (b.onclick = () => run(Number(b.dataset.i))));
     const s = $(".palette-item.sel", list); s && s.scrollIntoView({ block: "nearest" });
   };
   const run = (i) => { const it = shown[i]; close(); it && it.onClick && it.onClick(); };
   const onKey = (e) => {
-    if (e.key === "Escape") { close(); return; }
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); return; }
     if (e.key === "ArrowDown") { e.preventDefault(); sel = Math.min(sel + 1, shown.length - 1); render(); }
     if (e.key === "ArrowUp") { e.preventDefault(); sel = Math.max(sel - 1, 0); render(); }
     if (e.key === "Enter") { e.preventDefault(); run(sel); }
   };
-  document.addEventListener("keydown", onKey);
+  document.addEventListener("keydown", onKey, true);
+  addEventListener("hashchange", () => back.isConnected && close(), { once: true });
   input.addEventListener("input", () => { sel = 0; render(); });
   back.addEventListener("mousedown", (e) => { if (e.target === back) close(); });
   render();
-  setTimeout(() => input.focus(), 10);
+  setTimeout(() => { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }, 10);
 }
 
 export function copyText(text) {

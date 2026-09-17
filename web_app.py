@@ -873,7 +873,8 @@ def gh_repos():
     try:
         return jsonify({"repos": github.accessible_repos(force=request.args.get("force") == "1"), "root": str(github.clone_root())})
     except RuntimeError as e:
-        return jsonify({"error": str(e), "repos": [], "root": str(github.clone_root())}), 502
+        # An expected state (gh missing or signed out), not a server fault: the dialog explains it.
+        return jsonify({"error": str(e), "repos": [], "root": str(github.clone_root())})
 
 
 @app.post("/api/github/clone")
@@ -1564,6 +1565,49 @@ def task_stack_open(tid, service, sub):
         if k.lower() not in _HOP:
             out.headers[k] = v
     return out
+
+
+# ----------------------------------------------------------------------------- mission control (orchestrator/mission.py)
+from orchestrator import mission as mission_model  # noqa: E402
+
+
+@app.get("/api/mission")
+def mission_get():
+    """Home screen: live agents with their current tool call, Needs you, queue with ETAs, deliveries, trend, limits."""
+    try:
+        hours = max(1.0, min(24 * 31, float(request.args.get("hours") or 24)))
+    except ValueError:
+        hours = 24.0
+    return jsonify(mission_model.mission(manager, hours))
+
+
+@app.get("/api/tasks/<tid>/changes")
+def task_changes(tid):
+    """Changed files per repository of the task, in merge order."""
+    return jsonify(mission_model.changes(task_or_404(tid)))
+
+
+@app.get("/api/tasks/<tid>/repo-diff")
+def task_repo_diff(tid):
+    t = task_or_404(tid)
+    return jsonify({"text": mission_model.diff(t, request.args.get("repo", ""), request.args.get("path", ""))})
+
+
+@app.post("/api/tasks/<tid>/merge")
+def task_merge(tid):
+    """Merge every pull request of a delivered task in merge order (the review cockpit's Approve and merge)."""
+    b = body()
+    t = task_or_404(tid)
+    out = mission_model.merge_change_set(t, method=b.get("method") or "squash", dry_run=bool(b.get("dry_run")))
+    if not b.get("dry_run"):
+        merged = [r["name"] for r in out["results"] if r.get("ok")]
+        if out["ok"]:
+            manager.notify("success", f"Merged: {t['name']}", f"{len(merged)} pull request{'s' if len(merged) != 1 else ''} merged in order.", tid, kind="info")
+        else:
+            failed = next((r for r in out["results"] if not r.get("ok")), {})
+            manager.notify("error", f"Merge stopped: {t['name']}", f"{failed.get('name', '')}: {failed.get('error', '')}", tid, kind="info")
+        manager.emit_task(tid)
+    return jsonify(out)
 
 
 # ----------------------------------------------------------------------------- errors

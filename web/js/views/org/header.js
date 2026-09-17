@@ -15,8 +15,9 @@ function openPop(anchor, html, align = "left") {
   pop.innerHTML = html;
   document.body.appendChild(pop);
   const r = anchor.getBoundingClientRect();
-  const w = pop.offsetWidth;
-  pop.style.top = `${r.bottom + 6}px`;
+  const w = pop.offsetWidth, h = pop.offsetHeight;
+  // Anchors low on the screen (the user button at the foot of the navigation) open upwards.
+  pop.style.top = `${r.bottom + 6 + h > innerHeight - 8 ? Math.max(8, r.top - h - 6) : r.bottom + 6}px`;
   pop.style.left = `${Math.max(8, Math.min(align === "right" ? r.right - w : r.left, innerWidth - w - 8))}px`;
   popover = pop;
   setTimeout(() => { document.addEventListener("mousedown", onDoc, true); document.addEventListener("keydown", onKey); }, 0);
