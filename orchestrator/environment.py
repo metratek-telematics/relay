@@ -105,6 +105,10 @@ def setup_command(task: dict, cfg: dict, wt) -> str:
     custom = (wf.get("setup_command") or "").strip()
     if custom:
         return custom
+    from . import repo_env
+    saved = repo_env.for_path(wt).get("setup") or ""
+    if saved:
+        return saved
     if not cfg.get("env_prepare", True):
         return ""
     return detect_setup(wt)

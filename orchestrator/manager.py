@@ -484,6 +484,15 @@ class Manager:
             row["consumed"] = True
             self.store.update(tid, immediate=True, guidance=rows)
             return {"applied": "answer"}
+        if not r and t.get("status") in ("failed", "stopped", "interrupted"):
+            # Writing to a task that has ended means "carry on with this": resume it from its checkpoint
+            # (or start it over when there is none) and hand the message to the next agent turn.
+            try:
+                self.start_task(tid)
+                self.timeline(tid, "user", "Resumed by your message", truncate(text, 200))
+                return {"applied": "resumed"}
+            except (ValueError, KeyError) as e:
+                return {"applied": "next_boundary", "note": str(e)}
         return {"applied": "next_boundary"}
 
     def take_guidance(self, tid, role):

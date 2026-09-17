@@ -17,6 +17,16 @@ from .environment import venv_bin
 from .util import IS_WINDOWS, kill_tree, new_id, now, popen_group_kwargs, truncate
 
 
+def _with_repo_env(env: dict, cwd, override: bool) -> None:
+    """The repository's saved variables. Agents keep their own credentials; commands get the repo's values."""
+    if env is None or not cwd:
+        return
+    from . import repo_env
+    for k, v in repo_env.env_vars(repo_env.for_path(cwd)).items():
+        if override or k not in env:
+            env[k] = v
+
+
 def _with_venv(env: dict, cwd) -> None:
     """Python repos: the .venv Relay prepared is the python, pip and pytest everyone uses in that worktree."""
     vb = venv_bin(cwd) if cwd else ""
@@ -66,7 +76,24 @@ class Runner:
         self.log_file = Path(p)
         self.log_file.parent.mkdir(parents=True, exist_ok=True)
 
+    def set_masker(self, fn):
+        """Replace saved secret values in everything this run logs or shows."""
+        self._mask = fn
+
+    def _m(self, value):
+        fn = getattr(self, "_mask", None)
+        if not fn:
+            return value
+        if isinstance(value, str):
+            return fn(value)
+        if isinstance(value, list):
+            return [self._m(v) for v in value]
+        if isinstance(value, dict):
+            return {k: self._m(v) for k, v in value.items()}
+        return value
+
     def rawlog(self, line: str, tag: str = ""):
+        line = self._m(str(line))
         if not self.log_file:
             return
         try:
@@ -77,7 +104,7 @@ class Runner:
 
     # ------------------------------------------------------------------ events
     def timeline(self, role, title, detail=""):
-        self.m.timeline(self.tid, role, title, detail)
+        self.m.timeline(self.tid, role, self._m(title), self._m(detail))
 
     def status(self, status, detail=""):
         self.m.set_status(self.tid, status, detail)
@@ -87,10 +114,10 @@ class Runner:
 
     def msg(self, **fields) -> dict:
         fields.setdefault("id", new_id("m"))
-        return self.m.message(self.tid, fields)
+        return self.m.message(self.tid, self._m(fields))
 
     def msg_update(self, mid, **patch):
-        self.m.message_update(self.tid, mid, patch)
+        self.m.message_update(self.tid, mid, self._m(patch))
 
     # ------------------------------------------------------------------ control
     def check_stop(self):
@@ -229,6 +256,7 @@ class Runner:
                            + "\n\n".join(f"--- Relay said ---\n{t['prompt']}\n--- You replied ---\n{t['reply']}" for t in transcript)
                            + "\n\n--- Relay now says ---\n" + prompt)
         args, env, stdin_text, session = ad.build(sent_prompt, Path(cwd), cfg, model, session, Path(run_dir), role, effort=effort or "")
+        _with_repo_env(env, cwd, override=False)
         _with_venv(env, cwd)
         ctx = TurnContext()
         tool_msgs: dict = {}
@@ -341,12 +369,16 @@ class Runner:
             if len(lines) % 40 == 0:
                 self.msg_update(m["id"], output=truncate("\n".join(lines), 12000, tail=True))
 
-        args = ["cmd.exe", "/d", "/c", cmd] if IS_WINDOWS else ["bash", "-lc", cmd]
+        # A login shell rebuilds PATH from /etc/profile, which would drop the worktree's .venv and the agents
+        # folder; re-export the PATH this process computed so checks run with the same tools agents used.
+        args = ["cmd.exe", "/d", "/c", cmd] if IS_WINDOWS else ["bash", "-lc", 'export PATH="$RELAY_PATH"; ' + cmd]
         env = os.environ.copy()
         env["CI"] = env.get("CI", "1")
         env["FORCE_COLOR"] = "0"
         env["NO_COLOR"] = "1"
+        _with_repo_env(env, cwd, override=True)
         _with_venv(env, cwd)
+        env["RELAY_PATH"] = env.get("PATH", "")
         try:
             rc, elapsed = self._spawn(args, cwd, env, None, on_line, timeout, role, None, cmd)
         except TurnTimeout as e:
