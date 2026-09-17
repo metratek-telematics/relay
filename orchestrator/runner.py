@@ -160,11 +160,21 @@ class Runner:
         stall_min = float(self.m.cfg().get("stall_warning_minutes") or 0)
         warned = [False]
 
+        timed_out = False
+
         def heartbeat():
+            nonlocal timed_out
             while not stop_hb.wait(1.0):
                 if p.poll() is not None:
                     return
                 t = time.time()
+                # The read loop only checks these when a line arrives; a CLI that goes silent (a provider
+                # retrying forever) must still be stoppable and still hit its turn timeout.
+                if self.stop_requested or self.interrupt_requested or (timeout and t - started > timeout):
+                    if timeout and t - started > timeout:
+                        timed_out = True
+                    kill_tree(p)
+                    return
                 silent = t - last_out[0]
                 self.m.process(self.tid, {**self.current, "elapsed": t - started, "silent_for": silent})
                 if stall_min and silent > stall_min * 60 and not warned[0]:
@@ -184,7 +194,6 @@ class Runner:
             threading.Thread(target=feed, daemon=True).start()
 
         rc = None
-        timed_out = False
         try:
             for line in iter(p.stdout.readline, ""):
                 if line:
