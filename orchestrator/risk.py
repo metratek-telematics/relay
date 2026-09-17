@@ -107,10 +107,11 @@ def assess(ctx: dict, records: list[dict], team_eval: dict | None = None, repo_a
     if sig["size"] == "large":
         add("large", 0.4, "Large request" + (f" ({sig['bullets']} points)" if sig["bullets"] >= 8 else f" ({sig['chars']} characters)" if sig["chars"] > 1500 else "") + ".",
             [{"id": "split", "label": "Split it into smaller tasks that depend on each other"},
-             {"id": "design", "label": "Let the supervisor design before implementing"}])
+             {"id": "design", "label": "Design first: a reviewed system design before any code"}])
     if sig["repos"] > 1:
         add("multi_repo", 0.3, f"Changes {sig['repos']} repositories.",
-            [{"id": "stack", "label": "Attach an integration stack so the services are proven together", "href": "#/repos/stacks"}])
+            [{"id": "stack", "label": "Attach an integration stack so the services are proven together", "href": "#/repos/stacks"},
+             {"id": "design", "label": "Design first: a reviewed system design before any code"}])
     roles = ctx.get("roles") or {}
     if sig["size"] != "small" and not (roles.get("reviewer") or {}).get("agent"):
         add("no_reviewer", 0.2, "No independent reviewer for a task of this size.",

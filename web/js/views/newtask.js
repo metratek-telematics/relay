@@ -330,7 +330,7 @@ export function openNewTask(prefill = {}) {
         <div class="modal-actions"><button type="button" class="btn" id="wBack">Back</button><span style="flex:1"></span><button type="button" class="btn primary" id="wCreate">${icon(edit ? "save" : "sparkles")}${edit ? "Save" : data.queue ? "Create & queue" : "Create draft"}</button></div>`;
       $("#wBack", body).onclick = () => go(3);
       if ($("#riskCheck", body)) mountRiskCheck($("#riskCheck", body), adviceDraft, { onChange: (patch) => {
-        if (patch.workflow) { data.workflow = patch.workflow; data.teamSource = "manual"; }
+        if (patch.workflow) { if (JSON.stringify(patch.workflow.roles) !== JSON.stringify(data.workflow.roles)) data.teamSource = "manual"; data.workflow = patch.workflow; }
         if (patch.requirements !== undefined) data.requirements = patch.requirements;
         const box = $(".summary-box", body); if (box && (patch.workflow || patch.requirements !== undefined)) { collectAp(); render(); }
       } });

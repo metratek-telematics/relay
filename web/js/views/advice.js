@@ -99,6 +99,10 @@ export function mountRiskCheck(host, getDraft, { onChange } = {}) {
     };
     $$("[data-lx-act]", host).forEach((b) => (b.onclick = async () => {
       const d = getDraft(), act = b.dataset.lxAct;
+      if (act === "design") {
+        const wf = JSON.parse(JSON.stringify(d.workflow)); wf.design_mode = "always";
+        onChange && onChange({ workflow: wf }); toast("success", "Design first switched on for this task"); load(); return;
+      }
       if (act === "add_reviewer" || act === "use_recommended") {
         const pf = await api.learningPreflight(draftBody(d, act === "add_reviewer" ? "best" : null));
         const pick = pf.recommendation.pick;
@@ -115,7 +119,8 @@ export function mountRiskCheck(host, getDraft, { onChange } = {}) {
     }));
   };
   const mitigation = (m) => {
-    const action = ["add_reviewer", "use_recommended"].includes(m.id) ? `<button type="button" class="btn xs" data-lx-act="${m.id}">Apply</button>`
+    const applied = m.id === "design" && getDraft().workflow?.design_mode === "always";
+    const action = applied ? '<span class="badge green">on</span>' : ["add_reviewer", "use_recommended", "design"].includes(m.id) ? `<button type="button" class="btn xs" data-lx-act="${m.id}">Apply</button>`
       : m.href ? `<a class="btn xs" href="${esc(m.href)}" target="_blank" rel="noopener">Open</a>` : "";
     return `<div class="lx-mit">${icon(m.id === "split" ? "layers" : m.id === "design" ? "wand" : m.id === "stack" ? "cpu" : m.id === "fix_environment" ? "settings" : "shield", "sm")}<span>${esc(m.label)}</span>${action}</div>`;
   };

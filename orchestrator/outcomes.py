@@ -135,8 +135,10 @@ def build(task: dict, card: dict, messages: list[dict] | None = None) -> dict:
     events = [e for e in task.get("events") or [] if not run_start or (e.get("time") or "") >= run_start[:19]]
 
     gates = [m for m in msgs if m.get("kind") == "gate" and m.get("ok") is False]
-    reviews = [m for m in msgs if m.get("kind") == "review"]
+    reviews = [m for m in msgs if m.get("kind") == "review" and m.get("subject") != "design"]
+    design_reviews = [m for m in msgs if m.get("kind") == "review" and m.get("subject") == "design"]
     blocking = sum(1 for m in reviews for f in (m.get("findings") or []) if str(f.get("severity") or "blocking").lower() == "blocking")
+    design = task.get("design") or {}
     verifs = [m for m in msgs if m.get("kind") == "verification"]
     e2e = [i for m in verifs for i in (m.get("items") or []) if i.get("kind") == "e2e"]
     last_e2e = {}
@@ -169,8 +171,12 @@ def build(task: dict, card: dict, messages: list[dict] | None = None) -> dict:
             "lines": int(ds.get("insertions") or 0) + int(ds.get("deletions") or 0),
             "work_packages": int(card.get("work_packages") or 0),
             "acceptance": len(plan.get("acceptance") or []),
-            "design_used": bool(plan.get("system_design") or task.get("system_design") or (task.get("design") or {}).get("status") in ("done", "approved")),
+            "design_used": bool(int(design.get("version") or 0) or plan.get("system_design") or task.get("system_design")),
         },
+        "design": {"mode": (task.get("workflow") or {}).get("design_mode"), "status": design.get("status"), "version": design.get("version"),
+                   "complexity": (design.get("complexity") or {}).get("level") if isinstance(design.get("complexity"), dict) else design.get("complexity"),
+                   "review_rounds": len(design_reviews),
+                   "blocking_findings": sum(1 for m in design_reviews for f in (m.get("findings") or []) if str(f.get("severity") or "blocking").lower() == "blocking")},
         "components": _components(task),
         "team": tm, "team_key": team_key(tm), "pairing": card.get("pairing") or "",
         "team_source": (task.get("team_pick") or {}).get("source") or task.get("team_source") or "manual",
