@@ -20,6 +20,7 @@ MAX_TURN_LOG = 400
 
 # Statuses whose branch another task may take over. Interrupted tasks resume on their branch, so they keep it.
 BRANCH_REUSABLE = {"done", "failed", "stopped"}
+QUEUE_PRIORITY = {"urgent": 0, "high": 1, "normal": 2, "low": 3}
 
 
 class Manager:
@@ -165,6 +166,7 @@ class Manager:
             "checkpoint": None, "pending": None, "archived": False,
             "github_repo": github.remote_repo_name(repo),
             "branch_name": branch,
+            "queue_pos": time.time(),
         }
         if parent:
             t["follow_up_of"] = parent
@@ -196,6 +198,7 @@ class Manager:
         if "status" in patch and patch["status"] == "queued" and t["status"] == "draft":
             allowed["status"] = "queued"
             allowed["detail"] = "Waiting in queue"
+            allowed["queue_pos"] = time.time()  # queueing again joins the back of the queue
         self.store.update(tid, immediate=True, **allowed)
         self.emit_task(tid)
         return self.get(tid)
@@ -317,20 +320,122 @@ class Manager:
         self.emit("queue", {"running": False, "max_parallel": self.max_parallel})
 
     def queue_state(self):
+        rows = self.store.list()
         return {"running": self.scheduler, "max_parallel": self.max_parallel,
-                "active": sum(1 for t in self.store.list() if t.get("status") in ACTIVE),
-                "queued": sum(1 for t in self.store.list() if t.get("status") == "queued")}
+                "active": sum(1 for t in rows if t.get("status") in ACTIVE),
+                "queued": sum(1 for t in rows if t.get("status") == "queued"),
+                "order": [t["id"] for t in self.queue_order(rows)]}
+
+    # ------------------------------------------------------------ queue order
+    @staticmethod
+    def queue_key(t):
+        """Run order: priority first, then the explicit queue position (creation time when never moved)."""
+        pos = t.get("queue_pos")
+        if pos is None:
+            try:
+                from datetime import datetime
+                pos = datetime.fromisoformat(t.get("created_at") or "").timestamp()
+            except (TypeError, ValueError):
+                pos = 0.0
+        return (QUEUE_PRIORITY.get(t.get("priority", "normal"), 2), float(pos), t.get("created_at", ""))
+
+    def queue_order(self, rows=None):
+        rows = self.store.list() if rows is None else rows
+        return sorted([t for t in rows if t.get("status") == "queued" and not t.get("archived")], key=self.queue_key)
+
+    def _busy(self, t) -> bool:
+        return t["id"] in self.runners or t.get("status") in ACTIVE
+
+    def chain_blocked(self, t, rows, queued) -> bool:
+        """A task in a chain waits while another task of the chain runs, waits for you, or is ahead of it in the queue."""
+        chain = t.get("chain_id")
+        if not chain:
+            return False
+        for o in rows:
+            if o["id"] == t["id"] or o.get("chain_id") != chain:
+                continue
+            if self._busy(o):
+                return True
+        for o in queued:
+            if o["id"] == t["id"]:
+                return False
+            if o.get("chain_id") == chain:
+                return True
+        return False
+
+    def move_in_queue(self, tid, direction):
+        """Swap a queued task with its neighbour in run order. It takes the neighbour's priority, so the order you see is the order that runs."""
+        rows = self.queue_order()
+        ids = [t["id"] for t in rows]
+        if tid not in ids:
+            raise ValueError("Only queued tasks can be reordered.")
+        i = ids.index(tid)
+        j = {"up": i - 1, "down": i + 1, "top": 0, "bottom": len(ids) - 1}.get(direction)
+        if j is None:
+            raise ValueError("Direction must be up, down, top or bottom.")
+        j = max(0, min(len(ids) - 1, j))
+        if i == j:
+            return self.get(tid)
+        order = rows[:]
+        moved = order.pop(i)
+        order.insert(j, moved)
+        # Renumber everything so positions stay distinct; the moved task adopts its new neighbour's priority.
+        neighbour = order[j + 1] if j < i else order[j - 1]
+        base = time.time() - len(order)
+        for k, t in enumerate(order):
+            patch = {"queue_pos": base + k}
+            if t["id"] == tid and neighbour.get("priority") != t.get("priority"):
+                patch["priority"] = neighbour.get("priority") or "normal"
+            self.store.update(t["id"], immediate=True, **patch)
+        self.timeline(tid, "user", "Moved in queue", f"now #{j + 1} of {len(order)}")
+        for t in order:
+            self.emit_task(t["id"])
+        self.emit("queue", self.queue_state())
+        return self.get(tid)
+
+    def unqueue(self, tid):
+        """Take a task out of the queue without deleting it; it stays as a draft you can start or queue again."""
+        t = self.store.get(tid)
+        if not t:
+            raise KeyError("Task not found")
+        if t.get("status") != "queued" or tid in self.runners:
+            raise ValueError("Only a waiting task can be removed from the queue.")
+        self.store.update(tid, immediate=True, status="draft", detail="Draft · removed from the queue")
+        self.timeline(tid, "user", "Removed from queue", "")
+        self.emit_task(tid)
+        self.emit("queue", self.queue_state())
+        return self.get(tid)
+
+    def hold_chain(self, tid):
+        """After a chain task fails, park the rest of its chain when the chain asks for that."""
+        t = self.store.get(tid) or {}
+        if not t.get("chain_id") or not t.get("chain_stop_on_failure") or t.get("status") != "failed":
+            return
+        held = []
+        for o in self.store.list():
+            if o.get("chain_id") == t["chain_id"] and o["id"] != tid and o.get("status") == "queued" and o["id"] not in self.runners:
+                self.store.update(o["id"], immediate=True, status="draft", detail=f"Held · {t.get('name', 'an earlier task')} failed")
+                self.timeline(o["id"], "system", "Chain stopped", f"{t.get('name', tid)} failed; start this task yourself when ready")
+                self.emit_task(o["id"])
+                held.append(o.get("name"))
+        if held:
+            self.notify("warning", "Chain stopped after a failure", f"{len(held)} task(s) held: " + ", ".join(held[:3]), tid, kind="failed")
 
     def _loop(self):
-        prio = {"urgent": 0, "high": 1, "normal": 2, "low": 3}
         while self.scheduler:
             try:
                 rows = self.store.list()
-                active = sum(1 for t in rows if t.get("status") in ACTIVE or t.get("status") in WAITING and t["id"] in self.runners)
-                queued = sorted([t for t in rows if t.get("status") == "queued" and not t.get("archived")],
-                                key=lambda t: (prio.get(t.get("priority", "normal"), 2), t.get("created_at", "")))
-                for t in queued[:max(0, self.max_parallel - active)]:
+                active = sum(1 for t in rows if self._busy(t) or t.get("status") in WAITING and t["id"] in self.runners)
+                queued = self.queue_order(rows)
+                room = max(0, self.max_parallel - active)
+                for t in queued:
+                    if room <= 0:
+                        break
+                    if self.chain_blocked(t, rows, queued):
+                        continue
                     self.launch(t["id"])
+                    room -= 1
+                    rows = self.store.list()
             except Exception:
                 pass
             time.sleep(0.5)
@@ -365,9 +470,15 @@ class Manager:
                 self.timeline(tid, "system", "Task failed", truncate(str(e), 300))
                 self.notify("error", "Task failed", truncate(str(e), 140), tid, kind="failed")
             finally:
+                try:
+                    # Still counted as running here, so the next task of its chain cannot slip in before it is held.
+                    self.hold_chain(tid)
+                except Exception:
+                    pass
                 self.runners.pop(tid, None)
                 self.process_state[tid] = {"state": "idle"}
                 self.emit_task(tid)
+                self.emit("queue", self.queue_state())
 
         threading.Thread(target=work, daemon=True).start()
 

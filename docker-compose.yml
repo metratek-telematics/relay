@@ -33,6 +33,8 @@ services:
       - "127.0.0.1:${RELAY_PORT:-8767}:8767"
 
     environment:
+      # Agents installed from the Agents page, so `docker exec -it relay <agent> login` works too.
+      PATH: ${RELAY_DATA}/agents/npm/bin:${RELAY_DATA}/agents/bin:/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       RELAY_DATA_DIR: ${RELAY_DATA:?set RELAY_DATA in .env}
       RELAY_REPOS: ${RELAY_REPOS:?set RELAY_REPOS in .env}
       RELAY_BROWSE_ROOT: ${RELAY_REPOS}

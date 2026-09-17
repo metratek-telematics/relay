@@ -58,6 +58,11 @@ export const STATUS = {
   interrupted: { label: "Interrupted", tone: "amber", live: false, attention: true },
 };
 export const LIVE = new Set(["running", "preparing", "planning", "implementing", "verifying", "reviewing", "delivering"]);
+// Queue run order, mirroring Manager.queue_key: priority, then queue position (creation time if never moved).
+const PRIO = { urgent: 0, high: 1, normal: 2, low: 3 };
+export const queueKey = (t) => [PRIO[t.priority] ?? 2, t.queue_pos ?? (Date.parse(t.created_at) / 1000 || 0), t.created_at || ""];
+export const byQueue = (a, b) => { const x = queueKey(a), y = queueKey(b); return x[0] - y[0] || x[1] - y[1] || String(x[2]).localeCompare(String(y[2])); };
+export const queuedInOrder = (tasks) => [...tasks].filter((t) => t.status === "queued" && !t.archived).sort(byQueue);
 export const statusOf = (t) => STATUS[t?.status] || STATUS.queued;
 export const toneVar = (tone) => ({ blue: "var(--blue)", accent: "var(--accent)", amber: "var(--amber)", purple: "var(--purple)", green: "var(--green)", red: "var(--red)" }[tone] || "var(--text-3)");
 

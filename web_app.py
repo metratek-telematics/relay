@@ -18,7 +18,8 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 from orchestrator import agents, config as C, github, gitops, handoff, history, repo_env, repos  # noqa: E402
-from orchestrator import installer  # noqa: E402
+from orchestrator import issues  # noqa: E402
+from orchestrator import agent_info, installer  # noqa: E402
 
 # Agents installed from the Agents page must be found by health checks, runs and verification alike.
 installer.extend_path()
@@ -240,6 +241,20 @@ def agent_install(name):
         return jsonify({"error": str(e)}), 409
 
 
+@app.get("/api/agents/<name>/models")
+def agent_models(name):
+    if name not in C.AGENTS:
+        return jsonify({"error": f"Unknown agent {name}"}), 404
+    return jsonify(agent_info.models(name, manager.cfg(), refresh=request.args.get("refresh") == "1"))
+
+
+@app.get("/api/agents/<name>/account")
+def agent_account(name):
+    if name not in C.AGENTS:
+        return jsonify({"error": f"Unknown agent {name}"}), 404
+    return jsonify(agent_info.account(name, manager.cfg()))
+
+
 @app.get("/api/agents/jobs")
 def agent_jobs():
     return jsonify({name: installer.job(name) for name in C.AGENTS if installer.job(name)})
@@ -422,6 +437,10 @@ def task_action(tid, action):
             return jsonify(manager.duplicate(tid))
         elif action == "queue":
             return jsonify(manager.update_task(tid, {"status": "queued"}))
+        elif action == "unqueue":
+            return jsonify({"ok": True, "task": manager.unqueue(tid)})
+        elif action == "move":
+            return jsonify({"ok": True, "task": manager.move_in_queue(tid, b.get("direction") or "up")})
         else:
             return jsonify({"error": f"Unknown action {action}"}), 404
     except ValueError as e:
@@ -723,6 +742,25 @@ def gh_sources_delete(sid):
     rows = [r for r in github.load_sources() if r.get("id") != sid]
     github.save_sources(rows)
     return jsonify(rows)
+
+
+@app.get("/api/issues")
+def issues_list():
+    a = request.args
+    try:
+        return jsonify(issues.list_issues(manager.tasks, state=a.get("state") or "open", mine=a.get("mine") == "1",
+                                          force=a.get("force") == "1", repo=a.get("repo") or "", label=a.get("label") or "",
+                                          assignee=a.get("assignee") or "", q=a.get("q") or ""))
+    except RuntimeError as e:
+        return jsonify({"error": str(e), "issues": [], "errors": [], "facets": {"repos": [], "labels": [], "assignees": []}}), 502
+
+
+@app.post("/api/issues/tasks")
+def issues_create_tasks():
+    try:
+        return jsonify(issues.create_tasks(manager, body()))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
 
 
 @app.post("/api/github/poll")
