@@ -68,5 +68,6 @@ Text before the envelope is fine (reasoning, notes, evidence). The envelope is w
 ## Boundaries for every agent
 - Work only inside the task worktree (or worktrees, when the task spans several repositories).
 - Never push, merge, deploy, force-reset, delete branches, or touch production systems. The orchestrator commits and opens the pull request.
-- Do not commit unless the supervisor explicitly asks; leave changes in the working tree.
+- Never commit, amend or create revert commits, even when a teammate asks; leave changes in the working tree. Relay undoes any commit an agent makes (soft reset, changes kept) and commits once at delivery. To undo earlier work, restore files (`git checkout <commit> -- <paths>`).
+- Never install system packages (apt-get, sudo). A missing system library is a blocked check that names the package; the human adds it under Repositories → Environment.
 - Do not wait for input inside your own tools. If you need something, send a question envelope.

@@ -248,6 +248,8 @@ class MultiRepo:
         if not cmds and (self.task.get("workflow") or {}).get("auto_detect_verification", self.cfg.get("auto_detect_verification", True)):
             cmds = gitops.detect_verify(row["worktree"])
         row["verify_commands"] = [] if self.verify_mode == "off" else cmds
+        if not (self.state.get("related_heads") or {}).get(name):
+            self._remember_head(row)
         self.related.append(row)
         self._save_related()
         return row
@@ -285,13 +287,36 @@ class MultiRepo:
                     pass
                 row["services_started"] = False
 
-    def _update_masker(self):
-        maskers = [repo_env.masker(getattr(self, "repo_env", None) or repo_env.empty())] + [repo_env.masker(r["env"]) for r in self.related]
+    def repo_masker(self):
+        """Secrets of every repository of the task, masked in logs and messages."""
+        maskers = [repo_env.masker(getattr(self, "repo_env", None) or repo_env.empty())] + [repo_env.masker(r["env"]) for r in getattr(self, "related", None) or []]
         def mask(s):
             for fn in maskers:
                 s = fn(s)
             return s
-        self.r.set_masker(mask)
+        return mask
+
+    def _update_masker(self):
+        rm, cm = self.repo_masker(), getattr(self, "_conn_mask", None)
+        self.r.set_masker((lambda s: cm(rm(s))) if cm else rm)
+
+    def guard_related_commits(self, role, agent):
+        """The commit guard for the other repositories: an agent commit there is undone too, keeping its changes."""
+        from . import commitguard
+        heads = self.state.get("related_heads") or {}
+        for r in getattr(self, "related", None) or []:
+            expected = heads.get(r["name"])
+            if not expected:
+                continue
+            info = commitguard.rewind(r["worktree"], expected, r["branch"])
+            if info and info.get("rewound"):
+                self.r.timeline("git", f"Agent commit undone · {r['name']}", f"{role}: {truncate('; '.join(info.get('commits') or []), 240)} · changes kept")
+
+    def _remember_head(self, row):
+        from . import commitguard
+        heads = dict(self.state.get("related_heads") or {})
+        heads[row["name"]] = commitguard.head(row["worktree"])
+        self.state["related_heads"] = heads
 
     def agent_cfg(self) -> dict:
         """Settings for an agent turn: related worktrees are directories the agent may read and write."""
@@ -555,6 +580,8 @@ class MultiRepo:
             shutil.rmtree(Path(r["worktree"]) / ".orchestrator_refs", ignore_errors=True)
             r["committed"] = gitops.commit_all(self.r, r["worktree"], f"{prefix} {title}".strip()) or bool(r.get("committed"))
             self.r.timeline("git", f"Committed · {r['name']}" if r["committed"] else f"Nothing new to commit · {r['name']}", r["branch"])
+            self._remember_head(r)
+            self.save()
             r["diffstat"] = gitops.diff_stat(r["worktree"], r.get("base_commit"))
             r["changed_count"] = len(gitops.changed_files(r["worktree"], r.get("base_commit")))
             if not r.get("github_repo") or not cfg.get("github_auto_push_on_pass", True):

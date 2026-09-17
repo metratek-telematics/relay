@@ -1,0 +1,48 @@
+/* Settings → Connectors, the connector picker and connector calls in the conversation (views/connectors.js). */
+.conn-list { display: grid; gap: 10px; }
+.conn-item { border: 1px solid var(--border); border-radius: var(--r); background: var(--bg); padding: 12px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 12px; align-items: start; }
+.conn-main { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 10px; min-width: 0; }
+.conn-ic { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; background: var(--panel-2); color: var(--text-2); }
+.conn-ic.http { background: var(--green-soft); color: var(--green); }
+.conn-ic.postgres { background: var(--blue-soft); color: var(--blue); }
+.conn-ic.logs { background: var(--amber-soft); color: var(--amber); }
+.conn-ic.docker { background: var(--purple-soft); color: var(--purple); }
+.conn-ic.browser { background: var(--accent-soft); color: var(--accent); }
+.conn-text { min-width: 0; display: grid; gap: 4px; }
+.conn-target { color: var(--text-2); }
+.conn-desc { font-size: var(--fs-xs); }
+.conn-links { gap: 4px; }
+.conn-links .badge { text-transform: none; letter-spacing: 0; font-weight: 600; }
+.conn-actions { display: flex; gap: 6px; }
+.conn-res { grid-column: 1 / -1; }
+.conn-result { border: 1px solid var(--border); border-left-width: 3px; border-radius: var(--r-sm); padding: 8px 10px; background: var(--panel); font-size: var(--fs-sm); }
+.conn-result.green { border-left-color: var(--green); }
+.conn-result.red { border-left-color: var(--red); }
+.conn-result.amber { border-left-color: var(--amber); }
+.conn-result strong { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.conn-result pre { margin: 8px 0 0; max-height: 240px; overflow: auto; font-family: var(--mono); font-size: var(--fs-xs); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-2); }
+.conn-calls { display: grid; gap: 2px; }
+.conn-call { display: grid; grid-template-columns: 72px minmax(80px, 160px) minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 5px 4px; border-bottom: 1px solid var(--border); font-size: var(--fs-sm); }
+.conn-call:last-child { border-bottom: 0; }
+.conn-call .badge { justify-self: start; }
+.conn-when { font-size: var(--fs-xs); white-space: nowrap; }
+.conn-methods { gap: 12px; }
+.conn-repos { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 6px 12px; margin-bottom: 4px; }
+.conn-repos label { min-width: 0; font-size: var(--fs-sm); }
+.conn-pick { display: grid; gap: 4px; }
+.conn-pick-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--bg); cursor: pointer; min-width: 0; }
+.conn-pick-row:hover { border-color: var(--border-strong); }
+.conn-pick-row .mono-strong { margin-right: auto; }
+.conn-header input[data-hv] { font-family: var(--mono); }
+/* A connector call in the conversation */
+.tool-row.connector .tic { background: var(--green-soft); color: var(--green); }
+.tool-row.connector.refused .tic { background: var(--amber-soft); color: var(--amber); }
+.tool-row .tst .badge { margin-right: 4px; }
+@media (max-width: 640px) {
+  .conn-item { grid-template-columns: minmax(0, 1fr); }
+  .conn-actions { justify-content: flex-start; }
+  .conn-call { grid-template-columns: 64px minmax(0, 1fr) auto; }
+  .conn-call .conn-op { grid-column: 1 / -1; grid-row: 2; }
+  .renv-var.conn-header { grid-template-columns: minmax(0, 1fr) auto auto; }
+  .renv-var.conn-header input[data-hv] { grid-column: 1 / -1; grid-row: 2; }
+}

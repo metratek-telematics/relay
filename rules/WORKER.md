@@ -17,6 +17,12 @@ Implement the concern in the current work package. Requirements and acceptance a
 - When the design gate command is given, run it before every report and fix every error. It is enforced: an error blocks delivery.
 - Use reviewer feedback literally and verify the fix.
 
+## Real environments (connectors)
+When the environment section lists connectors, the service behind the code is reachable through `relay-connect`.
+- Before building on or fixing behaviour that depends on an API, database, logs or a running app, check the real thing (response shape, columns, errors) instead of assuming it.
+- Never write to a PROD connector unless the task explicitly asks. A refused call is an answer: do not work around it.
+- Put each command you relied on and what it showed in your report as evidence.
+
 ## Do not stop at suggestions
 If the task authorizes a local implementation action, perform it.
 

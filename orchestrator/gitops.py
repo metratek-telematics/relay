@@ -311,7 +311,12 @@ def commit_all(runner, wt, message) -> bool:
     return True
 
 
-def push_branch(runner, wt, branch):
+def push_branch(runner, wt, branch, lease=""):
+    if lease:
+        # An agent pushed commits Relay then undid; replace exactly that remote state and nothing newer.
+        runner.run_shell_args(["git", "push", f"--force-with-lease={branch}:{lease}", "-u", "origin", branch], cwd=wt, role="git",
+                              title="Push branch (replacing commits an agent pushed)")
+        return
     runner.run_shell_args(["git", "push", "-u", "origin", branch], cwd=wt, role="git", title="Push branch")
 
 
@@ -339,6 +344,25 @@ def _slug_words(text: str, limit: int = 5) -> list[str]:
     words = re.findall(r"[a-z0-9]+", ascii_text.lower())
     keep = [w for w in words if w not in _FILLER and not (len(w) == 1 and not w.isdigit())]
     return (keep or words)[:limit]
+
+
+# Lines people paste along with a request copied from a web page (seen as a pull request titled "Skip to content").
+_BOILERPLATE = re.compile(r"^(skip to (main )?content|navigation menu|toggle navigation|sign in|sign up|menu|search|home|"
+                          r"open (in )?(app|sidebar)|you signed (in|out).*|reload to refresh.*|dismiss alert|[-=*#_~`>|]+)$", re.I)
+
+
+def auto_task_name(requirements: str, limit: int = 60) -> str:
+    """A task name from the request: the first meaningful line, cut at a word boundary."""
+    for raw in (requirements or "").splitlines():
+        line = re.sub(r"^[#>*\-\s]+", "", raw).strip()
+        line = re.sub(r"\s+", " ", line)
+        if not line or _BOILERPLATE.match(line) or re.fullmatch(r"https?://\S+", line):
+            continue
+        if len(line) <= limit:
+            return line
+        cut = line[:limit + 1].rsplit(" ", 1)[0].rstrip(" ,.;:-")
+        return (cut if len(cut) >= limit // 2 else line[:limit]).rstrip() + "…"
+    return ""
 
 
 def branch_exists(repo, name: str) -> bool:
