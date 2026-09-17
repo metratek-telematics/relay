@@ -1,7 +1,7 @@
 // Organisation layer, browser side: who you are, the current project, and the pages under #/org/<section>.
 // Self-contained so it can move into any navigation: app.js calls mountOrg(main, section) and mountOrgHeader(el);
 // settings.js lists one "Workspace & access" entry that links here. Server side: orchestrator/org.
-import { $, $$, esc, icon, toast } from "../../ui.js";
+import { $, $$, esc, icon, toast, skeleton } from "../../ui.js";
 import { S, bus, navigate } from "../../state.js";
 import { request } from "../../api.js";
 
@@ -167,7 +167,7 @@ const LOADERS = {
 
 export function mountOrg(main, section, arg) {
   const sec = LOADERS[section] ? section : "profile";
-  main.innerHTML = `<div class="page org-page"><div class="org-layout"><nav class="settings-nav org-nav" id="orgNav" aria-label="Workspace"></nav><div class="org-main" id="orgMain"><div class="empty small">Loading…</div></div></div></div>`;
+  main.innerHTML = `<div class="page org-page"><div class="org-layout"><nav class="settings-nav org-nav" id="orgNav" aria-label="Workspace"></nav><div class="org-main" id="orgMain">${skeleton("page", 3)}</div></div></div>`;
   const nav = $("#orgNav", main), body = $("#orgMain", main);
   let child = null, alive = true;
   const drawNav = () => {

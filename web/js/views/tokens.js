@@ -1,6 +1,6 @@
 // Token efficiency: where prompt and output tokens go, cache hits, trend and the settings that send less
 // (orchestrator/tokens.py, docs/TOKEN_EFFICIENCY.md). Self-contained: GET /api/tokens.
-import { $, $$, esc, icon, toast } from "../ui.js";
+import { $, $$, esc, icon, toast, skeleton } from "../ui.js";
 import { get, api } from "../api.js";
 import { agentLabel } from "../state.js";
 
@@ -77,6 +77,6 @@ export function mountTokens(body) {
     });
     $$("[data-tkv]", body).forEach((i) => (i.onchange = () => save({ [i.dataset.tkv]: i.type === "number" ? Number(i.value) || 0 : i.value })));
   };
-  body.innerHTML = `<div class="card"><div class="card-body"><div class="empty small">${icon("spinner", "spin")} Loading…</div></div></div>`;
+  body.innerHTML = skeleton("cards", 2);
   load();
 }

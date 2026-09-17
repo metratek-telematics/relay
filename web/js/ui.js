@@ -220,6 +220,21 @@ export function md(text) {
   return out.join("");
 }
 
+// ---------------------------------------------------------------------------- skeletons
+// A placeholder with the shape and the height of the content that replaces it, so nothing jumps when the
+// answer arrives. `kind`: "page" (heading + cards), "list" (rows), "cards" (a grid of panels).
+export function skeleton(kind = "list", n = 4) {
+  const row = (w) => `<span class="skel" style="width:${w}%"></span>`;
+  if (kind === "page") {
+    return `<div class="skel-page" aria-hidden="true">
+      <div class="skel-head">${row(38)}${row(56)}</div>
+      ${Array.from({ length: n }, () => `<div class="skel-card">${row(30)}${row(88)}${row(64)}</div>`).join("")}
+    </div>`;
+  }
+  if (kind === "cards") return `<div class="skel-cards" aria-hidden="true">${Array.from({ length: n }, () => `<div class="skel-card">${row(44)}${row(92)}${row(70)}</div>`).join("")}</div>`;
+  return `<div class="skel-rows" aria-hidden="true">${Array.from({ length: n }, (_, i) => `<div class="skel-row">${row(i % 3 === 2 ? 52 : 74)}</div>`).join("")}</div>`;
+}
+
 // ---------------------------------------------------------------------------- toasts
 let toastHost;
 export function toast(level, title, body = "", opts = {}) {
@@ -231,7 +246,7 @@ export function toast(level, title, body = "", opts = {}) {
     ${opts.action ? `<button class="toast-action">${esc(opts.action.label)}</button>` : ""}
     <button class="toast-x" aria-label="Dismiss">${icon("x")}</button>
   </div>`);
-  const close = () => { t.classList.add("out"); setTimeout(() => t.remove(), 220); };
+  const close = () => { if (t.classList.contains("out")) return; t.classList.add("out"); setTimeout(() => t.remove(), 200); };
   t.querySelector(".toast-x").onclick = close;
   if (opts.action) t.querySelector(".toast-action").onclick = () => { opts.action.onClick(); close(); };
   toastHost.appendChild(t);
@@ -281,9 +296,18 @@ export function menu(anchor, items) {
     `<button class="menu-item ${it.danger ? "danger" : ""}" ${it.disabled ? "disabled" : ""} data-k="${esc(it.key || it.label)}">${it.icon ? icon(it.icon) : ""}<span>${esc(it.label)}</span>${it.hint ? `<kbd>${esc(it.hint)}</kbd>` : ""}</button>`).join("")}</div>`);
   document.body.appendChild(pop);
   const r = anchor.getBoundingClientRect();
-  pop.style.top = `${Math.min(r.bottom + 6, innerHeight - pop.offsetHeight - 8)}px`;
-  pop.style.left = `${Math.min(r.left, innerWidth - pop.offsetWidth - 8)}px`;
-  const close = () => { pop.remove(); document.removeEventListener("mousedown", onDoc, true); document.removeEventListener("keydown", onKey); };
+  const below = r.bottom + 6 + pop.offsetHeight <= innerHeight - 8;
+  const top = below ? r.bottom + 6 : Math.max(8, r.top - 6 - pop.offsetHeight);
+  const left = Math.max(8, Math.min(r.left, innerWidth - pop.offsetWidth - 8));
+  pop.style.top = `${top}px`;
+  pop.style.left = `${left}px`;
+  // It grows from the corner nearest the button it belongs to.
+  pop.style.transformOrigin = `${r.left < left + pop.offsetWidth / 2 ? "left" : "right"} ${below ? "top" : "bottom"}`;
+  const close = () => {
+    pop.classList.add("out");
+    setTimeout(() => pop.remove(), 120);
+    document.removeEventListener("mousedown", onDoc, true); document.removeEventListener("keydown", onKey);
+  };
   const onDoc = (e) => { if (!pop.contains(e.target)) close(); };
   const onKey = (e) => { if (e.key === "Escape") close(); };
   setTimeout(() => { document.addEventListener("mousedown", onDoc, true); document.addEventListener("keydown", onKey); }, 0);

@@ -32,8 +32,12 @@ a { color: var(--accent); }
 @keyframes travel { from { left: calc((100% / var(--n)) * (var(--from) + .5)); opacity: 0; } 15% { opacity: 1; } 85% { opacity: 1; } to { left: calc((100% / var(--n)) * (var(--to) + .5)); opacity: 0; } }
 @keyframes line-in { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: none; } }
 @keyframes caret { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+@keyframes view-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+/* A view arriving: a short fade and a 4 px lift — transform and opacity only, so nothing around it reflows. */
+.view-enter { animation: view-in var(--dur-enter) var(--ease-out); will-change: opacity, transform; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
+  html { transition: none !important; }
 }
 
 .live-dot { position: relative; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex: none; }
@@ -125,34 +129,54 @@ kbd { font-family: var(--mono); font-size: 10.5px; padding: 1px 5px; border-radi
 .empty-state.calm > .ic { background: var(--green-soft); color: var(--green); }
 .skel { display: inline-block; height: 12px; border-radius: 6px; background: var(--panel-3); animation: shimmer 1.4s ease-in-out infinite; }
 .skel-block { min-height: 74px; background: var(--panel-2) !important; animation: shimmer 1.4s ease-in-out infinite; }
+.skel-page { display: grid; gap: 14px; padding: 4px 0 0; }
+.skel-head { display: grid; gap: 8px; margin-bottom: 4px; }
+.skel-head .skel:first-child { height: 22px; }
+.skel-card { display: grid; gap: 9px; padding: 16px; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--panel); min-height: 96px; align-content: start; }
+.skel-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 12px; }
+.skel-rows { display: grid; gap: 1px; }
+.skel-row { display: flex; align-items: center; min-height: 44px; padding: 0 2px; }
+.skel-page .skel, .skel-cards .skel, .skel-rows .skel { display: block; }
 .skel-list { display: grid; gap: 10px; padding: 12px; }
 .skel-list .skel { width: 100%; height: 14px; }
 .skel-list .skel:nth-child(3n) { width: 70%; }
 
 /* ---------------------------------------------------------------- shell */
+/* One transition on the root animates the whole shell: --nav is the column width, --nav-label fades the
+   wording. Icons keep their place because every row is padded the same in both states. */
 .app { display: grid; grid-template-columns: var(--nav) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); height: 100vh; height: 100dvh; }
-html.nav-collapsed { --nav: var(--rail); }
-.nav { position: relative; display: flex; flex-direction: column; gap: 4px; padding: 14px 12px 12px; background: var(--bg-elev); border-right: 1px solid var(--border); min-height: 0; overflow-y: auto; overflow-x: hidden; }
-.nav-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 0 2px 10px; min-height: 34px; }
-.brand { display: inline-flex; align-items: center; gap: 10px; color: var(--text); text-decoration: none; min-width: 0; }
+html { transition: --nav var(--dur-panel) var(--ease-out), --nav-label 130ms linear; }
+html.nav-rail { --nav: var(--rail); --nav-label: 0; }
+html.booting { transition: none; }                    /* the remembered state is painted, never animated in */
+.nav { grid-column: 1; position: relative; z-index: 2; display: flex; flex-direction: column; gap: 4px; padding: 14px 12px 12px; background: var(--bg-elev); border-right: 1px solid var(--border); min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
+/* the wording of every row: it fades and slides, and the row never re-wraps because it cannot grow */
+.nav .lbl, .brand-name, .nav-project .org-proj-name { opacity: var(--nav-label); transform: translateX(calc((var(--nav-label) - 1) * 5px)); max-width: calc(var(--nav-label) * 220px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.nav .lbl:empty { display: none; }
+.nav-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 0 0 10px; padding: 0 2px; height: 34px; }
+.brand { display: inline-flex; align-items: center; gap: calc(var(--nav-label) * 10px); color: var(--text); text-decoration: none; min-width: 0; }
 .brand:hover { text-decoration: none; }
 .brand-mark { width: 30px; height: 30px; flex: none; }
 .brand-mark rect { fill: var(--accent); }
 .brand-mark path { fill: none; stroke: var(--on-accent); stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
 .brand-mark circle { fill: var(--brass); }
 .brand-name { font-size: 17px; font-weight: 750; letter-spacing: -.02em; }
-.nav-collapse { border: 0; background: transparent; color: var(--text-3); width: 28px; height: 28px; border-radius: var(--r-sm); display: grid; place-items: center; }
+.nav-collapse { border: 0; background: transparent; color: var(--text-3); width: 28px; height: 28px; border-radius: var(--r-sm); display: grid; place-items: center; flex: none; transition: background var(--dur-press), color var(--dur-press), opacity var(--dur-enter) var(--ease-out); }
 .nav-collapse:hover { background: var(--hover); color: var(--text); }
-.nav-new { width: 100%; height: 36px; justify-content: flex-start; margin-bottom: 12px; }
+.nav-collapse:active { transform: scale(.92); }
+.nav-new { width: 100%; height: 36px; justify-content: flex-start; padding: 0 11px; margin-bottom: 12px; overflow: hidden; }
 .nav-new kbd { margin-left: auto; }
+.nav-new .ic, .nav-search .ic { width: 18px; height: 18px; flex: none; }
 .nav-items { display: grid; gap: 2px; }
-.nav-item { position: relative; display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border-radius: var(--r); color: var(--text-2); font-weight: 600; font-size: var(--fs); text-decoration: none; transition: background var(--dur-1), color var(--dur-1); }
+.nav-item { position: relative; display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 11px; border-radius: var(--r); color: var(--text-2); font-weight: 600; font-size: var(--fs); text-decoration: none; overflow: hidden; transition: background var(--dur-press), color var(--dur-press); }
+.nav-item .lbl { flex: 1; }
 .nav-item .ic { width: 18px; height: 18px; color: var(--text-3); transition: color var(--dur-1); }
 .nav-item:hover { background: var(--hover); color: var(--text); text-decoration: none; }
 .nav-item.active { background: var(--panel); color: var(--text); box-shadow: var(--shadow-sm); }
 .nav-item.active .ic { color: var(--accent); }
-.nav-item.active::before { content: ""; position: absolute; left: -12px; top: 8px; bottom: 8px; width: 3px; border-radius: 0 3px 3px 0; background: var(--accent); }
-.nav-count { margin-left: auto; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 99px; display: inline-grid; place-items: center; font: 700 10.5px/1 var(--mono); background: var(--panel-2); color: var(--text-2); }
+.nav-item.active::before { content: ""; position: absolute; left: 0; top: 7px; bottom: 7px; width: 3px; border-radius: 0 3px 3px 0; background: var(--accent); animation: nav-mark var(--dur-enter) var(--ease-out); }
+@keyframes nav-mark { from { transform: scaleY(.3); opacity: 0; } to { transform: none; opacity: 1; } }
+/* The count sits in the same place in both states, so it slides to the corner instead of jumping there. */
+.nav-count { position: absolute; right: 8px; top: 8px; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 99px; display: inline-grid; place-items: center; font: 700 10.5px/1 var(--mono); font-variant-numeric: tabular-nums; background: var(--panel-2); color: var(--text-2); transition: top var(--dur-panel) var(--ease-out), right var(--dur-panel) var(--ease-out), height var(--dur-panel) var(--ease-out), min-width var(--dur-panel) var(--ease-out), font-size var(--dur-panel) var(--ease-out); }
 .nav-count.live { background: var(--green-soft); color: var(--green); }
 .nav-count.attn { background: var(--amber-soft); color: var(--amber); }
 .nav-spacer { flex: 1; min-height: 12px; }
@@ -162,30 +186,54 @@ html.nav-collapsed { --nav: var(--rail); }
 .ap-name { font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--text-3); }
 .ap-state { font-size: var(--fs-sm); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nav-tools { display: grid; gap: 6px; }
-.nav-tool { border: 1px solid transparent; background: transparent; color: var(--text-2); height: 32px; border-radius: var(--r); display: inline-flex; align-items: center; gap: 8px; padding: 0 8px; position: relative; }
+.nav-tool { border: 1px solid transparent; background: transparent; color: var(--text-2); height: 32px; border-radius: var(--r); display: inline-flex; align-items: center; gap: 8px; padding: 0 11px; position: relative; min-width: 0; overflow: hidden; transition: background var(--dur-press), color var(--dur-press); }
 .nav-tool:hover { background: var(--hover); color: var(--text); }
 .nav-search { border-color: var(--border); background: var(--panel); width: 100%; color: var(--text-3); font-size: var(--fs-sm); }
 .nav-search kbd { margin-left: auto; }
-.nav-tool-row { display: flex; gap: 2px; }
-.nav-tool-row .nav-tool { flex: 1; justify-content: center; }
+.nav-tool-row { display: flex; gap: 2px; min-width: 0; }
+.nav-tool-row .nav-tool { flex: 1 1 0; min-width: 0; justify-content: center; padding: 0; }
 .nav-dot { position: absolute; top: 6px; right: calc(50% - 12px); width: 7px; height: 7px; border-radius: 50%; background: var(--red); box-shadow: 0 0 0 2px var(--bg-elev); }
 .conn { display: flex; align-items: center; gap: 8px; padding: 8px 4px 0; margin-top: 6px; border-top: 1px solid var(--border); color: var(--text-3); font-size: var(--fs-xs); white-space: nowrap; overflow: hidden; }
-.main-col { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.main-col { grid-column: 2; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+html.bare .main-col { grid-column: 1; }
 .main { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; background: var(--bg); outline: none; }
 .tabbar { display: none; }
 
-/* collapsed navigation: icons only */
-html.nav-collapsed .nav { padding: 14px 10px 12px; align-items: center; }
-html.nav-collapsed .nav .lbl, html.nav-collapsed .brand-name { display: none; }
-html.nav-collapsed .nav-top { flex-direction: column; margin: 0 0 8px; }
-html.nav-collapsed .nav-new { width: 40px; padding: 0; justify-content: center; }
-html.nav-collapsed .nav-item { width: 42px; justify-content: center; padding: 0; }
-html.nav-collapsed .nav-item.active::before { left: -10px; }
-html.nav-collapsed .nav-count { position: absolute; top: 2px; right: -2px; min-width: 16px; height: 16px; font-size: 9.5px; padding: 0 4px; }
-html.nav-collapsed .ap-card { padding: 6px; flex-direction: column; border: 0; background: transparent; }
-html.nav-collapsed .nav-search { width: 42px; justify-content: center; padding: 0; }
-html.nav-collapsed .nav-tool-row { flex-direction: column; }
-html.nav-collapsed .conn { justify-content: center; border-top: 0; }
+/* ---------------------------------------------------------------- the rail (icons only) */
+/* Nothing here moves an icon: rows keep their padding, only the wording fades out and the badges slide. */
+html.nav-rail .nav .lbl, html.nav-rail .brand-name { pointer-events: none; }
+html.nav-rail .nav-count { top: 2px; right: 3px; min-width: 16px; height: 16px; font-size: 9.5px; padding: 0 4px; }
+html.nav-rail .ap-card { padding: 6px; flex-direction: column; border-color: transparent; background: transparent; }
+html.nav-rail .nav-tool-row { flex-direction: column; gap: 2px; }
+html.nav-rail .nav-tool-row .nav-tool { flex: none; width: 100%; height: 32px; }
+html.nav-rail .nav-project .org-proj-btn { width: 100%; padding: 0 11px 0 15px; justify-content: flex-start; }
+html.nav-rail .conn { justify-content: center; border-top: 0; }
+html.nav-rail .nav-new kbd, html.nav-rail .nav-search kbd { display: none; }
+/* In the rail the toggle takes the brand's place, appearing when the pointer or the keyboard reaches it. */
+html.nav-rail .nav-top { position: relative; justify-content: center; padding: 0; }
+html.nav-rail .brand { flex: 1; justify-content: center; transition: opacity var(--dur-enter) var(--ease-out); }
+html.nav-rail .nav-collapse { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: var(--r); background: var(--bg-elev); opacity: 0; }
+html.nav-rail .nav-top:hover .brand, html.nav-rail .nav-top:focus-within .brand { opacity: .12; }
+html.nav-rail .nav-top:hover .nav-collapse, html.nav-rail .nav-collapse:focus-visible { opacity: 1; }
+/* tooltips for the rail live in the body (the rail clips its own overflow) */
+.nav-tip { position: fixed; z-index: 400; pointer-events: none; padding: 5px 9px; border-radius: var(--r-sm); background: var(--panel-3); color: var(--text); border: 1px solid var(--border); box-shadow: var(--shadow-md); font-size: var(--fs-xs); font-weight: 600; white-space: nowrap; opacity: 0; transform: translateX(-4px); transition: opacity var(--dur-press) var(--ease-out), transform var(--dur-press) var(--ease-out); }
+.nav-tip.in { opacity: 1; transform: none; }
+.nav-tip kbd { margin-left: 6px; }
+
+/* ---------------------------------------------------------------- the drawer (tablet and phone) */
+.nav-scrim { position: fixed; inset: 0; z-index: 190; background: hsl(var(--scrim) / .42); opacity: 0; pointer-events: none; transition: opacity var(--dur-panel) var(--ease-out); }
+html.nav-open .nav-scrim { opacity: 1; pointer-events: auto; }
+html.nav-open .nav { position: fixed; left: 0; top: 0; bottom: 0; width: var(--nav-wide); z-index: 200; --nav-label: 1; box-shadow: var(--shadow-xl); border-right: 1px solid var(--border); }
+html.nav-open .nav .lbl, html.nav-open .brand-name { pointer-events: auto; }
+html.nav-open .nav-count { top: 8px; right: 8px; min-width: 20px; height: 20px; font-size: 10.5px; padding: 0 6px; }
+html.nav-open .ap-card { padding: 8px 8px 8px 10px; flex-direction: row; border-color: var(--border); background: var(--panel); }
+html.nav-open .nav-tool-row { flex-direction: row; }
+html.nav-open .nav-tool-row .nav-tool { flex: 1 1 0; width: auto; }
+html.nav-open .nav-collapse { position: static; width: 28px; height: 28px; opacity: 1; background: transparent; }
+html.nav-open .nav-top { justify-content: space-between; }
+html.nav-open .nav-top:hover .brand { opacity: 1; }
+html.nav-open .nav-foot { flex-direction: row; }
+html.nav-open .nav-new kbd, html.nav-open .nav-search kbd { display: inline; }
 
 /* bare pages (shareable status) have no chrome */
 html.bare .nav, html.bare .tabbar { display: none; }
@@ -237,6 +285,8 @@ a.metric:hover { background: color-mix(in srgb, var(--panel) 94%, var(--text)); 
 .mc-delivered { grid-column: 1; grid-row: 3 / span 2; }
 .mc-health { grid-column: 2; grid-row: 3; }
 .mc-trend { grid-column: 2; grid-row: 4; }
+.mc .panel-body { min-height: 116px; }
+.mc .panel-body .skel-rows, .mc .panel-body .skel-cards { padding: 4px 0; }
 .mc-needs.focus { box-shadow: 0 0 0 3px var(--amber-soft), var(--shadow-sm); border-color: color-mix(in srgb, var(--amber) 45%, var(--border)); }
 
 .agent-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr)); gap: 12px; }
@@ -831,18 +881,7 @@ html.bare .main { overflow: visible; }
   .tp-body.rail-hidden { grid-template-columns: 208px minmax(0, 1fr); }
 }
 @media (max-width: 1240px) {
-  :root { --nav: var(--rail); }
-  .nav { padding: 14px 10px 12px; align-items: center; }
-  .nav .lbl, .brand-name, .nav-collapse { display: none; }
-  .nav-top { margin: 0 0 8px; }
-  .nav-new { width: 40px; padding: 0; justify-content: center; }
-  .nav-item { width: 42px; justify-content: center; padding: 0; }
-  .nav-item.active::before { left: -10px; }
-  .nav-count { position: absolute; top: 2px; right: -2px; min-width: 16px; height: 16px; font-size: 9.5px; padding: 0 4px; }
-  .ap-card { padding: 6px; flex-direction: column; border: 0; background: transparent; }
-  .nav-search { width: 42px; justify-content: center; padding: 0; }
-  .nav-tool-row { flex-direction: column; }
-  .conn { justify-content: center; border-top: 0; }
+  /* the rail itself is driven by html.nav-rail, which the shell sets before the first paint */
   .tp-body, .tp-body.rail-hidden { grid-template-columns: minmax(0, 1fr) var(--inspector); }
   .tp-body.rail-hidden { grid-template-columns: minmax(0, 1fr); }
   .tp-outline { display: none; }
@@ -870,7 +909,9 @@ html.bare .main { overflow: visible; }
 }
 @media (max-width: 760px) {
   .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
-  .nav { display: none; }
+  .main-col, .tabbar { grid-column: 1; }
+  .nav { position: fixed; left: 0; top: 0; bottom: 0; width: var(--nav-wide); --nav-label: 1; z-index: 200; transform: translateX(-100%); visibility: hidden; transition: transform var(--dur-panel) var(--ease-out), visibility 0s linear var(--dur-panel); }
+  html.nav-open .nav { transform: none; visibility: visible; transition: transform var(--dur-panel) var(--ease-out); }
   .tabbar { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: center; background: var(--panel); border-top: 1px solid var(--border); padding: 4px 6px calc(4px + env(safe-area-inset-bottom)); box-shadow: 0 -4px 16px hsl(var(--scrim) / .06); z-index: 150; }
   .tabbar a, .tabbar button { position: relative; display: grid; justify-items: center; gap: 2px; padding: 6px 0; border: 0; background: transparent; color: var(--text-3); font-size: 10.5px; font-weight: 650; text-decoration: none; }
   .tabbar .ic { width: 20px; height: 20px; }
@@ -946,19 +987,7 @@ pre.diff .dl { white-space: pre; min-height: 1.5em; }
 .act-detail.plain { font-family: var(--font); font-size: 1em; }
 .wc-progress .pk-bar { width: auto; min-width: 0; }
 .wc-progress .mono { flex: none; }
-/* The board fits all six columns: the navigation folds to icons while it is open. */
-html[data-view="work"] { --nav: var(--rail); }
-html[data-view="work"] .nav { padding: 14px 10px 12px; align-items: center; }
-html[data-view="work"] .nav .lbl, html[data-view="work"] .brand-name, html[data-view="work"] .nav-collapse { display: none; }
-html[data-view="work"] .nav-top { margin: 0 0 8px; }
-html[data-view="work"] .nav-new { width: 40px; padding: 0; justify-content: center; }
-html[data-view="work"] .nav-item { width: 42px; justify-content: center; padding: 0; }
-html[data-view="work"] .nav-item.active::before { left: -10px; }
-html[data-view="work"] .nav-count { position: absolute; top: 2px; right: -2px; min-width: 16px; height: 16px; font-size: 9.5px; padding: 0 4px; }
-html[data-view="work"] .ap-card { padding: 6px; flex-direction: column; border: 0; background: transparent; }
-html[data-view="work"] .nav-search { width: 42px; justify-content: center; padding: 0; }
-html[data-view="work"] .nav-tool-row { flex-direction: column; }
-html[data-view="work"] .conn { justify-content: center; border-top: 0; }
+/* The board fits all six columns: the navigation folds to the rail while it is open (html.nav-rail). */
 html[data-view="work"] .board { grid-auto-columns: minmax(204px, 1fr); gap: 10px; }
 .palette-item .pi-ic { flex: none; }
 .palette-item .pi-main { flex: 1; }
@@ -972,11 +1001,12 @@ html[data-view="work"] .board { grid-auto-columns: minmax(204px, 1fr); gap: 10px
 .ol-sub .truncate { flex: 1; min-width: 0; }
 
 /* ---------------------------------------------------------------- workspace: project switcher and user (views/org) */
-.nav-project { margin: -4px 0 10px; min-width: 0; }
+#orgProject.nav-project { margin: -4px 0 10px; padding: 0; border-right: 0; min-width: 0; }
 .nav-project:empty { display: none; }
-.nav-project .org-proj-btn { width: 100%; max-width: none; height: 34px; padding: 0 10px; border: 1px solid var(--border); background: var(--panel); border-radius: var(--r); justify-content: flex-start; }
+.nav-project .org-proj-btn { flex: 1 1 auto; width: 100%; max-width: none; height: 34px; padding: 0 10px; border: 1px solid var(--border); background: var(--panel); border-radius: var(--r); justify-content: flex-start; }
 .nav-project .org-proj-name { flex: 1; min-width: 0; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .org-proj-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.nav-project .org-proj-btn > .ic { opacity: var(--nav-label); max-width: calc(var(--nav-label) * 16px); overflow: hidden; flex: none; }
 .nav-foot { display: flex; align-items: center; gap: 8px; margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--border); min-width: 0; }
 .nav-foot .conn { margin: 0; padding: 0; border: 0; flex: 1; min-width: 0; }
 .nav-user { display: flex; align-items: center; gap: 6px; flex: none; }
@@ -985,16 +1015,10 @@ html[data-view="work"] .board { grid-auto-columns: minmax(204px, 1fr); gap: 10px
 .nav-user .org-setup-pill { height: 24px; padding: 0 8px; }
 .org-av { display: inline-grid; place-items: center; line-height: 1; }
 .org-av > span { display: block; line-height: 1; text-align: center; transform: translateY(.02em); }
-html.nav-collapsed .nav-project .org-proj-btn, html[data-view="work"] .nav-project .org-proj-btn { width: 42px; padding: 0; justify-content: center; }
-html.nav-collapsed .nav-project .org-proj-name, html.nav-collapsed .nav-project .org-proj-btn > .ic,
-html[data-view="work"] .nav-project .org-proj-name, html[data-view="work"] .nav-project .org-proj-btn > .ic { display: none; }
-html.nav-collapsed .nav-foot, html[data-view="work"] .nav-foot { flex-direction: column; }
-html.nav-collapsed .nav-user .org-setup-pill, html[data-view="work"] .nav-user .org-setup-pill { display: none; }
-@media (max-width: 1240px) {
-  .nav-project .org-proj-btn { width: 42px; padding: 0; justify-content: center; }
-  .nav-project .org-proj-name, .nav-project .org-proj-btn > .ic, .nav-user .org-setup-pill { display: none; }
-  .nav-foot { flex-direction: column; }
-}
+
+html.nav-rail .nav-foot { flex-direction: column; }
+html.nav-rail .nav-user .org-setup-pill { display: none; }
+
 
 /* ---------------------------------------------------------------- visual QA fixes */
 .org-person span.org-av, .org-av { display: inline-grid; place-items: center; }
@@ -1020,7 +1044,7 @@ html.nav-collapsed .nav-user .org-setup-pill, html[data-view="work"] .nav-user .
 .nav-foot .nav-user:not(:empty) + .conn { flex-basis: 100%; }
 .nav-user { flex: 1; min-width: 0; }
 .nav-user .org-user-btn { margin-left: auto; }
-html.nav-collapsed .nav-user .org-user-btn, html[data-view="work"] .nav-user .org-user-btn { margin: 0 auto; }
+html.nav-rail .nav-user .org-user-btn { margin: 0 auto; }
 .org-filters .grow { flex: 1 1 280px; min-width: min(100%, 240px); }
 .org-filters .grow input { width: 100%; }
 .card-head select, .org-main select:not(.input):not([class*="select"]) { height: 30px; border: 1px solid var(--border); border-radius: var(--r); background: var(--panel); color: var(--text); padding: 0 8px; font-size: var(--fs-xs); }
@@ -1042,3 +1066,30 @@ html.nav-collapsed .nav-user .org-user-btn, html[data-view="work"] .nav-user .or
   #dailyWrap { overflow-x: auto; }
   #dailyWrap .org-chart { min-width: 620px; }
 }
+
+/* ==========================================================================
+   Interaction polish · one motion scale, one press language, steady numbers
+   ========================================================================== */
+/* Press feedback: everything that can be clicked answers within 90 ms. */
+.btn, .chip-toggle, .seg button, .nav-item, .nav-tool, .menu-item, .icon-btn, .tabbar a, .tabbar button, .wcard, .ql-row .btn, .palette-item, .metric {
+  transition: background var(--dur-press) var(--ease-out), border-color var(--dur-press) var(--ease-out), color var(--dur-press) var(--ease-out), box-shadow var(--dur-press) var(--ease-out), transform var(--dur-press) var(--ease-out);
+}
+.btn:active, .chip-toggle:active, .seg button:active, .nav-tool:active, .icon-btn:active { transform: scale(.97); }
+.btn:active { transform: translateY(1px) scale(.99); }
+.nav-item:active, .palette-item:active, .menu-item:active { transform: scale(.99); }
+.tabbar a:active, .tabbar button:active { transform: scale(.94); }
+.wcard:active { transform: scale(.995); }
+.tab-new:active { transform: scale(.92); }
+/* Figures and clocks never re-flow their neighbours as they tick. */
+time, .badge, .count-pill, .nav-count, .ql-pos, .ac-clock, .m-value, .trend-figs b, .kpi b, .ap-state, .mono { font-variant-numeric: tabular-nums; }
+/* Long lists only lay out what is on screen. The conversation and the board are deliberately left out:
+   both scroll themselves to a position (newest message, dragged card) that an estimated height would miss. */
+.notif-row { content-visibility: auto; contain-intrinsic-size: auto 64px; }
+/* Comfortable targets wherever the pointer is a finger. */
+@media (pointer: coarse) {
+  .btn.xs, .btn.sm, .chip-toggle.sm, .icon-btn { min-height: 36px; }
+  .btn.xs.icon, .btn.sm.icon { min-width: 36px; }
+  .tabbar a, .tabbar button { min-height: 44px; }
+  .nav-item, .nav-tool { min-height: 40px; }
+}
+.panel-body.flush > ol, .panel-body.flush > ul { scroll-margin-top: 52px; }

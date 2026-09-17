@@ -13,6 +13,7 @@ export const SHORTCUTS = [
   { id: "new", group: "General", keys: ["N"], label: "New task" },
   { id: "search", group: "General", keys: ["/"], label: "Search (the board filter on Work)" },
   { id: "close", group: "General", keys: ["Esc"], label: "Close dialogs, menus and panels" },
+  { id: "nav", group: "General", keys: ["["], label: "Collapse or expand the navigation" },
   { id: "goHome", group: "Go to", keys: ["G", "H"], label: "Mission Control", then: true },
   { id: "goWork", group: "Go to", keys: ["G", "W"], label: "Work board", then: true },
   { id: "goNeeds", group: "Go to", keys: ["G", "Y"], label: "Needs you", then: true },

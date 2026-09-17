@@ -1,7 +1,7 @@
 // Tools: MCP servers and command-line tools for every agent CLI Relay drives (orchestrator/toolbox.py).
 // Settings → Tools, the per-task picker (New task → Advanced), the repository scope (Repositories → Environment)
 // and agents' tool requests in Needs you. Self-contained: talks to /api/tools* directly.
-import { $, $$, esc, icon, toast, modal, confirm, timeAgo } from "../ui.js";
+import { $, $$, esc, icon, toast, modal, confirm, timeAgo, skeleton } from "../ui.js";
 import { get, post, put, del, api } from "../api.js";
 
 const MASK = "●●●●";
@@ -180,7 +180,7 @@ export function mountTools(body) {
       catch (e) { toast("error", "Could not add", e.message); btn.disabled = false; }
     }));
   };
-  body.innerHTML = `<div class="card"><div class="card-body"><div class="empty small">${icon("spinner", "spin")} Loading tools…</div></div></div>`;
+  body.innerHTML = skeleton("cards", 3);
   load();
 }
 

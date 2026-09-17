@@ -27,40 +27,48 @@
     document.documentElement.dataset.theme = r;
     document.documentElement.dataset.density = localStorage.getItem("relay.density") || "comfortable";
     if (/^#\/status\//.test(location.hash)) document.documentElement.classList.add("bare");
-    if (localStorage.getItem("relay.navCollapsed") === "1") document.documentElement.classList.add("nav-collapsed");
+    // The navigation is painted in its remembered state, never animated into it: "booting" holds the
+    // transition off until the first frame is on screen.
+    const collapsed = localStorage.getItem("relay.navCollapsed") === "1";
+    const onWork = /^#\/(work|tasks|issues)/.test(location.hash);
+    const d = document.documentElement;
+    d.classList.add("booting");
+    if (innerWidth > 760 && (collapsed || (onWork && innerWidth < 1560) || innerWidth <= 1240)) d.classList.add("nav-rail");
+    requestAnimationFrame(() => requestAnimationFrame(() => d.classList.remove("booting")));
   } catch {}
 </script>
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to content</a>
 <div id="app" class="app">
-  <nav class="nav" aria-label="Primary">
+  <div class="nav-scrim" id="navScrim" hidden></div>
+  <nav class="nav" id="primaryNav" aria-label="Primary">
     <div class="nav-top">
       <a class="brand" href="#/" aria-label="Relay, Mission Control">
         <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9"/><path d="M10 22.5V9.5h7.2a4.2 4.2 0 0 1 0 8.4H13.4l6.6 4.6"/><circle cx="23.4" cy="9.6" r="2.1"/></svg>
         <span class="brand-name">Relay</span>
       </a>
-      <button class="nav-collapse" id="navCollapse" type="button" aria-label="Collapse navigation" title="Collapse navigation">
+      <button class="nav-collapse" id="navCollapse" type="button" aria-label="Collapse navigation" aria-expanded="true" aria-controls="primaryNav" title="Collapse navigation ( [ )">
         <i data-icon="panel"></i>
       </button>
     </div>
     <div class="nav-project" id="orgProject"></div>
-    <button class="btn primary nav-new" id="newTaskBtn" type="button" title="New task (N)"><i data-icon="plus"></i><span class="lbl">New task</span><kbd class="lbl">N</kbd></button>
+    <button class="btn primary nav-new" id="newTaskBtn" type="button" title="New task (N)" data-tip="New task" data-tip-kbd="N"><i data-icon="plus"></i><span class="lbl">New task</span><kbd class="lbl">N</kbd></button>
     <div class="nav-items" role="list">
-      <a class="nav-item" role="listitem" href="#/" data-nav="home" title="Mission Control (G H)"><i data-icon="radar"></i><span class="lbl">Mission Control</span><span class="nav-count live" id="navLive" hidden></span></a>
-      <a class="nav-item" role="listitem" href="#/work" data-nav="work" title="Work (G W)"><i data-icon="kanban"></i><span class="lbl">Work</span><span class="nav-count attn" id="navNeeds" hidden></span></a>
-      <a class="nav-item" role="listitem" href="#/knowledge" data-nav="knowledge" title="Knowledge (G K)"><i data-icon="book"></i><span class="lbl">Knowledge</span><span class="nav-count" id="navLessons" hidden></span></a>
-      <a class="nav-item" role="listitem" href="#/agents" data-nav="agents" title="Agents (G A)"><i data-icon="bot"></i><span class="lbl">Agents</span></a>
-      <a class="nav-item" role="listitem" href="#/settings" data-nav="settings" title="Settings (G S)"><i data-icon="settings"></i><span class="lbl">Settings</span></a>
+      <a class="nav-item" role="listitem" href="#/" data-tip="Mission Control" data-tip-kbd="G H" data-nav="home" title="Mission Control (G H)"><i data-icon="radar"></i><span class="lbl">Mission Control</span><span class="nav-count live" id="navLive" hidden></span></a>
+      <a class="nav-item" role="listitem" href="#/work" data-tip="Work" data-tip-kbd="G W" data-nav="work" title="Work (G W)"><i data-icon="kanban"></i><span class="lbl">Work</span><span class="nav-count attn" id="navNeeds" hidden></span></a>
+      <a class="nav-item" role="listitem" href="#/knowledge" data-tip="Knowledge" data-tip-kbd="G K" data-nav="knowledge" title="Knowledge (G K)"><i data-icon="book"></i><span class="lbl">Knowledge</span><span class="nav-count" id="navLessons" hidden></span></a>
+      <a class="nav-item" role="listitem" href="#/agents" data-tip="Agents" data-tip-kbd="G A" data-nav="agents" title="Agents (G A)"><i data-icon="bot"></i><span class="lbl">Agents</span></a>
+      <a class="nav-item" role="listitem" href="#/settings" data-tip="Settings" data-tip-kbd="G S" data-nav="settings" title="Settings (G S)"><i data-icon="settings"></i><span class="lbl">Settings</span></a>
     </div>
     <div class="nav-spacer"></div>
     <div class="nav-ap" id="navAutopilot" aria-live="polite"></div>
     <div class="nav-tools">
-      <button class="nav-tool nav-search" id="paletteBtn" type="button" title="Search and commands (Ctrl K)"><i data-icon="search"></i><span class="lbl">Search or run…</span><kbd class="lbl" id="paletteKbd">Ctrl K</kbd></button>
+      <button class="nav-tool nav-search" id="paletteBtn" type="button" data-tip="Search and commands" data-tip-kbd="Ctrl K" title="Search and commands (Ctrl K)"><i data-icon="search"></i><span class="lbl">Search or run…</span><kbd class="lbl" id="paletteKbd">Ctrl K</kbd></button>
       <div class="nav-tool-row">
-        <button class="nav-tool" id="notifBtn" type="button" title="Notifications" aria-label="Notifications"><i data-icon="bell"></i><span class="nav-dot" id="notifBadge" hidden></span></button>
-        <button class="nav-tool" id="themeBtn" type="button" title="Toggle theme" aria-label="Toggle theme"><i data-icon="moon"></i></button>
-        <button class="nav-tool" id="shortcutsBtn" type="button" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts"><i data-icon="keyboard"></i></button>
+        <button class="nav-tool" id="notifBtn" type="button" data-tip="Notifications" title="Notifications" aria-label="Notifications"><i data-icon="bell"></i><span class="nav-dot" id="notifBadge" hidden></span></button>
+        <button class="nav-tool" id="themeBtn" type="button" data-tip="Toggle theme" title="Toggle theme" aria-label="Toggle theme"><i data-icon="moon"></i></button>
+        <button class="nav-tool" id="shortcutsBtn" type="button" data-tip="Keyboard shortcuts" data-tip-kbd="?" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts"><i data-icon="keyboard"></i></button>
       </div>
     </div>
     <div class="nav-foot"><div class="nav-user" id="orgUser"></div><div class="conn" id="connBox" role="status"><span class="dot" id="connDot"></span><span class="lbl" id="connText">Connecting…</span></div></div>

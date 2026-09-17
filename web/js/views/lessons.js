@@ -1,10 +1,10 @@
 // Lessons: review what retrospectives proposed; approved lessons reach future prompts for their repository.
-import { $, $$, esc, icon, toast, confirm, modal, timeAgo } from "../ui.js";
+import { $, $$, esc, icon, toast, confirm, modal, timeAgo, skeleton } from "../ui.js";
 import { S } from "../state.js";
 import { api } from "../api.js";
 
 export function mountLessons(main) {
-  main.innerHTML = `<div class="page lessons-page" id="lessonsPage"><div class="empty small">Loading…</div></div>`;
+  main.innerHTML = `<div class="page lessons-page" id="lessonsPage">${skeleton("page", 3)}</div>`;
   const page = $("#lessonsPage", main);
   let data = null, alive = true, filter = "all";
   const drafts = new Map(); // edits typed into the queue survive a refresh

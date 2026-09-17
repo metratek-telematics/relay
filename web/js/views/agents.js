@@ -1,5 +1,5 @@
 // Agents page: health, versions, smoke tests, and the agent pack (install, sign in, configure).
-import { $, $$, esc, icon, toast, modal, confirm, copyText, menu, fmtNum, fmtCost, timeAgo } from "../ui.js";
+import { $, $$, esc, icon, toast, modal, confirm, copyText, menu, fmtNum, fmtCost, timeAgo, skeleton } from "../ui.js";
 import { S, agentLabel, agentInitial, agentIds } from "../state.js";
 import { api } from "../api.js";
 
@@ -216,7 +216,7 @@ function openConfigure(name, onSaved) {
 }
 
 export function mountAgents(main) {
-  main.innerHTML = `<div class="page" id="agentsPage"><div class="empty small">Checking agents…</div></div>`;
+  main.innerHTML = `<div class="page" id="agentsPage">${skeleton("page", 3)}</div>`;
   let alive = true;
   const tests = {};
   let jobs = {};

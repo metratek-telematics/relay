@@ -1,5 +1,5 @@
 // GitHub inbox: watched repositories → auto-queued issues.
-import { $, $$, esc, icon, toast, confirm, timeAgo } from "../ui.js";
+import { $, $$, esc, icon, toast, confirm, timeAgo, skeleton } from "../ui.js";
 import { S } from "../state.js";
 import { api } from "../api.js";
 
@@ -19,7 +19,7 @@ function repoProblem(raw) {
 }
 
 export function mountGithub(main) {
-  main.innerHTML = `<div class="page" id="ghPage"><div class="empty small">Loading…</div></div>`;
+  main.innerHTML = `<div class="page" id="ghPage">${skeleton("page", 2)}</div>`;
   let alive = true;
   async function render() {
     let st, sources;

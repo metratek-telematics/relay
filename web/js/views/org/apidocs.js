@@ -1,5 +1,5 @@
 // API docs: the /api/v1 reference rendered from Relay's own OpenAPI document, with curl examples and recipes.
-import { $, $$, esc, icon, toast } from "../../ui.js";
+import { $, $$, esc, icon, toast, skeleton } from "../../ui.js";
 import { request } from "../../api.js";
 import { orgApi, xicon, bindCopy } from "./org.js";
 
@@ -87,7 +87,7 @@ function verify(secret, headers, rawBody) {
 
 export function mountApiDocs(body) {
   let alive = true;
-  body.innerHTML = `<div class="empty small">Loading…</div>`;
+  body.innerHTML = skeleton("list", 6);
   const base = location.origin;
 
   (async () => {

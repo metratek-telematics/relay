@@ -1,7 +1,7 @@
 // Learning: is Relay getting better, why, and what to change next.
 // One view, self-contained markup (styles in /learning.css) so a redesigned shell can re-home it.
 // Data: GET /api/learning (orchestrator/learning_engine.py `view`).
-import { $, $$, esc, icon, toast, modal, confirm, timeAgo } from "../ui.js";
+import { $, $$, esc, icon, toast, modal, confirm, timeAgo, skeleton } from "../ui.js";
 import { S } from "../state.js";
 import { api } from "../api.js";
 import { teamLabel } from "./advice.js";
@@ -20,7 +20,7 @@ const teamFromKey = (key) => {
 };
 
 export function mountLearning(main) {
-  main.innerHTML = `<div class="page lx-page" id="lxPage"><div class="empty small">Loading…</div></div>`;
+  main.innerHTML = `<div class="page lx-page" id="lxPage">${skeleton("page", 3)}</div>`;
   const page = $("#lxPage", main);
   let data = null, alive = true, busy = false;
 

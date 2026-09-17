@@ -16,6 +16,7 @@ import { GOTO, keysFor, openShortcuts } from "./shortcuts.js";
 import { noteMessage } from "./live.js";
 import { commandItems } from "./commands.js";
 import { mountOrg, mountOrgHeader, parseOrgRoute, inProject } from "./views/org/org.js";
+import { mountNav, toggleNav, openDrawer, closeDrawer, drawerOpen } from "./nav.js";
 
 const main = $("#main");
 const root = document.documentElement;
@@ -42,14 +43,11 @@ function toggleTheme() { const next = root.dataset.theme === "dark" ? "light" : 
 $("#themeBtn").onclick = toggleTheme;
 
 // ---------------------------------------------------------------------------- navigation chrome
-$("#navCollapse").onclick = () => {
-  const on = !root.classList.contains("nav-collapsed");
-  root.classList.toggle("nav-collapsed", on);
-  try { localStorage.setItem("relay.navCollapsed", on ? "1" : "0"); } catch {}
-};
+mountNav();
 $("#newTaskBtn").onclick = () => openNewTask();
 $("#tabNew").onclick = () => openNewTask();
-$("#tabMore").onclick = (e) => menu(e.currentTarget, [
+// On a phone "More" opens the whole navigation as a drawer rather than a short menu of leftovers.
+$("#tabMore").onclick = (e) => innerWidth <= 760 ? openDrawer() : menu(e.currentTarget, [
   { label: "Agents", icon: "bot", onClick: () => navigate("#/agents") },
   { label: "Settings", icon: "settings", onClick: () => navigate("#/settings") },
   { label: "Projects", icon: "layers", onClick: () => navigate("#/org/projects") },
@@ -105,9 +103,11 @@ function route() {
   if (r.id) { markSeen(r.id); renderAttention(); }
   $$("[data-nav]").forEach((b) => { const on = b.dataset.nav === NAV_OF_VIEW[r.view]; b.classList.toggle("active", on); on ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"); });
   if (same) { view.update && view.update("route"); bus.emit("route"); return; }
+  rememberScroll();
   view && view.destroy && view.destroy();
   view = null;
   main.scrollTop = 0;
+  routeKey = keyOf(r);
   if (r.view === "task") view = mountTask(main, r.id);
   else if (r.view === "review") view = mountReview(main, r.id);
   else if (r.view === "status") view = mountStatus(main, r.id);
@@ -117,8 +117,39 @@ function route() {
   else if (r.view === "agents") view = mountAgents(main);
   else if (r.view === "org") view = mountOrg(main, r.section, r.tab);
   else view = mountMission(main, r.tab);
+  enterView();
+  restoreScroll();
   bus.emit("route");
 }
+
+// A view arrives with a short fade and a 4 px lift; nothing else on the page moves.
+function enterView() {
+  const first = main.firstElementChild;
+  if (!first) return;
+  first.classList.add("view-enter");
+  first.addEventListener("animationend", () => first.classList.remove("view-enter"), { once: true });
+}
+// Where each route was scrolled to is remembered for as long as the tab lives, so going back lands where
+// you left rather than at the top.
+let routeKey = "";
+const scrollMemory = new Map();
+const scrollerOf = () => main.querySelector(".page, .work, .convo-wrap, .org-main") || main;
+function rememberScroll() { const el = scrollerOf(); if (routeKey && el && el.scrollTop) scrollMemory.set(routeKey, el.scrollTop); }
+function restoreScroll() {
+  const y = scrollMemory.get(routeKey);
+  if (!y) return;
+  const key = routeKey;
+  // The page is often still loading, so the attempt repeats briefly until it can actually scroll that far.
+  const tryIt = (delay) => setTimeout(() => {
+    if (routeKey !== key) return;
+    const el = scrollerOf();
+    if (el && el.scrollHeight - el.clientHeight >= y - 4) el.scrollTop = y;
+  }, delay);
+  [0, 120, 400].forEach(tryIt);
+}
+const keyOf = (r) => `${r.view}|${r.id || ""}|${r.tab || ""}|${r.section || ""}`;
+addEventListener("beforeunload", rememberScroll);
+
 window.addEventListener("hashchange", route);
 // Switching project re-draws the page for that project; lists, counts and the board follow it.
 bus.on("project", () => { view && view.destroy && view.destroy(); view = null; renderCounts(); route(); });
@@ -155,11 +186,15 @@ function renderAutopilot() {
 }
 export async function toggleAutopilot() {
   const paused = !!S.autopilot?.paused;
+  // The button answers at once and the server confirms after; a failure puts the old state back.
+  const before = S.autopilot;
+  S.autopilot = { ...(S.autopilot || {}), paused: !paused, state: !paused ? "paused" : (before?.running ? "running" : "idle") };
+  renderAutopilot();
   try {
     S.autopilot = await api.autopilotAction(paused ? "resume" : "pause");
     renderAutopilot(); view?.update?.("autopilot", S.autopilot);
     toast(paused ? "success" : "info", paused ? "Autopilot resumed" : "Autopilot paused", paused ? "Queued tasks start again." : "Nothing new starts; running tasks stop after their current turn.");
-  } catch (e) { toast("error", "Autopilot", e.message); }
+  } catch (e) { S.autopilot = before; renderAutopilot(); toast("error", "Autopilot", e.message); }
 }
 export async function runQueue() {
   try { S.queue = await api.queueStart(S.queue?.max_parallel || S.config.max_parallel || 1); S.autopilot = await api.autopilot(); renderAutopilot(); view?.update?.("autopilot", S.autopilot); toast("success", "Queue running", "Queued tasks start now."); }
@@ -310,7 +345,14 @@ document.addEventListener("keydown", (e) => {
   const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(a?.tagName) || a?.isContentEditable;
   const overlay = !!$(".modal-backdrop, .palette-back");
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { if (!overlay) { e.preventDefault(); openPalette(); } return; }
-  if (e.key === "Escape") { endChord(); if (overlay) return; $("#notifPanel").hidden = true; return; }
+  if ((e.ctrlKey || e.metaKey) && e.key === "\\") { if (!overlay) { e.preventDefault(); toggleNav(); } return; }
+  if (e.key === "Escape") {
+    endChord();
+    if (overlay) return;                       // modals and the palette close themselves
+    if (drawerOpen()) { closeDrawer(); return; }
+    if (!$("#notifPanel").hidden) { $("#notifPanel").hidden = true; $("#notifBtn").focus(); return; }
+    return;
+  }
   if (typing || overlay || e.ctrlKey || e.metaKey || e.altKey) return;
   const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
   if (chordUntil) { const target = Date.now() < chordUntil && GOTO[key]; endChord(); if (target) { e.preventDefault(); navigate(target); } return; }
@@ -320,6 +362,7 @@ document.addEventListener("keydown", (e) => {
   if (e.shiftKey) return;
   switch (key) {
     case "n": e.preventDefault(); openNewTask(); break;
+    case "[": e.preventDefault(); toggleNav(); break;
     case "g": e.preventDefault(); chordUntil = Date.now() + 1500; chordPill.hidden = false; setTimeout(() => { if (chordUntil && Date.now() >= chordUntil) endChord(); }, 1600); break;
     case "j": if (S.route.view === "task") { e.preventDefault(); stepTask(1); } break;
     case "k": if (S.route.view === "task") { e.preventDefault(); stepTask(-1); } break;

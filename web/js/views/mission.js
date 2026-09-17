@@ -1,7 +1,7 @@
 // Mission Control: one live screen for "what is my AI team doing, what needs me, how well is it going".
 // Server side: orchestrator/mission.py (digest + live activity + trend). The range switch turns the same screen into
 // the digest for the last day, three days or week.
-import { $, $$, esc, icon, fmtDur, fmtSec, timeAgo, toast, throttle, basename } from "../ui.js";
+import { $, $$, esc, icon, fmtDur, fmtSec, timeAgo, toast, throttle, basename , skeleton} from "../ui.js";
 import { S, bus, navigate, statusOf, LIVE, queuedInOrder, agentLabel, taskElapsed, roleAgent } from "../state.js";
 import { api } from "../api.js";
 import { inboxItemHtml, bindInbox } from "./digest.js";
@@ -55,12 +55,12 @@ export function mountMission(main, tab) {
     </header>
     <section class="metric-strip" id="mcMetrics" aria-label="Key figures">${Array.from({ length: 5 }, () => '<div class="metric skel-block"></div>').join("")}</section>
     <div class="mc-grid">
-      <section class="panel mc-live" aria-labelledby="mcLiveH"><header class="panel-head"><h2 id="mcLiveH">${icon("activity")}On shift</h2><span class="panel-meta" id="mcLiveMeta"></span></header><div class="panel-body" id="mcLive"></div></section>
-      <section class="panel mc-needs ${focusNeeds ? "focus" : ""}" id="needs" aria-labelledby="mcNeedsH"><header class="panel-head"><h2 id="mcNeedsH">${icon("inbox")}Needs you</h2><span class="count-pill" id="mcNeedsCount"></span></header><div class="panel-body nx-list" id="mcNeeds"></div></section>
-      <section class="panel mc-queue" aria-labelledby="mcQueueH"><header class="panel-head"><h2 id="mcQueueH">${icon("list")}Up next</h2><span class="panel-meta" id="mcQueueMeta"></span><span class="panel-actions" id="mcQueueActions"></span></header><div class="panel-body flush" id="mcQueue"></div></section>
-      <section class="panel mc-health" aria-labelledby="mcHealthH"><header class="panel-head"><h2 id="mcHealthH">${icon("gauge")}Limits and spend</h2></header><div class="panel-body" id="mcHealth"></div></section>
-      <section class="panel mc-delivered" aria-labelledby="mcDelH"><header class="panel-head"><h2 id="mcDelH">${icon("checkCircle")}Delivered</h2><span class="panel-meta" id="mcDelMeta"></span></header><div class="panel-body flush" id="mcDelivered"></div></section>
-      <section class="panel mc-trend" aria-labelledby="mcTrendH"><header class="panel-head"><h2 id="mcTrendH">${icon("trend")}How it is going</h2><span class="panel-meta">14 days</span></header><div class="panel-body" id="mcTrend"></div></section>
+      <section class="panel mc-live" aria-labelledby="mcLiveH"><header class="panel-head"><h2 id="mcLiveH">${icon("activity")}On shift</h2><span class="panel-meta" id="mcLiveMeta"></span></header><div class="panel-body" id="mcLive">${skeleton("cards", 2)}</div></section>
+      <section class="panel mc-needs ${focusNeeds ? "focus" : ""}" id="needs" aria-labelledby="mcNeedsH"><header class="panel-head"><h2 id="mcNeedsH">${icon("inbox")}Needs you</h2><span class="count-pill" id="mcNeedsCount"></span></header><div class="panel-body nx-list" id="mcNeeds">${skeleton("list", 3)}</div></section>
+      <section class="panel mc-queue" aria-labelledby="mcQueueH"><header class="panel-head"><h2 id="mcQueueH">${icon("list")}Up next</h2><span class="panel-meta" id="mcQueueMeta"></span><span class="panel-actions" id="mcQueueActions"></span></header><div class="panel-body flush" id="mcQueue">${skeleton("list", 3)}</div></section>
+      <section class="panel mc-health" aria-labelledby="mcHealthH"><header class="panel-head"><h2 id="mcHealthH">${icon("gauge")}Limits and spend</h2></header><div class="panel-body" id="mcHealth">${skeleton("list", 3)}</div></section>
+      <section class="panel mc-delivered" aria-labelledby="mcDelH"><header class="panel-head"><h2 id="mcDelH">${icon("checkCircle")}Delivered</h2><span class="panel-meta" id="mcDelMeta"></span></header><div class="panel-body flush" id="mcDelivered">${skeleton("list", 3)}</div></section>
+      <section class="panel mc-trend" aria-labelledby="mcTrendH"><header class="panel-head"><h2 id="mcTrendH">${icon("trend")}How it is going</h2><span class="panel-meta">14 days</span></header><div class="panel-body" id="mcTrend">${skeleton("list", 4)}</div></section>
     </div>
   </div>`;
   const page = $("#mc", main);
