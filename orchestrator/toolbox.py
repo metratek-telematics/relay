@@ -863,7 +863,7 @@ def classify(tool_name: str, category: str, summary: str, tools: list[dict]) -> 
                     return tool["name"], f"{tool['name']} · {t[len(prefix):]}"
     if category == "shell" and summary:
         clis = {tool["binary"]: tool["name"] for tool in tools if tool.get("kind") == "cli" and tool.get("binary")}
-        known = {b for b, _ in BUILTINS}
+        known = {b for b, _ in BUILTINS if b.startswith("relay-")}  # Relay's own tools; git, rg and friends are not worth counting
         for seg in re.split(r"&&|\|\||;|\|", str(summary)):
             words = [w for w in seg.split() if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", w)]
             if words and words[0] in ("sudo", "env", "time", "npx", "exec") and len(words) > 1:
@@ -959,7 +959,16 @@ def probe(name: str, timeout: float = 45, ctx: dict | None = None) -> dict:
         return {"ok": bool(path), "summary": f"`{t.get('binary')}` {'found at ' + path if path else 'not found'}", "tools": []}
     if not installed(t):
         return {"ok": False, "summary": "Not installed yet", "tools": []}
-    ctx = ctx or {"run_dir": str(DATA_DIR / "runtime" / "_toolprobe"), "worktree": str(DATA_DIR), "task_id": "probe"}
+    if not ctx:
+        # A scratch git repository stands in for the worktree (servers such as git refuse anything else).
+        probe_dir = DATA_DIR / "runtime" / "_toolprobe"
+        repo = probe_dir / "repo"
+        if not (repo / ".git").exists():
+            repo.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["git", "init", "-q"], cwd=repo, capture_output=True, timeout=30)
+            subprocess.run(["git", "-c", "user.name=relay", "-c", "user.email=relay@localhost", "commit", "-q", "--allow-empty", "-m", "probe"],
+                           cwd=repo, capture_output=True, timeout=30)
+        ctx = {"run_dir": str(probe_dir), "worktree": str(repo), "task_id": "probe"}
     Path(ctx["run_dir"], "tools").mkdir(parents=True, exist_ok=True)
     servers, secret_env = _servers([t], ctx)
     if not servers:

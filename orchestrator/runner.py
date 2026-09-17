@@ -362,7 +362,7 @@ class Runner:
                         hit = toolbox.classify(ev.get("tool"), ev.get("category"), ev.get("summary"), tinfo["tools"])
                         if hit:
                             extra["relay_tool"] = hit[0]
-                            if ev.get("category") == "mcp" or hit[0] in tinfo["servers"]:
+                            if ev.get("category") == "mcp":
                                 tool_label, extra["category"] = hit[1], "mcp"
                             toolbox.record_use(hit[0], self.tid, role, agent_name, hit[1])
                     except Exception as e:
