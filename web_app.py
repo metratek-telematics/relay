@@ -18,7 +18,8 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 from orchestrator import agents, config as C, github, gitops, handoff, history, repos  # noqa: E402
-from orchestrator import installer  # noqa: E402
+from orchestrator import installer, lessons  # noqa: E402
+from orchestrator.scorecard import repo_label  # noqa: E402
 
 # Agents installed from the Agents page must be found by health checks, runs and verification alike.
 installer.extend_path()
@@ -180,6 +181,7 @@ def state():
         "github": {**manager.github_status, "sources": github.load_sources()},
         "queue": manager.queue_state(),
         "notifications": manager.notifications[:30],
+        "lessons_pending": lessons.pending_count(),
     })
 
 
@@ -503,7 +505,7 @@ def task_diff(tid):
 def task_artifact(tid, kind):
     t = task_or_404(tid)
     names = {"plan": "PLAN.md", "acceptance": "ACCEPTANCE.md", "implementation": "IMPLEMENTATION.md", "verification": "VERIFICATION.md",
-             "review": "REVIEW.md", "report": "REPORT.md", "raw": "raw.log", "pr_body": "PR_BODY.md", "issue": "ISSUE.json"}
+             "review": "REVIEW.md", "report": "REPORT.md", "raw": "raw.log", "pr_body": "PR_BODY.md", "issue": "ISSUE.json", "retro": "RETRO.md"}
     cands = []
     art = (t.get("artifacts") or {}).get(kind)
     if art:
@@ -613,6 +615,88 @@ def task_open(tid, what):
         subprocess.Popen(["cmd.exe", "/d", "/c", "code", t["worktree"]] if IS_WINDOWS else ["code", t["worktree"]])
         return jsonify({"ok": True})
     return jsonify({"error": "Unavailable"}), 404
+
+
+# ----------------------------------------------------------------------------- scorecards + lessons
+@app.get("/api/tasks/<tid>/scorecard")
+def task_scorecard(tid):
+    t = task_or_404(tid)
+    return jsonify({"scorecard": t.get("scorecard") or manager.learning.cards.get(tid), "retro": t.get("retro")})
+
+
+@app.post("/api/tasks/<tid>/scorecard/refresh")
+def task_scorecard_refresh(tid):
+    """Recompute the scorecard now, asking GitHub about the pull request first."""
+    task_or_404(tid)
+    if not manager.learning.score(tid):
+        return jsonify({"error": "The task has not finished yet."}), 400
+    manager.learning.refresh_prs(force_tid=tid)
+    return jsonify({"scorecard": manager.get(tid).get("scorecard")})
+
+
+@app.post("/api/tasks/<tid>/retro")
+def task_retro(tid):
+    t = task_or_404(tid)
+    if t.get("status") not in ("done", "failed", "stopped") or not t.get("started_at"):
+        return jsonify({"error": "A retrospective needs a task that ran and has finished."}), 400
+    if (t.get("retro") or {}).get("status") in ("queued", "running"):
+        return jsonify({"error": "A retrospective is already queued or running."}), 409
+    manager.learning.score(tid)
+    manager.learning.queue_retro(tid)
+    return jsonify({"ok": True})
+
+
+def lessons_view():
+    data = lessons.listing()
+    labels = {}
+    for t in manager.store.list():
+        card = t.get("scorecard") or {}
+        if card.get("repo"):
+            labels[card["repo"]] = card.get("repo_label") or card["repo"]
+    for row in data["queue"] + data["approved"] + data["rejected"]:
+        key = row.get("repo") or row.get("proposed_repo")
+        if key and key not in labels:
+            labels[key] = row.get("repo_label") or repo_label(key)
+    return {**data, "repos": [{"key": k, "label": v} for k, v in sorted(labels.items(), key=lambda kv: kv[1].lower())]}
+
+
+@app.get("/api/lessons")
+def lessons_list():
+    return jsonify(lessons_view())
+
+
+@app.post("/api/lessons")
+def lessons_add():
+    b = body()
+    lessons.add(b.get("text"), b.get("scope") or "global", (b.get("repo") or "").strip())
+    broadcast("lessons", {"pending": lessons.pending_count()})
+    return jsonify(lessons_view())
+
+
+@app.post("/api/lessons/<lid>/<action>")
+def lessons_action(lid, action):
+    b = body()
+    if action == "approve":
+        lessons.approve(lid, b.get("text"), b.get("scope"), b.get("repo"))
+    elif action == "reject":
+        lessons.reject(lid)
+    else:
+        return jsonify({"error": f"Unknown action {action}"}), 404
+    broadcast("lessons", {"pending": lessons.pending_count()})
+    return jsonify(lessons_view())
+
+
+@app.patch("/api/lessons/<lid>")
+def lessons_patch(lid):
+    lessons.update(lid, body())
+    return jsonify(lessons_view())
+
+
+@app.delete("/api/lessons/<lid>")
+def lessons_delete(lid):
+    lessons.delete(lid)
+    broadcast("lessons", {"pending": lessons.pending_count()})
+    return jsonify(lessons_view())
 
 
 # ----------------------------------------------------------------------------- queue
@@ -847,6 +931,7 @@ if __name__ == "__main__":
             print(f"Resuming {len(resumed)} interrupted task(s): " + ", ".join(resumed))
     except Exception as exc:  # never block startup on recovery
         app.logger.warning("Startup recovery failed: %s", exc)
+    manager.learning.start()  # backfill scorecards, then keep pull request outcomes current
     shown = "127.0.0.1" if HOST in ("0.0.0.0", "") else HOST
     print(f"Relay {C.BUILD} · http://{shown}:{PORT}" + (" (inside Docker)" if IN_DOCKER else ""))
     serve(app, host=HOST, port=PORT, threads=16, channel_timeout=3600)

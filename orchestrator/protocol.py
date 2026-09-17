@@ -499,6 +499,17 @@ def timeout_note(minutes) -> str:
             "Summarize the state of the working tree and continue in smaller steps. End with the appropriate protocol envelope.")
 
 
+# ----------------------------------------------------------------------------- lessons (orchestrator/lessons.py)
+def with_lessons(prompt: str, block: str) -> str:
+    """Add approved lessons from earlier tasks to a kickoff prompt, just before the session instructions."""
+    if not block:
+        return prompt
+    at = prompt.find("HOW THIS SESSION WORKS")
+    if at < 0:
+        return prompt.rstrip() + "\n\n" + block + "\n"
+    return prompt[:at] + block + "\n\n" + prompt[at:]
+
+
 def pr_body(cfg, task, summary, details, issue_number=None) -> str:
     issue_close = f"Closes #{issue_number}" if issue_number else ""
     tpl = cfg.get("github_pr_body_template") or "{summary}\n\n{details}\n\n{issue_close}\n"

@@ -5,7 +5,7 @@ const MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || 
 const MOD = MAC ? "⌘" : "Ctrl";
 
 // Two-key "go to" sequences: press G, then the letter.
-export const GOTO = { d: "#/", t: "#/tasks", a: "#/agents", h: "#/github", s: "#/settings", r: "#/repos" };
+export const GOTO = { d: "#/", t: "#/tasks", a: "#/agents", h: "#/github", s: "#/settings", r: "#/repos", l: "#/lessons" };
 
 export const SHORTCUTS = [
   { id: "palette", group: "General", keys: [MOD, "K"], label: "Command palette" },
@@ -20,6 +20,7 @@ export const SHORTCUTS = [
   { id: "goGithub", group: "Go to", keys: ["G", "H"], label: "GitHub inbox", then: true },
   { id: "goSettings", group: "Go to", keys: ["G", "S"], label: "Settings", then: true },
   { id: "goRepos", group: "Go to", keys: ["G", "R"], label: "Repositories", then: true },
+  { id: "goLessons", group: "Go to", keys: ["G", "L"], label: "Lessons", then: true },
   { id: "next", group: "Task list", keys: ["J"], label: "Open the next task" },
   { id: "prev", group: "Task list", keys: ["K"], label: "Open the previous task" },
   { id: "tryIt", group: "Current task", keys: ["T"], label: "Open the Try it tab" },

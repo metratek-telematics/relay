@@ -10,6 +10,7 @@ import traceback
 from pathlib import Path
 
 from . import agents, config as C, github, gitops
+from .learning import Learning
 from .pipeline import TurnBudget, orchestrate
 from .runner import Runner, Stopped
 from .store import ACTIVE, TERMINAL, WAITING, TaskStore
@@ -36,6 +37,7 @@ class Manager:
         self._cfg = None
         self._cfg_at = 0
         self.notifications: list[dict] = []
+        self.learning = Learning(self)  # scorecards, retrospectives, lessons
 
     # ------------------------------------------------------------ config
     def cfg(self) -> dict:
@@ -368,6 +370,7 @@ class Manager:
                 self.runners.pop(tid, None)
                 self.process_state[tid] = {"state": "idle"}
                 self.emit_task(tid)
+                self.learning.task_ended(tid)
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -402,6 +405,7 @@ class Manager:
                 self.store.update(tid, immediate=True, status="stopped", detail="Stopped", finished_at=now(), pending=None)
                 self.emit_task(tid)
                 self.notify("info", "Task stopped", t.get("name", ""), tid, kind="stopped")
+                self.learning.task_ended(tid, retro_turn=False)
 
     def pause(self, tid):
         r = self.runners.get(tid)
@@ -729,6 +733,7 @@ class Manager:
             "queue": self.queue_state(),
             "median_duration": _median(durations),
             "insights": self.insights(rows),
+            "success": self.learning.summary(),
         }
 
     def insights(self, rows, days=14) -> dict:

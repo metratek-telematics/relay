@@ -17,7 +17,7 @@ import traceback
 from pathlib import Path
 
 from . import config as C
-from . import designcheck, environment, gitops, github, protocol
+from . import designcheck, environment, gitops, github, lessons, protocol
 from .runner import Interrupted, Stopped, TurnTimeout
 from .util import APP_DIR, new_id, now, quiet, read_text, truncate, write_text
 
@@ -89,6 +89,7 @@ class Pipeline:
         self.issue_text = ""
         self.refs_text = ""
         self.verify_cmds = []
+        self.lessons_text = ""
 
     # ------------------------------------------------------------ small helpers
     def save(self):
@@ -486,6 +487,8 @@ class Pipeline:
                     cmds.append(c)
         self.verify_cmds = [] if self.verify_mode == "off" else cmds
         self.m.set_meta(self.tid, verify_commands=self.verify_cmds)
+        # Approved lessons from earlier tasks on this repository, added to the kickoff prompts.
+        self.lessons_text = lessons.kickoff_block(self.m, {**t, "github_repo": repo_full}, self.cfg)
 
     def kickoff(self):
         sup_agent, _ = self.role_agent("supervisor")
@@ -494,6 +497,7 @@ class Pipeline:
         guidance = self.take_guidance("supervisor")
         prompt = protocol.supervisor_kickoff(self.task, self.wt, self.branch, self.issue_text, self.refs_text, guidance, self.verify_cmds, self.cfg,
                                              self.env_text())
+        prompt = protocol.with_lessons(prompt, self.lessons_text)
         res, env = self.supervisor_turn(prompt, f"{_label(sup_agent)} is inspecting the repository and planning", turn=0)
         if env.get("type") != "plan":
             if env.get("type") in ("instruction", "decision") and env.get("instruction"):
@@ -535,6 +539,7 @@ class Pipeline:
                     prompt = protocol.worker_kickoff(self.task, self.wt, self.branch, self.issue_text, self.refs_text,
                                                      self.state.get("plan") or {}, self.state.get("instruction", ""), guidance, self.cfg,
                                                      self.gate_command(), self.env_text())
+                    prompt = protocol.with_lessons(prompt, self.lessons_text)
                 else:
                     prompt = protocol.worker_followup(_label(sup_agent), turn, self.state.get("instruction", ""), guidance, kind)
                 if self.state.get("resumed"):

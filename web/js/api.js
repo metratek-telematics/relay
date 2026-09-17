@@ -85,6 +85,15 @@ export const api = {
   deleteBranch: (repo, branch) => post("/api/worktrees/delete-branch", { repo, branch }),
   cleanupPreview: () => get("/api/worktrees/cleanup"),
   cleanup: (paths) => post("/api/worktrees/cleanup", { paths }),
+  scorecard: (id) => get(`/api/tasks/${encodeURIComponent(id)}/scorecard`),
+  refreshScorecard: (id) => post(`/api/tasks/${encodeURIComponent(id)}/scorecard/refresh`),
+  runRetro: (id) => post(`/api/tasks/${encodeURIComponent(id)}/retro`),
+  lessons: () => get("/api/lessons"),
+  addLesson: (body) => post("/api/lessons", body),
+  approveLesson: (id, body = {}) => post(`/api/lessons/${encodeURIComponent(id)}/approve`, body),
+  rejectLesson: (id) => post(`/api/lessons/${encodeURIComponent(id)}/reject`),
+  updateLesson: (id, body) => patch(`/api/lessons/${encodeURIComponent(id)}`, body),
+  deleteLesson: (id) => del(`/api/lessons/${encodeURIComponent(id)}`),
 };
 
 // ---------------------------------------------------------------------------- SSE

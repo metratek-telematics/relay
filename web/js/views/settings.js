@@ -8,6 +8,27 @@ import { openShortcuts, keysFor } from "../shortcuts.js";
 
 const SECTIONS = [["workflow", "Workflow", "layers"], ["agents", "Agents", "bot"], ["budget", "Usage & budget", "gauge"], ["verification", "Verification", "shield"], ["git", "Git & GitHub", "github"], ["appearance", "Appearance", "sun"], ["notifications", "Notifications", "bell"], ["prompts", "Saved prompts", "message"], ["rules", "Rules", "docs"], ["about", "About", "info"]];
 
+// Scorecards, retrospectives and lessons (orchestrator/learning.py).
+function learningCard(c) {
+  const agent = c.retro_agent || "";
+  const efforts = agent ? (S.agentMeta[agent] || {}).efforts || [] : [];
+  const cat = agent ? (c.models || {})[agent] || [] : [...new Set(Object.values(c.models || {}).flat())];
+  return `<div class="card" id="learning"><div class="card-head"><div><h3>Learning from finished tasks</h3><p class="card-sub">Every finished task gets a scorecard. A retrospective then proposes lessons for you to review on the <a href="#/lessons">Lessons</a> page.</p></div></div><div class="card-body">
+    <div class="field inline"><label>Run a short retrospective after each task</label><span class="switch ${c.retro_enabled !== false ? "on" : ""}" data-sw-cfg="retro_enabled"></span></div>
+    <div class="grid3">
+      <div class="field"><label>Retrospective agent</label><select data-cfg="retro_agent"><option value="">The task's supervisor</option>${agentIds().map((a) => `<option value="${esc(a)}" ${agent === a ? "selected" : ""}>${esc(agentLabel(a))}</option>`).join("")}</select><div class="help">One turn with no tools, run in the background after the result is recorded.</div></div>
+      <div class="field"><label>Model</label><input list="retroModels" data-cfg="retro_model" value="${esc(c.retro_model || "")}" placeholder="cheap subagent model"><datalist id="retroModels">${cat.map((m) => `<option value="${esc(m)}">`).join("")}</datalist><div class="help">Blank uses the agent's subagent model (Usage &amp; budget), else the supervisor's model. A small model is enough.</div></div>
+      <div class="field"><label>Effort</label>${efforts.length ? `<select data-cfg="retro_effort"><option value="">Lowest (${esc(efforts[0])})</option>${efforts.map((e) => `<option value="${esc(e)}" ${c.retro_effort === e ? "selected" : ""}>${esc(e)}</option>`).join("")}</select>` : `<select disabled><option>${agent ? "not supported by this CLI" : "lowest the agent offers"}</option></select>`}</div>
+    </div>
+    <div class="grid3">
+      <div class="field"><label>Lessons proposed per task (at most)</label><input type="number" min="0" max="5" data-cfg="retro_max_lessons" value="${esc(c.retro_max_lessons ?? 3)}"></div>
+      <div class="field"><label>Lessons in a prompt (at most)</label><input type="number" min="1" max="40" data-cfg="lessons_max_in_prompt" value="${esc(c.lessons_max_in_prompt ?? 15)}"></div>
+      <div class="field"><label>Re-check pull requests every (minutes)</label><input type="number" min="5" data-cfg="scorecard_refresh_minutes" value="${esc(c.scorecard_refresh_minutes ?? 30)}"><div class="help">Merged, closed and later human commits change the score.</div></div>
+    </div>
+    <div class="field inline"><label>Add approved lessons to supervisor and worker prompts</label><span class="switch ${c.lessons_inject !== false ? "on" : ""}" data-sw-cfg="lessons_inject"></span></div>
+  </div></div>`;
+}
+
 export function mountSettings(main, section) {
   let cur = SECTIONS.some(([k]) => k === section) ? section : "workflow";
   main.innerHTML = `<div class="page"><div class="page-head"><div><h1>Settings</h1><p>Defaults for new tasks. Existing tasks keep their own workflow.</p></div><div class="page-actions"><span class="muted" id="saveState" style="font-size:12px"></span></div></div>
@@ -43,11 +64,14 @@ export function mountSettings(main, section) {
             <div class="field"><label>Envelope retries</label><input type="number" min="0" max="5" data-cfg="envelope_retries" value="${esc(c.envelope_retries)}"><div class="help">How many times to ask an agent to restate a missing JSON envelope.</div></div>
           </div>
           <div class="field"><label>Parallel tasks</label><input type="number" min="1" max="8" data-cfg="max_parallel" value="${esc(c.max_parallel)}" style="width:100px"></div>
-        </div></div>`;
+        </div></div>
+        ${learningCard(c)}`;
       const wf = { preset: c.workflow_preset, roles: JSON.parse(JSON.stringify(c.roles || {})), max_turns: c.max_turns, max_review_rounds: c.max_review_rounds, verify_mode: c.verify_mode, approval_before_delivery: c.approval_before_delivery, allow_agent_questions: c.allow_agent_questions, verification_commands: c.verification_commands || [], auto_detect_verification: c.auto_detect_verification };
       const persist = debounce((w) => save({ workflow_preset: w.preset, roles: JSON.parse(JSON.stringify(w.roles)), max_turns: w.max_turns, max_review_rounds: w.max_review_rounds, verify_mode: w.verify_mode, approval_before_delivery: w.approval_before_delivery, allow_agent_questions: w.allow_agent_questions, verification_commands: w.verification_commands, auto_detect_verification: w.auto_detect_verification }), 400);
       workflowEditor($("#wfEd", body), wf, { agents: S.agentMeta, presets: S.presets, onChange: persist });
       bindAuto();
+      // The model catalogue and efforts depend on the agent, so redraw once the new agent is saved.
+      $("[data-cfg='retro_agent']", body).addEventListener("change", () => setTimeout(render, 300));
     } else if (cur === "agents") {
       const env = c.agent_env || {};
       const envRows = (a) => Object.entries(env[a] || {}).concat([["", ""]]).map(([k, v]) => `<div class="env-row"><input placeholder="VARIABLE" value="${esc(k)}" data-env-k="${a}"><input placeholder="value" value="${esc(v)}" data-env-v="${a}"><button type="button" class="btn xs" data-env-del="${a}" title="Remove">${icon("x")}</button></div>`).join("");

@@ -4,6 +4,7 @@ import { S, agentLabel, agentInitial, agentIds, statusOf, navigate, LIVE } from 
 import { api } from "../api.js";
 import { openNewTask } from "./newtask.js";
 import { agentHealthRow } from "./agents.js";
+import { successSection } from "./success.js";
 
 const OUTCOMES = [["done", "Delivered"], ["failed", "Failed"], ["stopped", "Stopped"]];
 // Built-in agents always show; pack agents once installed.
@@ -191,7 +192,7 @@ export function mountDashboard(main) {
         <div class="kpi"><div class="lbl">${icon("clock", "sm")}Median duration</div><div class="val">${d.median_duration ? fmtDur(d.median_duration) : "—"}</div><div class="sub">${d.avg_duration ? `per delivered task · mean ${fmtDur(d.avg_duration)}` : "per delivered task"}</div></div>
         <div class="kpi" title="Claude reports real cost; Codex and Gemini are estimated at API-equivalent rates. Subscription usage is not billed per token."><div class="lbl">${icon("dollar", "sm")}Spend${d.cost_estimated ? " (est.)" : ""}</div><div class="val">${fmtCost(d.total_cost_usd, d.cost_estimated)}</div><div class="sub">${d.total_turns} agent turns · API-equivalent</div></div>
       </div>
-      ${empty ? welcome : insights}
+      ${empty ? welcome : insights + successSection(d.success)}
       <div class="dash-grid ${empty ? "solo" : ""}">
         <div class="stack" style="gap:16px">
           ${attn.length ? `<div class="card"><div class="card-head"><h3>Needs your attention</h3><span class="badge amber">${attn.length}</span></div><div class="card-body stack">${attn.slice(0, 6).map((t) => `<a class="attn-row" href="#/task/${esc(t.id)}"><span class="dot warn"></span><strong class="truncate">${esc(t.name)}</strong><span class="muted truncate">${esc(t.pending?.question || t.detail || statusOf(t).label)}</span></a>`).join("")}</div></div>` : ""}
@@ -249,5 +250,5 @@ export function mountDashboard(main) {
   }
   render();
   const timer = setInterval(render, 15000);
-  return { update(reason) { if (reason === "task" || reason === "agents") render(); }, destroy() { alive = false; clearInterval(timer); observers.forEach((o) => o.disconnect()); } };
+  return { update(reason) { if (reason === "task" || reason === "agents" || reason === "lessons") render(); }, destroy() { alive = false; clearInterval(timer); observers.forEach((o) => o.disconnect()); } };
 }

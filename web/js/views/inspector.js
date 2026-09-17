@@ -5,6 +5,7 @@ import { api } from "../api.js";
 import { prStatus, PR_STATE, REVIEW_LABEL, checksDetail } from "../prstatus.js";
 import { packetHtml, blockedHtml } from "../packet.js";
 import { openTaskFolder } from "../ide.js";
+import { scorecardCard, bindScorecard } from "./success.js";
 
 export const TABS = [
   ["overview", "Overview", "layers"], ["result", "Try it", "play"], ["history", "History", "clock"], ["timeline", "Timeline", "activity"], ["changes", "Changes", "branch"],
@@ -90,6 +91,7 @@ export function mountInspector(container, getTask) {
         </div>
         ${t.error ? `<div class="ecard"><strong>Failure</strong>${esc(t.error)}</div>` : ""}
         ${t.summary ? `<div class="card"><div class="card-head"><h3>Summary</h3></div><div class="card-body md">${md(t.summary)}</div></div>` : ""}
+        ${scorecardCard(t)}
         ${workCard(t)}
         <div class="card"><div class="card-head"><h3>Team</h3><span class="badge outline">${esc(wf.preset || "custom")}</span></div><div class="card-body stack">
           ${roles.map((role) => `<div class="row between"><span class="row"><span class="av sm ${esc(roleAgent(t, role))}">${esc(agentInitial(roleAgent(t, role)))}</span><strong>${esc(agentLabel(roleAgent(t, role)))}</strong><span class="muted">${esc(ROLE_LABEL[role])}</span></span><span class="mono muted">${esc(roleModel(t, role) || "default model")}${roleEffort(t, role) ? ` · ${esc(roleEffort(t, role))} effort` : ""}</span></div>`).join("")}
@@ -115,6 +117,7 @@ export function mountInspector(container, getTask) {
       </div>`;
     $$("[data-open]", body).forEach((b) => (b.onclick = () => openTaskFolder(t, b.dataset.open)));
     $$("[data-copy-path]", body).forEach((b) => (b.onclick = () => copyText(b.dataset.copyPath)));
+    bindScorecard(body, t, () => state.tab === "overview" && render());
     loadWork(t);
   }
 

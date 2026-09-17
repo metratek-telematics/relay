@@ -8,6 +8,16 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Scorecards, retrospectives and lessons.** Every finished task gets a 0 to 100 scorecard: outcome and failure
+  cause, duration, turns, revisions, review rounds, verification first pass and final, cost, team, and what humans
+  had to do. Pull requests are re-checked every 30 minutes for two weeks, so a merge, a rejection or human commits
+  after delivery change the score (the formula is in `orchestrator/scorecard.py`). A short, cheap retrospective turn
+  then proposes at most three one-sentence lessons. Nothing reaches a prompt until someone approves it on the new
+  Lessons page; approved lessons for a repository (and global ones) are added to later supervisor and worker kickoff
+  prompts. The dashboard has a Success section (weekly success rate, average score, by repository, by team, why tasks
+  fail) and each task shows its scorecard. Settings → Workflow → Learning turns the retrospective off or picks its
+  agent and model.
+
 - **Prepared environments.** Relay installs a task's dependencies itself before any agent starts, using the
   repository's lockfile (`npm ci`, pnpm or yarn), the registry credentials mounted into Relay and a shared package
   cache. The result shows on the task Overview; a failure becomes a blocked check instead of an agent workaround. Tasks

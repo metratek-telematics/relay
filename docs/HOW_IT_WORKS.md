@@ -26,5 +26,8 @@ Change these under **Settings → Agents**, including per-agent environment vari
 ## Costs and observability
 Token usage per role and agent is read from the CLI streams; Claude also reports dollar cost. The Sessions tab shows session ids you can resume in your own terminal, the Logs tab shows the raw stream with per-agent filters, and every artifact is a plain file under `runtime/<task>/`.
 
+## Learning from finished tasks
+When a task ends, Relay scores it (0 to 100, formula in `orchestrator/scorecard.py`) and keeps checking its pull request for two weeks: merged, closed unmerged, or fixed by a human after delivery. One short retrospective turn (the supervisor's agent at its lowest effort, on its cheap subagent model when one is set) reads a digest of the run and proposes a few one-sentence lessons. They wait on the **Lessons** page until you approve, edit or reject them; approved lessons for a repository, plus global ones, are added to the supervisor's and worker's kickoff prompts on later tasks (15 at most). The dashboard's Success section shows the weekly success rate, average score, results by repository and by team, and why tasks fail.
+
 ## Safety
 Agents are told not to commit, push, merge or deploy; the orchestrator performs commits and opens **draft** PRs only. Nothing is merged automatically.
