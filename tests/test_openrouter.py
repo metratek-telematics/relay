@@ -172,6 +172,12 @@ class ErrorsTest(unittest.TestCase):
         self.assertTrue(OR.describe_error(503)["retry"])
         self.assertEqual(OR.describe_error(404, "No endpoints found matching your data policy")["category"], "provider_unavailable")
 
+    def test_daily_free_quota(self):
+        d = OR.describe_error(429, "Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day", None, "a/b:free")
+        self.assertTrue(d["quota"])
+        self.assertFalse(d["retry"])
+        self.assertEqual(scorecard.classify_failure(d["message"]), "provider_quota")
+
     def test_failure_categories(self):
         self.assertEqual(scorecard.classify_failure("OpenRouter: out of credits (402 payment required)"), "provider_credits")
         self.assertEqual(scorecard.classify_failure("OpenRouter rejected the API key (401 unauthorized)"), "provider_auth")

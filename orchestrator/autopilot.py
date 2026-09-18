@@ -1167,13 +1167,19 @@ class Autopilot:
 
     def limits_snapshot(self, rows) -> list[dict]:
         """Agents the queue uses, with their current limit state (from cached readings only)."""
-        used = set()
+        used, on_or = set(), False
         for t in rows:
             if t.get("status") in ("queued",) or t["id"] in self.m.runners:
                 for r in ((t.get("workflow") or {}).get("roles") or {}).values():
-                    if (r or {}).get("agent"):
+                    if (r or {}).get("provider") == "openrouter":
+                        on_or = True  # its CLI's own sign-in does not matter; OpenRouter's state does
+                    elif (r or {}).get("agent"):
                         used.add(r["agent"])
         out = []
+        if on_or:
+            from . import openrouter as OR
+            st = OR.capacity_state(OR.settings().get("default_model") or OR.AUTO_FREE, None, rows, OR.account_cached())
+            out.append({"agent": "openrouter", "label": "OpenRouter", **st})
         for a in sorted(used):
             hit = self._acc_cache.get(a)
             if not hit and not self._account_fn:
