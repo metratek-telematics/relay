@@ -31,8 +31,8 @@
 .mk-busy .ic { animation: spin 1s linear infinite; }
 
 /* gallery */
-.mk-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: var(--s4); }
-.mk-grid.is-phone { grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); }
+.mk-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); gap: var(--s4); }
+.mk-grid.is-phone { grid-template-columns: repeat(auto-fill, minmax(min(100%, 170px), 1fr)); }
 .mk-card { display: grid; grid-template-rows: auto 1fr; min-width: 0; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--panel); overflow: hidden; box-shadow: var(--shadow-1); }
 .mk-card.is-chosen { border-color: var(--green); box-shadow: 0 0 0 1px var(--green), var(--shadow-1); }
 .mk-thumb { display: block; width: 100%; padding: 0; border: 0; border-bottom: 1px solid var(--border); background: var(--panel-2); cursor: zoom-in; aspect-ratio: 16 / 10; overflow: hidden; }
