@@ -456,10 +456,12 @@ class CodexAdapter(AgentAdapter):
         # model for built-in helpers, so passing a model there only produced
         # "malformed agent role" errors and was ignored.
         common += list(cfg.get("codex_extra_args") or [])
+        # Screenshots for a vision turn (the design focus group): `--image=<file>` attaches each one to this prompt.
+        images = [f"--image={p}" for p in cfg.get("attach_images") or [] if Path(p).is_file()]
         if session.get("id") and session.get("turns", 0) > 0:
-            args = ["exec", "resume", session["id"], *common, "-"]
+            args = ["exec", "resume", session["id"], *images, *common, "-"]
         else:
-            args = ["exec", *common, "-"]
+            args = ["exec", *images, *common, "-"]
         session["_last_file"] = str(last_file)
         if cfg.get("agent_web_search", True):
             args = ["--search", *args]  # global flag: live web search for research and docs, no per-call approval

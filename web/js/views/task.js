@@ -11,13 +11,17 @@ import { prStatus, prCached, prPill } from "../prstatus.js";
 import { openTaskFolder } from "../ide.js";
 import { mountTheatre } from "./theatre.js";
 import { mountChanges } from "./changes.js";
+import { mountMockups } from "./mockups.js";
 import { phases, packages, repoChips } from "../live.js";
 
 const hasTab = (k) => TABS.some(([x]) => x === k);
-const VIEWS = () => [
+// Design exploration (orchestrator/exploration.py) adds a Mockups view once a task has explored directions.
+const hasMockups = (t) => !!(t && t.exploration && (t.exploration.status || (t.exploration.directions || []).length));
+const VIEWS = (t) => [
   ["conversation", "Conversation", "message"],
   ["live", "Live", "monitor"],
   ...(hasTab("design") ? [["design", "Design", "layers"]] : []),
+  ...(hasMockups(t) ? [["mockups", "Mockups", "image"]] : []),
   ["changes", "Changes", "branch"],
   ["checks", "Checks", "shield"],
   ["logs", "Logs", "terminal"],
@@ -31,7 +35,7 @@ export function mountTask(main, id) {
     main.innerHTML = `<div class="page"><div class="empty-state">${icon("alert", "lg")}<h3>Task not found</h3><p>It may have been deleted.</p><p><a class="btn sm" href="#/work">${icon("kanban")}Back to Work</a></p></div></div>`;
     return { update() {}, destroy() {} };
   }
-  const views = VIEWS();
+  const views = VIEWS(t);
   let view = views.some(([k]) => k === S.route.tab) ? S.route.tab : "conversation";
   const mounted = {};
   const overlayRail = () => matchMedia("(max-width: 1100px)").matches;
@@ -107,6 +111,7 @@ export function mountTask(main, id) {
     if (k === "checks") { if (!mounted.checks) mounted.checks = mountInspector(hostEl, getTask, { tabs: CHECK_TABS, initial: sub || "checks", onTab: (x) => push && history.replaceState(null, "", `#/task/${encodeURIComponent(id)}/checks${x === "checks" ? "" : `/${x}`}`) }); else if (sub) mounted.checks.setTab(sub); }
     if (k === "logs") { if (!mounted.logs) mounted.logs = mountInspector(hostEl, getTask, { tabs: ["logs", "sessions"], initial: sub || "logs" }); else if (sub) mounted.logs.setTab(sub); }
     if (k === "design" && !mounted.design) mounted.design = mountInspector(hostEl, getTask, { tabs: ["design"] });
+    if (k === "mockups" && !mounted.mockups) mounted.mockups = mountMockups(hostEl, getTask);
     hostEl.classList.toggle("is-panel", k !== "conversation");
     if (push) history.replaceState(null, "", `#/task/${encodeURIComponent(id)}${k === "conversation" ? "" : `/${k}${sub ? `/${sub}` : ""}`}`);
     if (k === "conversation") requestAnimationFrame(() => convo.follow && convo.scrollBottom());
@@ -137,7 +142,8 @@ export function mountTask(main, id) {
     };
     const active = live || t.status === "needs_input" || t.status === "paused";
     const paused = t.status === "paused" || t.pause_requested;
-    const primary = t.pending ? `<button type="button" class="btn sm primary" data-jump-pending>${icon(t.pending.kind === "question" ? "send" : "check")}${t.pending.kind === "question" ? "Answer" : "Approve…"}</button>`
+    const primary = t.pending?.kind === "design_pick" ? `<button type="button" class="btn sm primary" data-view-go="mockups">${icon("image")}Pick a direction</button>`
+      : t.pending ? `<button type="button" class="btn sm primary" data-jump-pending>${icon(t.pending.kind === "question" ? "send" : "check")}${t.pending.kind === "question" ? "Answer" : "Approve…"}</button>`
       : t.status === "done" ? `<a class="btn sm primary" href="#/review/${esc(t.id)}">${icon("eye")}Review cockpit</a>`
       : ["failed", "stopped", "interrupted"].includes(t.status) ? `<button type="button" class="btn sm primary" data-act="retry" title="${t.checkpoint ? "Resume from checkpoint using the same agent sessions" : "Start again"}">${icon("retry")}${t.checkpoint ? "Resume" : "Retry"}</button>`
       : ["queued", "draft"].includes(t.status) ? `<button type="button" class="btn sm primary" data-act="start" title="Start this task now, alongside anything already running">${icon("play")}Start now</button>`
@@ -258,6 +264,7 @@ export function mountTask(main, id) {
       if (k === "review") return showView("checks", "review");
       if (k === "deliver") return showView("changes", "try");
       if (k === "design" && hasTab("design")) return showView("design");
+      if (k === "explore" && views.some(([x]) => x === "mockups")) return showView("mockups");
       showView("conversation");
       const first = k === "plan" ? $(".m-turn", page) : $(`.m-turn[data-turn="1"]`, page);
       first?.scrollIntoView({ block: "start", behavior: "smooth" });
@@ -348,6 +355,22 @@ export function mountTask(main, id) {
     chip.onclick = () => showView("changes", "diff");
   }
 
+  // A task starts exploring after the page mounted: add the Mockups view in place (before Changes).
+  function ensureMockupsView() {
+    if (views.some(([k]) => k === "mockups") || !hasMockups(getTask())) return;
+    const at = views.findIndex(([k]) => k === "changes");
+    views.splice(at < 0 ? views.length : at, 0, ["mockups", "Mockups", "image"]);
+    const nav = $(".tp-views", page), before = $('[data-view="changes"]', nav);
+    const b = document.createElement("button");
+    b.type = "button"; b.setAttribute("role", "tab"); b.id = "tv-mockups"; b.dataset.view = "mockups"; b.setAttribute("aria-controls", "tvp-mockups"); b.setAttribute("aria-selected", "false"); b.title = "Mockups";
+    b.innerHTML = `${icon("image", "sm")}<span>Mockups</span><span class="tv-badge" data-vbadge="mockups" hidden></span>`;
+    b.onclick = () => showView("mockups");
+    nav.insertBefore(b, before || $(".tp-views-spacer", nav));
+    const panel = document.createElement("div");
+    panel.className = "tp-view"; panel.id = "tvp-mockups"; panel.setAttribute("role", "tabpanel"); panel.setAttribute("aria-labelledby", "tv-mockups"); panel.hidden = true;
+    $(".tp-main", page).appendChild(panel);
+  }
+
   renderHeader(); renderComposer(); renderOutline(); loadMessages();
   showView(view, S.route.section, { push: false });
   if (t.pr_url || t.pr_number) prStatus(id);
@@ -366,6 +389,7 @@ export function mountTask(main, id) {
     update(reason, payload) {
       t = getTask(); if (!t) return;
       if (reason === "task") {
+        ensureMockupsView();
         renderHeader(); renderOutline();
         if (payload?.pendingChanged || payload?.statusChanged) { renderComposer(); convo.refreshQuestions(); }
         convo.updateTyping();
@@ -373,6 +397,7 @@ export function mountTask(main, id) {
         mounted.checks?.refresh("task"); mounted.logs?.refresh("task"); mounted.design?.refresh("task");
         mounted.changes?.update("task");
         mounted.live?.update("task");
+        mounted.mockups?.update("task");
       } else if (reason === "message") { convo.append(payload); convo.updateTyping(); renderFilesChip(); mounted.live?.update("message", payload); if (payload.kind === "handoff" || payload.kind === "plan") renderOutline(); }
       else if (reason === "message_update") { convo.patch(payload); convo.updateTyping(); renderFilesChip(); mounted.live?.update("message_update", payload); }
       else if (reason === "process") { convo.updateTyping(); renderHeader(); mounted.live?.update("process"); }

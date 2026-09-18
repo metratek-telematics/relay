@@ -57,6 +57,8 @@ export const api = {
   task: (id) => get(`/api/tasks/${encodeURIComponent(id)}`),
   createTask: (payload) => post("/api/tasks", payload),
   updateTask: (id, body) => patch(`/api/tasks/${encodeURIComponent(id)}`, body),
+  mockups: (id) => get(`/api/tasks/${encodeURIComponent(id)}/mockups`),
+  chooseDirection: (id, direction, note = "") => post(`/api/tasks/${encodeURIComponent(id)}/mockups/choose`, { direction, note }),
   editAcceptance: (id, ops) => patch(`/api/tasks/${encodeURIComponent(id)}/acceptance`, ops),
   deleteTask: (id, worktree) => del(`/api/tasks/${encodeURIComponent(id)}${worktree ? "?worktree=1" : ""}`),
   action: (id, action, body = {}) => post(`/api/tasks/${encodeURIComponent(id)}/${action}`, body),

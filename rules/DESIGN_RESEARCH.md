@@ -17,3 +17,11 @@ follows current, proven practice, not the first idea.
 4. Then design with intent: one clear layout, a visual hierarchy, consistent spacing and type scale, all states
    (empty, loading, error, long content), light and dark, keyboard and screen-reader access, and responsive widths.
 5. In your report, show before/after screenshots and say which principles drove the main decisions.
+
+## Exploring directions before building
+For design work Relay runs an exploration step after the plan: the designer draws 2 or 3 genuinely different
+directions as self-contained HTML/CSS mockups in `.relay_mockups/<A|B|C>/` (the repository's real tokens, fonts and
+components copied into the folder; realistic content; every key state; light and dark; 420 to 1440 px), with a short
+`notes.md` each. Directions differ in layout, hierarchy, density or interaction model, never only in colour. Relay
+renders them and an internal focus group of personas scores them; Relay picks the winner (or a hybrid) itself. Never
+commit `.relay_mockups/`.

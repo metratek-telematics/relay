@@ -610,6 +610,71 @@ def task_artifact(tid, kind):
     return jsonify({"text": "", "path": None, "size": 0})
 
 
+# ----------------------------------------------------------------------------- design exploration (mockups)
+from orchestrator import exploration  # noqa: E402
+
+MOCKUP_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif", ".svg": "image/svg+xml",
+                ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
+                ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8", ".json": "application/json",
+                ".md": "text/plain; charset=utf-8", ".txt": "text/plain; charset=utf-8", ".woff": "font/woff", ".woff2": "font/woff2",
+                ".ttf": "font/ttf", ".otf": "font/otf", ".ico": "image/x-icon"}
+
+
+def _mockup_root(tid) -> Path:
+    t = task_or_404(tid)
+    return (Path(t.get("run_dir") or manager.store.task_dir(tid)) / "mockups").resolve()
+
+
+def _mockup_file(tid, rel, sandbox=True):
+    root = _mockup_root(tid)
+    p = (root / (rel or "").replace("\\", "/").lstrip("/")).resolve()
+    if root not in p.parents or not p.is_file():
+        return jsonify({"error": "Not found"}), 404
+    ctype = MOCKUP_TYPES.get(p.suffix.lower())
+    if not ctype:
+        return jsonify({"error": "Not found"}), 404
+    resp = Response(p.read_bytes(), mimetype=ctype.split(";")[0], headers={"Content-Type": ctype})
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["Referrer-Policy"] = "no-referrer"
+    resp.headers["Cache-Control"] = "private, max-age=300"
+    if sandbox or p.suffix.lower() in (".html", ".htm", ".svg"):
+        # Agent-written pages run in an opaque origin: they cannot read Relay's cookies, pages or API.
+        resp.headers["Content-Security-Policy"] = exploration.MOCKUP_CSP
+    return resp
+
+
+@app.get("/api/tasks/<tid>/mockups")
+def task_mockups(tid):
+    t = task_or_404(tid)
+    ex = t.get("exploration") or {}
+    md_path = Path(t.get("run_dir") or manager.store.task_dir(tid)) / "FOCUS_GROUP.md"
+    return jsonify({"exploration": ex, "focus_group_md": read_text(md_path) if md_path.exists() else "",
+                    "view_base": f"/mockup-view/{tid}/{exploration.view_token(tid)}/" if ex.get("directions") else ""})
+
+
+@app.get("/api/tasks/<tid>/mockups/file/<path:rel>")
+def task_mockup_file(tid, rel):
+    return _mockup_file(tid, rel, sandbox=False)
+
+
+@app.post("/api/tasks/<tid>/mockups/choose")
+def task_mockup_choose(tid):
+    b = body()
+    task_or_404(tid)
+    try:
+        return jsonify({"ok": True, **manager.choose_direction(tid, b.get("direction"), b.get("note") or "")})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.get("/mockup-view/<tid>/<token>/<path:rel>")
+def mockup_view(tid, token, rel):
+    """A mockup opened in its own tab. The signed link comes from the authenticated API above and expires; the page is sandboxed."""
+    if not exploration.check_view_token(tid, token):
+        return Response("This mockup link has expired. Open it again from the task's Mockups tab.", status=403, mimetype="text/plain")
+    return _mockup_file(tid, rel, sandbox=True)
+
+
 @app.get("/api/tasks/<tid>/export")
 def task_export(tid):
     t = task_or_404(tid)

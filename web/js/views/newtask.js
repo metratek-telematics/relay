@@ -6,7 +6,7 @@ import { connectorPicker } from "./connectors.js";
 import { mountTaskTools } from "./tools.js";
 import { mountTeamAdvice, mountRiskCheck } from "./advice.js";
 
-export function workflowEditor(host, wf, { agents, presets, showAdvanced = true, onChange }) {
+export function workflowEditor(host, wf, { agents, presets, showAdvanced = true, perTask = false, onChange }) {
   const health = S.agents || {};
   const roles = ["supervisor", "worker", "reviewer"];
   const draw = () => {
@@ -44,6 +44,7 @@ export function workflowEditor(host, wf, { agents, presets, showAdvanced = true,
         <div class="field inline"><label>Require my approval before commit & PR</label><span class="switch ${wf.approval_before_delivery ? "on" : ""}" data-sw="approval_before_delivery"></span></div>
         <div class="field inline"><label>Agents may ask me questions</label><span class="switch ${wf.allow_agent_questions !== false ? "on" : ""}" data-sw="allow_agent_questions"></span></div>
       </div>
+      ${perTask ? `<div class="field inline"><label>Show me mockups before building<span class="help" style="display:block;margin:2px 0 0">The team explores design directions, then waits for your pick (the focus group's pick after the answer timeout).</span></label><span class="switch ${wf.show_mockups ? "on" : ""}" data-sw="show_mockups" role="switch" tabindex="0" aria-checked="${!!wf.show_mockups}" aria-label="Show me mockups before building"></span></div>` : ""}
       <div class="field"><label>Verification commands (one per line, optional)</label><textarea data-wf="verification_commands" rows="2" placeholder="npm test&#10;python -m pytest -q">${esc((wf.verification_commands || []).join("\n"))}</textarea><div class="help">Auto-detected commands (npm scripts, pytest, gradle, …) are added too unless disabled. <label style="display:inline-flex;gap:4px;align-items:center"><input type="checkbox" data-cb="auto_detect_verification" ${wf.auto_detect_verification !== false ? "checked" : ""}> auto-detect</label></div></div>` : ""}`;
     $$("[data-preset]", host).forEach((b) => (b.onclick = () => {
       wf.preset = b.dataset.preset;
@@ -62,7 +63,10 @@ export function workflowEditor(host, wf, { agents, presets, showAdvanced = true,
     $$("[data-model]", host).forEach((i) => i.addEventListener("input", () => { wf.roles[i.dataset.model].model = i.value.trim(); onChange && onChange(wf); }));
     $$("[data-effort]", host).forEach((s) => s.addEventListener("change", () => { wf.roles[s.dataset.effort].effort = s.value; onChange && onChange(wf); }));
     $$("[data-wf]", host).forEach((i) => i.addEventListener("change", () => { const k = i.dataset.wf; wf[k] = k === "verification_commands" ? i.value.split("\n").map((x) => x.trim()).filter(Boolean) : (i.type === "number" ? Number(i.value) : i.value); onChange && onChange(wf); }));
-    $$("[data-sw]", host).forEach((s) => (s.onclick = () => { wf[s.dataset.sw] = !s.classList.contains("on"); s.classList.toggle("on"); onChange && onChange(wf); }));
+    $$("[data-sw]", host).forEach((s) => {
+      s.onclick = () => { wf[s.dataset.sw] = !s.classList.contains("on"); s.classList.toggle("on"); if (s.hasAttribute("aria-checked")) s.setAttribute("aria-checked", s.classList.contains("on")); onChange && onChange(wf); };
+      s.onkeydown = (e) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); s.onclick(); } };
+    });
     $$("[data-cb]", host).forEach((c) => c.addEventListener("change", () => { wf[c.dataset.cb] = c.checked; onChange && onChange(wf); }));
   };
   draw();
@@ -75,7 +79,7 @@ export function defaultWorkflow() {
   const roles = {};
   for (const r of ["supervisor", "worker", "reviewer"]) roles[r] = { agent: p ? (p.roles[r]?.agent || "") : (cfg.roles?.[r]?.agent || ""), model: cfg.roles?.[r]?.model || "", effort: cfg.roles?.[r]?.effort || "" };
   return { preset: cfg.workflow_preset || "custom", roles, max_turns: cfg.max_turns || 12, max_review_rounds: cfg.max_review_rounds || 3, verify_mode: cfg.verify_mode || "each_report",
-    approval_before_delivery: !!cfg.approval_before_delivery, allow_agent_questions: cfg.allow_agent_questions !== false, design_mode: cfg.design_mode || "auto", design_approval: cfg.design_approval || "auto", verification_commands: [], auto_detect_verification: cfg.auto_detect_verification !== false };
+    approval_before_delivery: !!cfg.approval_before_delivery, allow_agent_questions: cfg.allow_agent_questions !== false, design_mode: cfg.design_mode || "auto", design_approval: cfg.design_approval || "auto", show_mockups: false, verification_commands: [], auto_detect_verification: cfg.auto_detect_verification !== false };
 }
 
 // A follow-up is a new task on a delivered task's branch, with the same repository and team.
@@ -301,7 +305,7 @@ export function openNewTask(prefill = {}) {
       $("#wNext", body).onclick = () => { collect1(); if (!data.requirements.trim() && !data.issue.trim()) { toast("warning", "Describe the task or give an issue number"); return; } go(3); };
     } else if (step === 3) {
       body.innerHTML = `<h2>Team & workflow</h2><p class="hint">One agent supervises: it plans, delegates, verifies and decides. The other implements. Optionally a third reviews independently before delivery.</p><div id="teamAdvice"></div><div id="wfEditor"></div>${nav("Back", "Next: review")}`;
-      const editor = workflowEditor($("#wfEditor", body), data.workflow, { agents: S.agentMeta, presets: S.presets, onChange: (wf) => { const k = JSON.stringify(wf.roles); if (k !== rolesKey) { rolesKey = k; data.teamSource = "manual"; } } });
+      const editor = workflowEditor($("#wfEditor", body), data.workflow, { agents: S.agentMeta, presets: S.presets, perTask: true, onChange: (wf) => { const k = JSON.stringify(wf.roles); if (k !== rolesKey) { rolesKey = k; data.teamSource = "manual"; } } });
       let rolesKey = JSON.stringify(data.workflow.roles);
       const advice = mountTeamAdvice($("#teamAdvice", body), adviceDraft, { onUse: (roles) => {
         Object.assign(data.workflow.roles, roles); data.workflow.preset = "custom"; data.teamSource = "recommended"; rolesKey = JSON.stringify(data.workflow.roles);

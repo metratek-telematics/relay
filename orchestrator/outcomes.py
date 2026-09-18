@@ -39,7 +39,8 @@ ESCALATIONS = {"Acceptance criteria not proven", "A blocking finding keeps comin
                "Work-package budget reached", "Review rounds used up", "Verification still failing"}
 
 # Signals that decide whether a new line is worth appending (anything else is bookkeeping).
-_SIGNAL_KEYS = ("outcome", "failure_category", "score", "success", "post_merge", "lessons_injected", "autopsy_cause", "acceptance_unmet")
+_SIGNAL_KEYS = ("outcome", "failure_category", "score", "success", "post_merge", "lessons_injected", "autopsy_cause", "acceptance_unmet",
+                "exploration")
 
 
 # ----------------------------------------------------------------------------- helpers
@@ -210,8 +211,18 @@ def build(task: dict, card: dict, messages: list[dict] | None = None) -> dict:
                        "reverted": bool(pr.get("reverted")), "revert_sha": pr.get("revert_sha")} if pr else None,
         "prediction": _prediction(task),
         "autopsy_cause": (task.get("autopsy") or {}).get("cause"),
+        # Design exploration: persona scores, the panel's pick and whether the owner overrode it (persona weighting).
+        "exploration": _exploration(task),
     }
     return rec
+
+
+def _exploration(task: dict):
+    try:
+        from .exploration import outcome_record
+        return outcome_record(task)
+    except Exception:
+        return None
 
 
 def _components(task: dict) -> list[str]:

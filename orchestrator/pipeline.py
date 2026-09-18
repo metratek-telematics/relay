@@ -18,7 +18,7 @@ import traceback
 from pathlib import Path
 
 from . import config as C
-from . import commitguard, connectors, design, designcheck, environment, gitops, github, judge, lessons, multirepo, protocol, repo_env, stacks
+from . import commitguard, connectors, design, designcheck, environment, exploration, gitops, github, judge, lessons, multirepo, protocol, repo_env, stacks
 from . import tokens, toolbox
 from .runner import Interrupted, Stopped, TurnTimeout
 from .util import APP_DIR, new_id, now, quiet, read_text, truncate, write_text
@@ -93,7 +93,7 @@ def context_refs(refs):
 
 
 # ----------------------------------------------------------------------------- pipeline
-class Pipeline(design.DesignFlow, multirepo.MultiRepo):
+class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRepo):
     def __init__(self, task, runner, manager):
         self.task = task
         self.r = runner
@@ -168,7 +168,7 @@ class Pipeline(design.DesignFlow, multirepo.MultiRepo):
         return "reviewing"
 
     # ------------------------------------------------------------ agent turns
-    def run_role(self, role, prompt, label, turn=None, expect=None, session_key=None):
+    def run_role(self, role, prompt, label, turn=None, expect=None, session_key=None, images=None):
         agent, model = self.role_agent(role)
         if not agent:
             raise RuntimeError(f"No agent configured for the {role} role.")
@@ -210,7 +210,8 @@ class Pipeline(design.DesignFlow, multirepo.MultiRepo):
             prompt, sess = self.tools_turn_note(role, agent, sess, prompt)
             self.r.wait_if_paused()
             try:
-                res = self.r.run_agent(role, agent, prompt, self.wt, self.agent_cfg(), model, sess, self.run_dir, label, turn,
+                acfg = {**self.agent_cfg(), "attach_images": list(images)} if images else self.agent_cfg()
+                res = self.r.run_agent(role, agent, prompt, self.wt, acfg, model, sess, self.run_dir, label, turn,
                                        effort=self.role_effort(role))
             except Interrupted as e:
                 if sess.get("id"):
@@ -1446,6 +1447,7 @@ class Pipeline(design.DesignFlow, multirepo.MultiRepo):
                                f"commit. Switch it back (git switch {self.branch}, keeping the changes) and resume the task.")
         self.guard_related_branches()
         cleanup_refs(self.wt)
+        shutil.rmtree(Path(self.wt) / exploration.MOCKUP_DIR, ignore_errors=True)  # mockups stay in the run folder
         cfg = self.cfg
         prefix = (cfg.get("commit_message_prefix") or "agent:").strip()
         title = t.get("github_issue_title") or t["name"]
@@ -1715,6 +1717,12 @@ class Pipeline(design.DesignFlow, multirepo.MultiRepo):
                 self.kickoff()
             if self.state.get("phase") == "design":
                 self.design_phase()
+            if self.exploration_due():
+                # UI and design work: explore directions with a focus group before building (orchestrator/exploration.py).
+                self.state.update({"phase": "explore", "explore_stage": "mockups"})
+                self.save()
+            if self.state.get("phase") == "explore":
+                self.exploration_phase()
             if self.state.get("phase") == "dialogue":
                 self.dialogue()
             if self.state.get("phase") == "review":
