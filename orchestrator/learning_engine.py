@@ -404,6 +404,11 @@ class LearningEngine:
         for r in outcomes.team_from_key(key).values():
             if r["agent"] not in C.AGENTS:
                 return False
+            if r.get("provider") == "openrouter":
+                from . import openrouter as OR
+                if not OR.supports(r["agent"]) or not OR.capacity_state(r["model"], None, None, OR.account_cached()).get("ok"):
+                    return False
+                continue
             if ap:
                 try:
                     # Signed in and installed always; limits only when an account reading is already cached (never slow).

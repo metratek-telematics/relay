@@ -533,7 +533,8 @@ class CodexAdapter(AgentAdapter):
                 return out
             ctx.tools[iid] = {"tool": "error", "at": time.time()}
             msg = item.get("message") or json.dumps(item)
-            if msg.lower().startswith(("ignoring", "warning")):
+            if msg.lower().startswith(("ignoring", "warning", "model metadata for")):
+                # "Model metadata for `x` not found": a model Codex has no local table for (any OpenRouter model) runs fine.
                 # Non-fatal configuration warnings: the turn carries on, so show them
                 # once in the turn's notice rather than as crash-style error cards.
                 out.append({"kind": "log", "text": msg})

@@ -129,6 +129,14 @@ def summary(tasks: list[dict], month: str | None = None, project: str | None = N
             spent = _out(by_user.get(un, _blank()))["cost_usd"]
             f = round(spent / elapsed_days * days, 2) if elapsed_days else 0
             budgets.append(_meter("user", un, u.get("name") or un, float(u["budget_monthly_usd"]), spent, f))
+    if not user:
+        try:
+            from .. import openrouter as OR
+            for mtr in OR.budget_meters(tasks):
+                if not project or mtr["key"] == f"openrouter:{project}":
+                    budgets.append(mtr)
+        except Exception:
+            pass
     return {
         "month": month, "days": days, "total": _out(total), "forecast_usd": forecast,
         "daily": daily,
@@ -180,12 +188,37 @@ def check_alerts(tasks, notify) -> list[str]:
         sent[key] = now_iso()
         fired.append(key)
         level = "error" if th >= 100 else "warning"
-        what = {"organisation": "The organisation", "project": f"Project {b['label']}", "user": b["label"]}[b["kind"]]
+        what = {"organisation": "The organisation", "project": f"Project {b['label']}", "user": b["label"],
+                "openrouter": b["label"]}.get(b["kind"], b["label"])
         notify(level, f"Budget {th}% reached", f"{what} has spent ~${b['spent_usd']:.2f} of ${b['budget_usd']:.2f} this month"
                f" (forecast ~${b['forecast_usd']:.2f}).")
     if fired:
         _alerts.write({"sent": {k: v for k, v in sent.items() if k.startswith(month)}})
     return fired
+
+
+def low_credit_alert(notify) -> bool:
+    """Once a day: OpenRouter credits below the configured floor (only for accounts that ever bought credits)."""
+    from .. import openrouter as OR
+    s = OR.settings()
+    floor = float(s.get("low_credit_usd") or 0)
+    if not floor or not OR.configured(s):
+        return False
+    acc = OR.account_cached()
+    if not acc or not acc.get("ok") or not float(acc.get("total_credits") or 0):
+        return False
+    left = acc.get("credits_remaining")
+    if left is None or left >= floor:
+        return False
+    key = f"{datetime.now():%Y-%m-%d}:openrouter:low_credit"
+    sent = _alerts.read().get("sent") or {}
+    if key in sent:
+        return False
+    sent[key] = now_iso()
+    _alerts.write({"sent": sent})
+    notify("warning", "OpenRouter credits are low", f"${left:.2f} left (alert below ${floor:.2f}). Paid models stop when it reaches zero; "
+           "free models keep working. Add credits at openrouter.ai/settings/credits.")
+    return True
 
 
 class Watch:
@@ -200,6 +233,10 @@ class Watch:
         while True:
             try:
                 check_alerts(self.m.store.list(), lambda lv, title, body: self.m.notify(lv, title, body, None, kind="budget"))
+            except Exception:
+                pass
+            try:
+                low_credit_alert(lambda lv, title, body: self.m.notify(lv, title, body, None, kind="budget"))
             except Exception:
                 pass
             time.sleep(self.every)

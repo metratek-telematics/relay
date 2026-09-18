@@ -49,11 +49,14 @@ DEFAULTS = {
         "allow_private_targets": False,  # allow webhook targets on private networks (self-hosted receivers); off blocks SSRF into the LAN
     },
     "budgets": {"org_monthly_usd": 0, "alert_thresholds": [50, 80, 100]},
+    # Model providers agents can run on (orchestrator/openrouter.py holds the defaults and the validation).
+    "providers": {"openrouter": {}},
 }
 
 SECRET_PATHS = [("integrations", "smtp", "password"), ("integrations", "telegram", "bot_token"),
                 ("integrations", "telegram", "webhook_secret"), ("integrations", "slack", "webhook_url"),
-                ("integrations", "discord", "webhook_url"), ("integrations", "webpush", "private_key")]
+                ("integrations", "discord", "webhook_url"), ("integrations", "webpush", "private_key"),
+                ("providers", "openrouter", "api_key")]
 
 _store = JsonStore("settings.json", DEFAULTS)
 
@@ -126,9 +129,19 @@ def save(partial: dict) -> dict:
     def apply(cur):
         cur = _merge(DEFAULTS, cur)
         old = copy.deepcopy(cur)
-        for section in ("auth", "integrations", "budgets"):
+        for section in ("auth", "integrations", "budgets", "providers"):
             if isinstance(partial.get(section), dict):
                 cur[section] = _merge(cur[section], partial[section])
+        if isinstance((partial.get("providers") or {}).get("openrouter"), dict):
+            # Lists (fallback models, provider order) and the per-project caps are replaced, not merged.
+            inc = partial["providers"]["openrouter"]
+            for k in ("fallback_models", "project_caps"):
+                if k in inc:
+                    cur["providers"]["openrouter"][k] = inc[k]
+            if isinstance(inc.get("routing"), dict):
+                for k in ("order", "ignore"):
+                    if k in inc["routing"]:
+                        cur["providers"]["openrouter"].setdefault("routing", {})[k] = inc["routing"][k]
         for p in SECRET_PATHS:
             if _get(cur, p) == MASK:
                 _set(cur, p, _get(old, p))
@@ -152,6 +165,12 @@ def save(partial: dict) -> dict:
         for k in list(a):
             if k.startswith("_env"):
                 a.pop(k)
+        from .. import openrouter as OR
+        orp = cur["providers"].get("openrouter") or {}
+        if orp:
+            clean = OR.validate(orp)
+            clean["api_key"] = (orp.get("api_key") or "").strip()
+            cur["providers"]["openrouter"] = clean
         b = cur["budgets"]
         b["org_monthly_usd"] = max(0.0, float(b.get("org_monthly_usd") or 0))
         b["alert_thresholds"] = sorted({max(1, min(200, int(x))) for x in b.get("alert_thresholds") or [80, 100]})

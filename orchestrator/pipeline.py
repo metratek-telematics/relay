@@ -31,7 +31,8 @@ REV_TYPES = {"review"}
 _CONFIG_ERRORS = re.compile(
     r"model[^\n]{0,80}(?:not supported|not found|does not exist|is not available|unknown|invalid)|unknown model|"
     r"not supported when using|401 unauthorized|\b401\b[^\n]{0,40}unauthori|invalid api key|api key (?:is )?(?:missing|invalid|not valid)|"
-    r"not signed in|not logged in|authentication required|no authentication information|please (?:log ?in|sign in)", re.I)
+    r"not signed in|not logged in|authentication required|no authentication information|please (?:log ?in|sign in)|"
+    r"openrouter[^\n]{0,40}(?:out of credits|free-model requests are used up|rejected the api key|spend(?:ing)? limit|cap reached)", re.I)
 
 
 def _config_error(text: str) -> bool:
@@ -141,10 +142,29 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
         # handed to Kilo or Claude would fail (or silently pick a paid default).
         glob = self.cfg.get("roles", {}).get(role, {}) or {}
         same = (glob.get("agent") or "").strip() == agent
+        if self.role_provider(role):
+            # On OpenRouter the model is an OpenRouter id; blank means the OpenRouter default (openrouter_launch.py).
+            own = (r.get("model") or "").strip()
+            if not own and same and (glob.get("provider") or "") == "openrouter":
+                own = (glob.get("model") or "").strip()
+            d = self.cfg.get("agent_defaults", {}).get(agent) or {}
+            if not own and (d.get("provider") or "") == "openrouter":
+                own = (d.get("model") or "").strip()
+            return agent, own
         model = ((r.get("model") or "").strip()
                  or ((glob.get("model") or "").strip() if same else "")
                  or ((self.cfg.get("agent_defaults", {}).get(agent) or {}).get("model") or "").strip())
         return agent, model
+
+    def role_provider(self, role):
+        """"openrouter" when the role runs its agent on OpenRouter, else "" (the agent's own sign-in)."""
+        r = self.roles.get(role) or {}
+        agent = (r.get("agent") or "").strip()
+        prov = (r.get("provider") or "").strip().lower()
+        if not prov and not (r.get("model") or "").strip():
+            # A blank role falls back to the agent's defaults, provider included.
+            prov = ((self.cfg.get("agent_defaults", {}).get(agent) or {}).get("provider") or "").strip().lower()
+        return "openrouter" if prov == "openrouter" else ""
 
     def role_effort(self, role):
         r = self.roles.get(role) or {}
@@ -174,9 +194,11 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
             raise RuntimeError(f"No agent configured for the {role} role.")
         # A separate session key gives the same agent a fresh, independent conversation (the design reviewer).
         skey = session_key or role
+        provider = self.role_provider(role)
         sess = dict(self.sessions.get(skey) or {})
-        if sess.get("agent") != agent:
-            sess = {"agent": agent, "turns": 0}
+        if sess.get("agent") != agent or (sess.get("provider") or "") != provider:
+            # Another agent, or the same CLI moved between its own sign-in and OpenRouter: a new conversation.
+            sess = {"agent": agent, "turns": 0, "provider": provider}
         expect = expect or {"supervisor": SUP_TYPES, "worker": WRK_TYPES, "reviewer": REV_TYPES}[role]
         nudges = 0
         failures = 0
@@ -192,7 +214,7 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
             restarts += 1
             had_turns = int(sess.get("turns", 0)) > 0
             sess_before = sess
-            sess = {"agent": agent, "turns": 0}
+            sess = {"agent": agent, "turns": 0, "provider": provider, **({"or_model": sess_before["or_model"]} if sess_before.get("or_model") else {})}
             self.sessions[skey] = sess
             self.save()
             self.r.timeline(role, "Starting a fresh session", f"{_label(agent)} ({role}): {truncate(reason, 160)}")
@@ -211,6 +233,8 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
             self.r.wait_if_paused()
             try:
                 acfg = {**self.agent_cfg(), "attach_images": list(images)} if images else self.agent_cfg()
+                if provider:
+                    acfg = {**acfg, "_provider": provider}
                 res = self.r.run_agent(role, agent, prompt, self.wt, acfg, model, sess, self.run_dir, label, turn,
                                        effort=self.role_effort(role))
             except Interrupted as e:

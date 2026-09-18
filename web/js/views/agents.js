@@ -2,6 +2,7 @@
 import { $, $$, esc, icon, toast, modal, confirm, copyText, menu, fmtNum, fmtCost, timeAgo, skeleton } from "../ui.js";
 import { S, agentLabel, agentInitial, agentIds } from "../state.js";
 import { api } from "../api.js";
+import { openRouterCard, bindOpenRouterCard, openOpenRouterBrowser, orSupported } from "./openrouter.js";
 
 const isPack = (a) => !!(S.agentMeta[a] || {}).install;
 
@@ -132,7 +133,8 @@ export function openModels(name) {
     <div class="row" style="gap:8px;margin:12px 0 8px;flex-wrap:wrap">
       <input id="mQ" placeholder="Search models" style="flex:1;min-width:160px">
       <label class="row" style="gap:6px"><input type="checkbox" id="mFree"> Free or in plan</label>
-      <button class="btn sm" id="mRefresh" title="Fetch the model list and usage again">${icon("refresh")}Refresh</button></div>
+      <button class="btn sm" id="mRefresh" title="Fetch the model list and usage again">${icon("refresh")}Refresh</button>
+      ${orSupported(name) ? `<button class="btn sm" id="mOR" title="${esc(label)} can also run any OpenRouter model: pick Runs on · OpenRouter in the team">${icon("layers")}OpenRouter models</button>` : ""}</div>
     <p class="hint" id="mHint">Loading models…</p>
     <div class="model-list" id="mList"></div>
     <p class="hint" id="mFoot">★ adds a model to the pickers when you build a team.</p>
@@ -176,6 +178,7 @@ export function openModels(name) {
   $("#mQ", m.body).oninput = (e) => { query = e.target.value; draw(); };
   $("#mFree", m.body).onchange = (e) => { freeOnly = e.target.checked; draw(); };
   $("#mRefresh", m.body).onclick = () => { loadModels(true); loadAccount(true); };
+  if ($("#mOR", m.body)) $("#mOR", m.body).onclick = () => openOpenRouterBrowser();
   loadModels(false);
   loadAccount(false);
 }
@@ -252,6 +255,7 @@ export function mountAgents(main) {
           </div></div>
         </div>
         <div class="stack" style="gap:16px">
+          ${openRouterCard()}
           <div class="card"><div class="card-head"><h3>Adding an agent</h3></div><div class="card-body hint stack">
             <div><strong>1. Install.</strong> Downloads the official CLI into Relay's data folder, so it survives restarts and image rebuilds.</div>
             <div><strong>2. Sign in.</strong> Run its login in the browser VS Code terminal, or add an API key under Configure.</div>
@@ -269,6 +273,7 @@ export function mountAgents(main) {
         </div>
       </div>`;
     $("#recheck", main).onclick = () => render(true);
+    bindOpenRouterCard(main);
     $$("[data-test]", main).forEach((b) => (b.onclick = () => runTest(b.dataset.test)));
     $$("[data-install]", main).forEach((b) => (b.onclick = () => runJob(b.dataset.install, "install")));
     $$("[data-signin]", main).forEach((b) => (b.onclick = () => openSignIn(b.dataset.signin)));

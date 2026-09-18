@@ -31,6 +31,7 @@ RULES: list[tuple[tuple, re.Pattern, str, str]] = [(m, re.compile(rx), r, label)
     (("GET",), r"^/api/fs/browse$", "member", "browse the server's folders"),
     (("GET",), r"^/api/org/audit(/.*)?$", "admin", "read the audit log"),
     (("GET",), r"^/api/org/settings$", "admin", "read organisation settings"),
+    (("GET",), r"^/api/org/providers(/.*)?$", "admin", "read model provider settings"),
     (("GET",), r"^/api/org/deliveries$", "admin", "read the delivery log"),
     (("GET",), r"^/api/org/integrations(/.*)?$", "admin", "read integration status"),
     (("GET",), r"^/api/org/users/[^/]+$", "admin", "read a person's details"),

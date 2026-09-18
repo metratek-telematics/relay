@@ -106,8 +106,11 @@ PACK_AGENTS = {
                  "docs": "https://docs.continue.dev/cli/overview"},
 }
 AGENTS.update(PACK_AGENTS)
+from .openrouter import SUPPORT as _OPENROUTER  # noqa: E402  (which CLIs can run on OpenRouter, and how)
+
 for _id, _a in AGENTS.items():
     _a["logo"] = f"agents/{_id}.svg"  # web/agents, see SOURCES.md there
+    _a["openrouter"] = dict(_OPENROUTER.get(_id) or {"ok": False, "why": "not checked"})
 
 # Editable model catalog shown in the model pickers (Settings → Agents). Free text is always allowed too.
 DEFAULT_MODELS = {
@@ -189,9 +192,9 @@ DEFAULTS = {
     # An independent reviewer by default: a gate that checks the result against the request, not a second designer.
     "workflow_preset": "codex-claude-independent-review",
     "roles": {
-        "supervisor": {"agent": "codex", "model": "", "effort": ""},
-        "worker": {"agent": "claude", "model": "", "effort": ""},
-        "reviewer": {"agent": "codex", "model": "", "effort": ""},
+        "supervisor": {"agent": "codex", "model": "", "effort": "", "provider": ""},
+        "worker": {"agent": "claude", "model": "", "effort": "", "provider": ""},
+        "reviewer": {"agent": "codex", "model": "", "effort": "", "provider": ""},
     },
     "models": copy.deepcopy(DEFAULT_MODELS),
     "max_turns": 12,
@@ -399,6 +402,7 @@ def _migrate(cfg: dict) -> dict:
         out["roles"][r].setdefault("agent", "")
         out["roles"][r].setdefault("model", "")
         out["roles"][r].setdefault("effort", "")
+        out["roles"][r].setdefault("provider", "")  # "" = the agent's own sign-in · "openrouter"
     out.setdefault("models", {})
     if isinstance(out.get("subagent_models"), dict):
         out["subagent_models"]["codex"] = ""
@@ -411,12 +415,17 @@ def _migrate(cfg: dict) -> dict:
             d = {}
         d.setdefault("model", "")
         d.setdefault("effort", "")
+        d.setdefault("provider", "")
         out["agent_defaults"][a] = d
         out["model_recent"].setdefault(a, [])
         if not isinstance(out["models"].get(a), list):
             out["models"][a] = list(DEFAULT_MODELS.get(a, []))
         out["pricing"].setdefault(a, {"input": 0.0, "cached": 0.0, "output": 0.0})
         out["subagent_models"].setdefault(a, "")
+    # OpenRouter ids starred in the model browser and the ones roles ran recently, shared by every agent on OpenRouter.
+    if not isinstance(out["models"].get("openrouter"), list):
+        out["models"]["openrouter"] = []
+    out["model_recent"].setdefault("openrouter", [])
     out["saved_prompts"] = _clean_prompts(out.get("saved_prompts"))
     out["build"] = BUILD
     return out
@@ -514,7 +523,8 @@ def remember_repo(path: str) -> None:
 
 
 def remember_model(agent: str, model: str) -> None:
-    if not model or agent not in AGENTS:
+    """Recent models per agent; "openrouter" keeps the OpenRouter ids any agent ran."""
+    if not model or (agent not in AGENTS and agent != "openrouter"):
         return
     cfg = load()
     rec = cfg.get("model_recent", {}).get(agent, [])

@@ -8,6 +8,18 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **OpenRouter as a provider** (`orchestrator/openrouter.py`, `openrouter_proxy.py`, `openrouter_launch.py`,
+  `web/js/views/openrouter.js`, docs/OPENROUTER.md). Any role can run its agent on OpenRouter ("Runs on · OpenRouter"
+  in the team): Claude Code, Codex, OpenCode, Kilo, Cline, Goose, Aider, Crush, Qwen Code, Continue and GitHub Copilot,
+  each with a per-run recipe that never touches the owner's own CLI login. Agents reach OpenRouter through a local
+  gateway that keeps the key away from them, applies routing and privacy preferences, paces free models, waits out rate
+  limits, rotates models and records the real cost of every request. Settings → Model providers (admins): key with
+  test, routing, fallbacks, attribution, monthly caps for all projects and per project, low-credit alert. A model browser
+  with filters, a computed "recommended for coding" shortlist and **Auto · best free model** (ranked from the catalog
+  and Relay's own history, rotated with cooldowns). Real cost per turn in the conversation and the task's Sessions tab,
+  account and spend in Models & usage, autopilot capacity checks (credits, daily free requests, caps), readable errors
+  and autopsy categories, provider-aware team keys for learning. `tools/mock_openrouter.py` and
+  `tests/test_openrouter.py` for development.
 - **Telegram assistant** (`orchestrator/org/telegram.py`, `concierge.py`, `voice.py`). Long polling by default (nothing
   exposed; offset persisted, backoff, single-poller lock), webhook mode still available. Notifications carry the task, the
   actual question, design summary, findings or error, with buttons and a link; a plain reply answers that pending question

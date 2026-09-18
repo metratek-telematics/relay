@@ -108,10 +108,14 @@ class Runner:
         self._mask = fn
 
     def _m(self, value):
-        fns = [f for f in (getattr(self, "_mask", None), getattr(self, "_tool_mask", None)) if f]
+        fns = [f for f in (getattr(self, "_mask", None), getattr(self, "_tool_mask", None), self._or_masker()) if f]
         if not fns:
             return value
-        fn = fns[0] if len(fns) == 1 else (lambda s: fns[1](fns[0](s)))
+
+        def fn(text):
+            for f in fns:
+                text = f(text)
+            return text
         if isinstance(value, str):
             return fn(value)
         if isinstance(value, list):
@@ -119,6 +123,13 @@ class Runner:
         if isinstance(value, dict):
             return {k: self._m(v) for k, v in value.items()}
         return value
+
+    def _or_masker(self):
+        """The current OpenRouter turn's token (a gateway token, or the key in direct mode) never shows in logs or messages."""
+        secret = getattr(self, "_or_mask", "")
+        if not secret:
+            return None
+        return lambda text: text.replace(secret, "••••••••") if isinstance(text, str) else text
 
     def rawlog(self, line: str, tag: str = ""):
         line = self._m(str(line))
@@ -285,6 +296,16 @@ class Runner:
 
     # ------------------------------------------------------------------ agent turn
     def run_agent(self, role, agent_name, prompt, cwd, cfg, model, session, run_dir, label="", turn=None, effort="") -> dict:
+        holder: dict = {}
+        try:
+            return self._run_agent(role, agent_name, prompt, cwd, cfg, model, session, run_dir, label, turn, effort, holder)
+        except BaseException as e:
+            if holder.get("orp") is not None:
+                # Stopped, interrupted, timed out or crashed mid-turn: what the turn spent on OpenRouter is still recorded.
+                self._openrouter_abort(holder["orp"], role, agent_name, turn, holder.get("t0"), e)
+            raise
+
+    def _run_agent(self, role, agent_name, prompt, cwd, cfg, model, session, run_dir, label, turn, effort, holder) -> dict:
         self.wait_if_paused()
         self.check_stop()
         ad = adapter(agent_name)
@@ -296,7 +317,15 @@ class Runner:
                            "Here is everything said earlier in this session, oldest first:\n\n"
                            + "\n\n".join(f"--- Relay said ---\n{t['prompt']}\n--- You replied ---\n{t['reply']}" for t in transcript)
                            + "\n\n--- Relay now says ---\n" + prompt)
+        # A role on OpenRouter (openrouter_launch.py): the model resolved, a gateway session opened, the CLI's recipe applied.
+        orp = None
+        if (cfg.get("_provider") or "") == "openrouter":
+            orp = self._openrouter_begin(role, agent_name, model, cfg, run_dir, session, ad)
+            holder.update(orp=orp, t0=time.time())
+            cfg, model = orp.cfg, orp.model_arg
         args, env, stdin_text, session = ad.build(sent_prompt, Path(cwd), cfg, model, session, Path(run_dir), role, effort=effort or "")
+        if orp is not None:
+            args = orp.apply(env, args)
         _with_repo_env(env, cwd, override=False)
         self._with_connect(env)
         _with_venv(env, cwd)
@@ -396,6 +425,10 @@ class Runner:
         rc, elapsed = self._spawn(args, cwd, env, stdin_text, on_line, timeout, role, agent_name, label)
         flush_delta(final=delta_msg["buf"]) if delta_msg["id"] else None
         res = ad.finalize(ctx, rc, Path(run_dir), session)
+        or_info = None
+        if orp is not None:
+            holder.pop("orp", None)
+            or_info = self._openrouter_end(orp, res, role, agent_name, turn)
         if res.get("tools") and not tool_msgs:
             # CLIs that only report their tool calls after the turn (Crush, Continue): show them anyway.
             for t in res["tools"][:200]:
@@ -404,6 +437,13 @@ class Runner:
         res["session"] = {**{k: v for k, v in session.items() if not k.startswith("_")},
                           "id": res.get("session_id") or session.get("id"),
                           "turns": int(session.get("turns", 0)) + 1, "agent": agent_name}
+        if or_info is not None:
+            res["session"]["provider"] = "openrouter"
+            if or_info.get("auto"):
+                res["session"]["or_model"] = or_info.get("final_model") or or_info.get("model")
+            used = list(dict.fromkeys(list(res["session"].get("or_models") or []) + list(or_info.get("models") or [])))
+            res["session"]["or_models"] = used[-12:]
+            res["model"] = or_info.get("final_model") or res.get("model")
         if not ad.supports_resume:
             transcript.append({"prompt": truncate(prompt, 20000), "reply": truncate(res.get("text") or "", 12000)})
             while len(transcript) > 1 and sum(len(t["prompt"]) + len(t["reply"]) for t in transcript) > 80000:
@@ -422,14 +462,66 @@ class Runner:
         prev_ctx = int(session.get("context_tokens") or 0) if int(session.get("turns", 0)) > 0 else 0
         estimate = prev_ctx + tokens.est(len(sent_prompt) + tool_chars[0] + len(res.get("text") or "")) + int(usage.get("output") or 0)
         res["session"]["context_tokens"] = int(usage.get("context") or 0) or estimate
-        self.m.metrics_add(self.tid, agent_name, role, usage, elapsed, res.get("tool_calls", 0), turn,
-                           extra={"sections": sections, "prompt_est": tokens.est(len(sent_prompt)), "context": res["session"]["context_tokens"],
-                                  "cache_write": int(usage.get("cache_write") or 0), "mcp": tinfo["servers"]})
+        extra = {"sections": sections, "prompt_est": tokens.est(len(sent_prompt)), "context": res["session"]["context_tokens"],
+                 "cache_write": int(usage.get("cache_write") or 0), "mcp": tinfo["servers"]}
+        if or_info is not None:
+            from .openrouter_launch import log_extra
+            extra.update(log_extra(or_info, usage))
+        self.m.metrics_add(self.tid, agent_name, role, usage, elapsed, res.get("tool_calls", 0), turn, extra=extra)
         if rc not in (0, None) and not res.get("text"):
             tail = "\n".join(log_lines[-15:])
             res["ok"] = False
             res["error"] = res.get("error") or f"{ad.label} exited with code {rc}.\n{tail}".strip()
         return res
+
+    # ------------------------------------------------------------------ OpenRouter
+    def _openrouter_begin(self, role, agent_name, model, cfg, run_dir, session, ad):
+        from . import openrouter_launch as ORL
+        from .org import projects
+        task = self.m.store.get(self.tid) or {"id": self.tid}
+        try:
+            project = projects.project_of_task(task)
+        except Exception:
+            project = None
+        orp = ORL.begin_turn(task, role, agent_name, model, cfg, run_dir, session, env_base=ad.env(cfg),
+                             tasks=self.m.store.list(), project=project)
+        # Everything Relay logs or shows has this turn's gateway token (or, in direct mode, the key) replaced.
+        secret = (orp.recipe.get("env") or {}).get(ORL.TOKEN_VAR) or ""
+        if secret:
+            self._or_mask = secret
+        if orp.pick:
+            why = "; ".join((orp.pick.get("why") or [])[:4])
+            self.timeline(role, f"OpenRouter · automatic free pick: {orp.model}", why)
+        for note in orp.recipe.get("notes") or []:
+            self.msg(role=role, agent=agent_name, kind="notice", content=note)
+        return orp
+
+    def _openrouter_abort(self, orp, role, agent_name, turn, t0, exc):
+        """Close the gateway session of a turn that did not finish, and record what it spent and which models ran."""
+        from . import openrouter_launch as ORL
+        try:
+            usage = {"input": 0, "output": 0, "cached": 0, "cost_usd": 0.0}
+            info = ORL.end_turn(orp, {"ok": False, "error": str(exc) or type(exc).__name__}, usage)
+            extra = ORL.log_extra(info, usage)
+            extra["or_error"] = True
+            self.m.metrics_add(self.tid, agent_name, role, usage, time.time() - (t0 or time.time()), 0, turn, extra=extra)
+        except Exception as e:
+            self.rawlog(f"openrouter accounting after an unfinished turn: {e}", "system")
+
+    def _openrouter_end(self, orp, res, role, agent_name, turn):
+        from . import openrouter_launch as ORL
+        usage = res.setdefault("usage", {})
+        try:
+            info = ORL.end_turn(orp, res, usage)
+        except Exception as e:  # accounting must never fail a turn
+            self.rawlog(f"openrouter accounting: {e}", "system")
+            return {"provider": "openrouter", "model": orp.model, "models": [orp.model], "final_model": orp.model, "auto": orp.auto}
+        cost = float(usage.get("cost_usd") or 0)
+        note = ORL.turn_note(info) + (f" · ${cost:.4f}" if cost else " · $0") + ("" if usage.get("cost_exact", True) else " (estimated)")
+        self.msg(role=role, agent=agent_name, kind="provider", provider="openrouter", content=note, models=info.get("models"),
+                 cost_usd=round(cost, 6), cost_exact=bool(usage.get("cost_exact", True)), requests=info.get("requests"),
+                 rotations=info.get("rotations"), error=(info.get("error") or {}).get("message"), turn=turn)
+        return info
 
     # ------------------------------------------------------------------ shell
     def run_shell(self, cmd: str, cwd, role="verify", timeout=None, title=None) -> dict:

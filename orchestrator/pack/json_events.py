@@ -545,6 +545,8 @@ class GooseAdapter(_JsonEventsBase):
             self._flush_text(ctx, out)
             ctx._goose_totals = {"input": _int(obj.get("input_tokens")), "output": _int(obj.get("output_tokens")),
                                  "cached": _int(obj.get("cache_read_input_tokens"))}
+            if obj.get("cost_usd") is not None:  # newer builds report the session's cost too
+                ctx._goose_cost = float(obj.get("cost_usd") or 0)
             ctx.usage.update(ctx._goose_totals)  # cumulative; finalize turns it into this turn's share
             ctx.result_ok = not ctx.error
             out.append({"kind": "session", "session_id": ctx.session_id, "model": ctx.model})
@@ -565,6 +567,11 @@ class GooseAdapter(_JsonEventsBase):
                     ctx.usage[k] = max(0, totals[k] - _int(prev.get(k)))
             if any(totals.values()):
                 session["goose_tokens"] = totals  # kept with the session for the next resumed turn
+        cost = getattr(ctx, "_goose_cost", None)
+        if cost is not None:
+            prev_cost = float(session.get("goose_cost") or 0) if session.get("_resumed") else 0.0
+            ctx.usage["cost_usd"] = round(max(0.0, cost - prev_cost), 6)
+            session["goose_cost"] = cost
         if ctx.result_ok is None and rc == 0 and not ctx.error:
             ctx.error = "Goose ended without a result"  # stream cut short
         if totals is None and not session.get("_resumed"):

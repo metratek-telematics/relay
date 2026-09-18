@@ -177,7 +177,8 @@ def _snapshot(path: str, method: str, body):
             return {p["id"]: p for p in projects.all_projects()}
         if path.startswith("/api/org/users"):
             return {u["username"]: identity.public(u) for u in identity.users()}
-        if path.startswith("/api/org/settings") or path == "/api/org/budgets" or path.startswith("/api/org/integrations/webpush"):
+        if path.startswith("/api/org/settings") or path == "/api/org/budgets" or path.startswith("/api/org/integrations/webpush") \
+                or path.startswith("/api/org/providers"):
             return OS.public()
         if path.startswith("/api/org/me/tokens") or path.startswith("/api/org/tokens"):
             u = current_user() or {}
@@ -199,7 +200,7 @@ TYPE_NAMES = {"tasks": "task", "connectors": "connector", "stacks": "stack", "le
               "settings": "settings", "queue": "queue", "autopilot": "autopilot", "github": "github", "issues": "issue", "agents": "agent",
               "system": "system_map", "rules": "rule", "notifications": "notification", "projects": "project", "users": "user",
               "me": "profile", "tokens": "token", "integrations": "integration", "budgets": "budget", "onboarding": "onboarding", "audit": "audit",
-              "run": "queue"}
+              "run": "queue", "providers": "provider"}
 
 
 def describe(method: str, path: str) -> tuple[str, dict]:
@@ -217,7 +218,7 @@ def describe(method: str, path: str) -> tuple[str, dict]:
     obj = {"type": typ}
     verb = ACTION_WORDS.get(method, method.lower())
     if len(parts) >= 2:
-        if parts[0] in ("queue", "autopilot", "github", "repos", "worktrees", "system", "onboarding", "integrations", "notifications", "audit", "issues"):
+        if parts[0] in ("queue", "autopilot", "github", "repos", "worktrees", "system", "onboarding", "integrations", "notifications", "audit", "issues", "providers"):
             verb = "_".join(parts[1:])
         elif parts[0] == "me":
             obj = {"type": "profile"}
@@ -1075,6 +1076,51 @@ def audit_csv():
 @bp.get("/api/org/audit/verify")
 def audit_verify():
     return jsonify(audit.verify())
+
+
+# ============================================================================ model providers (admin)
+@bp.get("/api/org/providers/openrouter")
+def provider_openrouter_get():
+    from .. import openrouter as OR
+    return jsonify({"settings": OR.public(), "support": OR.support_table(), "configured": OR.configured(),
+                    "projects": [{"id": p["id"], "name": p["name"]} for p in projects.all_projects()],
+                    "base_url_override": OR.base_url() if OR.base_overridden() else ""})
+
+
+@bp.put("/api/org/providers/openrouter")
+def provider_openrouter_put():
+    from .. import openrouter as OR
+    b = request.get_json(silent=True) or {}
+    if not isinstance(b, dict):
+        return jsonify({"error": "Send the OpenRouter settings as an object."}), 400
+    b.pop("has_api_key", None), b.pop("key_source", None), b.pop("key_hint", None), b.pop("base_url", None)
+    cur = OR.settings()
+    if (("monthly_cap_usd" in b and float(b.get("monthly_cap_usd") or 0) != float(cur.get("monthly_cap_usd") or 0))
+            or ("project_caps" in b and (b.get("project_caps") or {}) != (cur.get("project_caps") or {}))) \
+            and rbac.level(role_now()) < rbac.level("owner"):
+        return jsonify({"error": "Spend caps are budgets: only an owner can change them."}), 403
+    if b.get("api_key") not in (None, MASK) and b.get("api_key") and not re.match(r"^sk-or-[\w-]{10,}$", str(b["api_key"]).strip()):
+        return jsonify({"error": "That does not look like an OpenRouter key (they start with sk-or-)."}), 400
+    try:
+        OS.save({"providers": {"openrouter": b}})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    OR.invalidate_account()
+    return jsonify({"settings": OR.public(), "configured": OR.configured()})
+
+
+@bp.post("/api/org/providers/openrouter/test")
+def provider_openrouter_test():
+    """Check a key (the one typed in, or the saved one): /key for its limit and tier, /credits for the balance."""
+    from .. import openrouter as OR
+    b = request.get_json(silent=True) or {}
+    key = str(b.get("api_key") or "").strip()
+    if not key or key == MASK:
+        key = OR.api_key()
+    res = OR.fetch_account(key)
+    if key == OR.api_key():
+        OR._account_cache.update(at=time.time(), data=res, key=key)
+    return jsonify(res)
 
 
 # ============================================================================ usage + onboarding

@@ -11,6 +11,7 @@ All three keep their session state outside the worktree so nothing ends up commi
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -409,7 +410,15 @@ class ContinueAdapter(AgentAdapter):
             args.append("--resume")
         # -p must be last: cn only reads the prompt from stdin when nothing follows -p.
         args.append("-p")
-        return windows_cli(self.binary, args), env, prompt or "", session
+        argv = windows_cli(self.binary, args)
+        if os.name != "nt":
+            # cn reads stdin with one readFileSync(0): from a pipe it gets whatever arrived first and, past 64 KB (a
+            # kickoff prompt), nothing at all. A file on stdin is read whole, so the prompt goes through a file.
+            pf = Path(gdir) / "prompt.md"
+            pf.write_text(prompt or "", encoding="utf-8")
+            env["RELAY_CN_PROMPT"] = str(pf)
+            return ["/bin/sh", "-c", 'exec "$0" "$@" < "$RELAY_CN_PROMPT"', *argv], env, None, session
+        return argv, env, prompt or "", session
 
     def parse_line(self, line, ctx):
         try:

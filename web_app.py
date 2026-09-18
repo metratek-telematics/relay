@@ -217,7 +217,15 @@ def state():
         "notifications": manager.notifications[:30],
         "lessons_pending": lessons.pending_count(),
         "autopilot": manager.autopilot.status(),
+        "providers": {"openrouter": _openrouter_state()},
     })
+
+
+def _openrouter_state() -> dict:
+    from orchestrator import openrouter as OR
+    s = OR.settings()
+    return {"configured": OR.configured(s), "default_model": s.get("default_model") or OR.AUTO_FREE, "auto_id": OR.AUTO_FREE,
+            "connection": s.get("connection"), "dev_override": OR.base_overridden()}
 
 
 @app.get("/api/events")
@@ -257,7 +265,9 @@ def dashboard():
 # ----------------------------------------------------------------------------- agents
 @app.get("/api/agents")
 def agents_get():
-    return jsonify({"health": agents.agent_health(manager.cfg(), force=request.args.get("force") == "1"), "meta": C.AGENTS})
+    from orchestrator import openrouter as OR
+    return jsonify({"health": agents.agent_health(manager.cfg(), force=request.args.get("force") == "1"), "meta": C.AGENTS,
+                    "openrouter": {"support": OR.support_table(), "configured": OR.configured()}})
 
 
 @app.post("/api/agents/<name>/install")
@@ -291,6 +301,36 @@ def agent_account(name):
     return jsonify(agent_info.account(name, manager.cfg(), tasks=manager.store.list(), refresh=request.args.get("refresh") == "1"))
 
 
+@app.get("/api/openrouter/models")
+def openrouter_models():
+    """The OpenRouter catalog for the model browser: every model, the coding shortlist and the automatic free picks."""
+    from orchestrator import openrouter as OR
+    cat = OR.catalog(refresh=request.args.get("refresh") == "1")
+    rows = cat["models"]
+    tasks = manager.store.list()
+    cfg = manager.cfg()
+    s = OR.settings()
+    hist = OR.model_history(tasks)
+    return jsonify({"models": rows, "fetched": cat.get("fetched"), "stale": cat.get("stale"), "error": cat.get("error"),
+                    "recommended": OR.recommended_for_coding(rows),
+                    "auto_free": OR.rank_free(rows, hist, int((s.get("auto_free") or {}).get("min_context") or 64000)),
+                    "history": hist, "starred": (cfg.get("models") or {}).get("openrouter") or [],
+                    "recent": (cfg.get("model_recent") or {}).get("openrouter") or [],
+                    "default_model": s.get("default_model") or OR.AUTO_FREE, "auto_id": OR.AUTO_FREE,
+                    "configured": OR.configured(s), "support": OR.support_table()})
+
+
+@app.get("/api/openrouter/account")
+def openrouter_account():
+    """Credits and limits from OpenRouter, and what Relay itself spent there (by model, role, agent, project, task)."""
+    from orchestrator import openrouter as OR
+    s = OR.settings()
+    acc = OR.account(refresh=request.args.get("refresh") == "1") if OR.configured(s) else {"ok": False, "error": "No OpenRouter API key is set."}
+    tasks = manager.store.list()
+    return jsonify({"account": acc, "relay": OR.usage_report(tasks), "meters": OR.budget_meters(tasks, s),
+                    "low_credit_usd": s.get("low_credit_usd"), "configured": OR.configured(s)})
+
+
 @app.get("/api/agents/jobs")
 def agent_jobs():
     return jsonify({name: installer.job(name) for name in C.AGENTS if installer.job(name)})
@@ -307,12 +347,28 @@ def agent_test(name):
     if not (scratch / ".git").exists():
         quiet(["git", "init", "-q"], cwd=scratch, timeout=30)
     # Test what tasks will actually use: the model asked for, else the agent's default model from settings.
-    model = body().get("model") or ((cfg.get("agent_defaults") or {}).get(name) or {}).get("model") or ""
-    args, env, stdin, session = ad.build("Reply with exactly the single word: pong", scratch, cfg, model, None, scratch, "test")
+    provider = (body().get("provider") or "").strip().lower()
+    orp = None
+    if provider == "openrouter":
+        # The same path a task role on OpenRouter takes: gateway token, per-run config, real cost.
+        from orchestrator import openrouter as OR, openrouter_launch as ORL
+        if not OR.supports(name):
+            return jsonify({"ok": False, "error": f"{C.AGENTS[name]['label']} cannot run on OpenRouter: {OR.SUPPORT[name]['why']}"})
+        try:
+            orp = ORL.begin_turn({"id": "agent-test"}, "test", name, body().get("model") or "", cfg, scratch, None, env_base=ad.env(cfg),
+                                 tasks=manager.store.list())
+        except RuntimeError as e:
+            return jsonify({"ok": False, "error": str(e)})
+        cfg, model = orp.cfg, orp.model_arg
+    else:
+        model = body().get("model") or ((cfg.get("agent_defaults") or {}).get(name) or {}).get("model") or ""
     ctx = TurnContext()
     started = time.time()
     lines = []
     try:
+        args, env, stdin, session = ad.build("Reply with exactly the single word: pong", scratch, cfg, model, None, scratch, "test")
+        if orp is not None:
+            args = orp.apply(env, args)
         p = subprocess.run(args, cwd=str(scratch), input=stdin, stdin=None if stdin is not None else subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
                            errors="replace", timeout=180, env=env, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         out = (p.stdout or "") + "\n" + (p.stderr or "")
@@ -323,16 +379,41 @@ def agent_test(name):
             except Exception:
                 pass
         res = ad.finalize(ctx, p.returncode, scratch, session)
+        info = None
+        if orp is not None:
+            from orchestrator import openrouter_launch as ORL
+            info = ORL.end_turn(orp, res, res.setdefault("usage", {}))
+            orp = None
         txt = (res.get("last_message") or res.get("text") or "").strip()
         ok = p.returncode == 0 and "pong" in txt.lower()
         agents.invalidate_health()
-        return jsonify({"ok": ok, "rc": p.returncode, "seconds": round(time.time() - started, 1), "reply": txt[:300],
-                        "session_id": res.get("session_id"), "model": res.get("model"), "usage": res.get("usage"),
-                        "error": None if ok else (res.get("error") or "\n".join([l for l in lines if l.strip()][-8:]))})
+        out = {"ok": ok, "rc": p.returncode, "seconds": round(time.time() - started, 1), "reply": txt[:300],
+               "session_id": res.get("session_id"), "model": res.get("model"), "usage": res.get("usage"),
+               "error": None if ok else (res.get("error") or "\n".join([l for l in lines if l.strip()][-8:]))}
+        if info is not None:
+            out.update(provider="openrouter", model=info.get("final_model"), models=info.get("models"), requests=info.get("requests"),
+                       rotations=info.get("rotations"), cost_usd=(res.get("usage") or {}).get("cost_usd"))
+            if out["error"]:
+                out["error"] = _mask_secret(out["error"])
+        return jsonify(out)
     except subprocess.TimeoutExpired:
         return jsonify({"ok": False, "error": "Timed out after 180 s", "seconds": 180}), 200
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 200
+    finally:
+        if orp is not None:  # the turn never finished: close its gateway session, remove credential files
+            try:
+                from orchestrator import openrouter_launch as ORL
+                ORL.abort(orp)
+            except Exception:
+                pass
+
+
+def _mask_secret(text: str) -> str:
+    """The OpenRouter key never appears in an answer, whatever a CLI printed."""
+    from orchestrator import openrouter as OR
+    k = OR.api_key()
+    return text.replace(k, "••••••••") if k and text else text
 
 
 # ----------------------------------------------------------------------------- settings
