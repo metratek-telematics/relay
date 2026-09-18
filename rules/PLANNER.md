@@ -73,3 +73,8 @@ A design is the contract the team builds against:
 Do not open with questions. Inspect the repository, recent commits and earlier task history, then plan the most
 reasonable reading of the request and list your assumptions in the plan. A vague request ("improve both", "a better
 design") means: choose a clear direction, justify it briefly, and make it easy to adjust.
+
+## Acceptance for interactive features
+For a click/pick/select/drag feature, at least one required criterion's `how_to_verify` is a browser run of the real
+flow: `browser: relay-browse <url> <steps> shows <state change>`. Name the producer of any data the feature consumes,
+so the worker checks its real shape.

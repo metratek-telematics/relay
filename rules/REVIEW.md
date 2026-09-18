@@ -137,3 +137,9 @@ When the task explored design directions, the chosen mockup (`.relay_mockups/<X>
 compare the implementation's screenshots with the mockup's shots. A clearly different layout or hierarchy, or a missing
 state the mockup shows, is blocking against D1; small visual differences forced by the repository's design system are
 not. `.relay_mockups/` must never be committed.
+
+## Evidence that proves nothing
+- Tests or screenshots built on a mock whose shape differs from the real producer (a field the real payload does not
+  have, a coordinate the real event does not carry) are a blocking finding: cite the producer file:line.
+- An interactive feature verified only by unit tests, with no run against the real app, is not verified. Ask for a
+  `relay-browse` run of the actual flow.

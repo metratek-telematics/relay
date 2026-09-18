@@ -67,3 +67,8 @@ elements listed. Build it with the repository's own tokens, components and fonts
 mockup disagree, the repository wins and you say so in the report. Screenshot your result (desktop 1440 and phone 420,
 light and dark) and compare it with the mockup's shots as evidence for criterion D1. Never copy `.relay_mockups/` into
 the repository. If the owner switches direction mid-task, rework what differs from the new mockup.
+
+## Before reporting an interactive feature done
+Run the real flow with `relay-browse` against the running app (dev server or integration stack) and paste the
+relevant part of its report (steps ok, values, postMessage payloads, console errors) as evidence. If the app cannot
+run here, say so as a blocked check; do not substitute a mock and call it verified.
