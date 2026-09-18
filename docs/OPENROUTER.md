@@ -27,7 +27,7 @@ everything is an environment variable or a file in the task's run folder.
 
 | Agent | How it is launched on OpenRouter |
 |---|---|
-| Claude Code | `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` (OpenRouter's Anthropic-compatible endpoint), `ANTHROPIC_API_KEY` empty, every model class (`ANTHROPIC_DEFAULT_*_MODEL`, small/fast, subagents) set to the chosen model, and a **private `CLAUDE_CONFIG_DIR` per run**, so the owner's Claude subscription login is neither used nor changed. Claude Code is built for Anthropic models; other models may not follow its tool protocol (Relay says so in the conversation). |
+| Claude Code | `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` (OpenRouter's Anthropic-compatible endpoint), `ANTHROPIC_API_KEY` empty, every model class (`ANTHROPIC_DEFAULT_*_MODEL`, small/fast, subagents) set to the chosen model, and a **private `CLAUDE_CONFIG_DIR` per run**, so the owner's Claude subscription login is neither used nor changed. Claude Code is built for Anthropic models; other models may not follow its tool protocol (Relay says so in the conversation). OpenRouter recommends Anthropic's own endpoints for Claude Code: put `anthropic` first under *Provider order*. |
 | Codex | A custom model provider: `-c model_provider="relay_openrouter" -c model_providers.relay_openrouter={base_url=…, env_key=…, wire_api="responses"}`. OpenRouter serves the Responses API, which is the only wire API current Codex accepts. Codex's own `--search` tool is OpenAI-only and is left off. |
 | OpenCode, Kilo | The built-in `openrouter` provider through `OPENCODE_CONFIG_CONTENT` / `KILO_CONFIG_CONTENT` (base URL, key from an env variable, routing preferences per model, `small_model` pinned so titles do not use another model); model `openrouter/<id>`. The task's MCP servers are merged into the same config. |
 | Cline | An OpenAI-compatible provider in a per-run `--data-dir` (`settings/providers.json`, mode 0600, removed after the turn). Cline's own `openrouter` provider cannot change its base URL. |
@@ -140,7 +140,8 @@ categories for the autopsy:
 - **Deny data collection** routes only to providers that do not store or train on prompts.
 - **Zero data retention** restricts routing to ZDR endpoints.
 - **Provider order** and **never use** lists take OpenRouter provider slugs.
-- These are sent as OpenRouter's `provider` preferences with every request through the gateway. The account-wide
+- These are sent as OpenRouter's `provider` preferences with every request through the gateway, on all three APIs
+  (OpenRouter's Anthropic-compatible endpoint validates and honours them too). The account-wide
   defaults at openrouter.ai/settings/privacy apply as well; a request can only narrow them.
 
 ## Development
