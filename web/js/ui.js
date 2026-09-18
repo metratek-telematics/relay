@@ -1,5 +1,23 @@
 // UI primitives: escaping, markdown, icons, formatting, toasts, modals, command palette.
 
+// Relay's server writes timestamps without a time zone ("2026-09-18T06:31:10"); they are UTC (the server
+// clock). Browsers would read them as the viewer's local time, so a viewer in Greece saw "3h ago" for
+// something that just happened. Every time shown is the viewer's own local time.
+const NAIVE_ISO = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/;
+export const parseTime = (v) => {
+  if (v == null || v === "") return NaN;
+  if (typeof v === "number") return v < 1e12 ? v * 1000 : v;
+  const s = String(v).trim();
+  return Date.parse(NAIVE_ISO.test(s) ? s.replace(" ", "T") + "Z" : s);
+};
+// Code elsewhere calls Date.parse directly on server timestamps; apply the same rule there.
+if (!Date.parse.__relayUtc) {
+  const nativeParse = Date.parse;
+  Date.parse = (s) => nativeParse(typeof s === "string" && NAIVE_ISO.test(s.trim()) ? s.trim().replace(" ", "T") + "Z" : s);
+  Date.parse.__relayUtc = true;
+}
+export const toDate = (v) => new Date(parseTime(v));
+
 export const $ = (s, el = document) => el.querySelector(s);
 export const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[c]));
@@ -121,7 +139,7 @@ export function fmtNum(n) {
 export function fmtCost(n, estimated = false) { n = Number(n) || 0; return n ? `${estimated ? "~" : ""}$${n.toFixed(n < 1 ? 3 : 2)}` : "—"; }
 export function timeAgo(iso) {
   if (!iso) return "";
-  const t = typeof iso === "number" ? iso * 1000 : Date.parse(iso);
+  const t = parseTime(iso);
   if (!t) return "";
   const d = (Date.now() - t) / 1000;
   if (d < 45) return "just now";
@@ -132,11 +150,11 @@ export function timeAgo(iso) {
 }
 export function fmtTime(iso) {
   if (!iso) return "";
-  const t = typeof iso === "number" ? iso * 1000 : Date.parse(iso);
+  const t = parseTime(iso);
   return t ? new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : String(iso);
 }
 export function fmtDateTime(iso) {
-  const t = Date.parse(iso || "");
+  const t = parseTime(iso);
   return t ? new Date(t).toLocaleString() : (iso || "");
 }
 export const basename = (p) => String(p || "").split(/[\\/]/).filter(Boolean).pop() || p || "";
