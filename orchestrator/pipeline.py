@@ -1035,11 +1035,34 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
             lines += ["", f"{n} follow-up(s) recorded for the pull request (should_fix / nit); they do not need another round."]
         return "\n".join(lines)
 
-    def escalate(self, title, question, choices, auto):
-        """Ask the human to decide a judge escalation. Returns (choice key, extra text). Unattended runs take `auto`."""
+    # How many times Relay keeps the team working on its own before accepting open problems, per escalation.
+    KEEP_WORKING = {"Review rounds used up": 2, "Verification still failing": 2, "Acceptance criteria not proven": 1,
+                    "A blocking finding keeps coming back": 1, "Design review still blocking": 1, "Revision produced no change": 1}
+
+    def escalate(self, title, question, choices, auto, work=None):
+        """Ask the human to decide a judge escalation. Returns (choice key, extra text). Unattended runs take `auto`.
+
+        `work` is (choice key, instruction) for the keep-working option. When Relay decides on the owner's behalf,
+        a concrete problem the team can still fix (a blocking bug, a failing check) is sent back to be fixed a few
+        times before anything is delivered with open problems: delivering known bugs is not "not bothering" the owner."""
         self._auto_choice = False
         self.r.timeline("judge", title, truncate(question, 200))
         turn = self.state.get("turn")
+        unattended = (not self.allow_questions) or str((self.task.get("workflow") or {}).get("question_policy")
+                                                         or self.cfg.get("question_policy") or "blocked").lower() == "blocked"
+        if unattended and work and work[0] in choices:
+            used = self.state.setdefault("keep_working", {})
+            limit = int((self.cfg.get("autonomous_fix_attempts") or {}).get(title, self.KEEP_WORKING.get(title, 1))
+                        if isinstance(self.cfg.get("autonomous_fix_attempts"), dict) else self.KEEP_WORKING.get(title, 1))
+            if int(used.get(title) or 0) < limit:
+                used[title] = int(used.get(title) or 0) + 1
+                self.save()
+                self._auto_choice = True
+                self.r.msg(role="orchestrator", agent=None, kind="notice", turn=turn,
+                           content=f"{title}. Relay keeps the team working instead of delivering known problems "
+                                   f"(attempt {used[title]} of {limit}): {choices[work[0]]}. You can redirect with guidance.")
+                self.r.timeline("judge", "Keep working", f"{title} · attempt {used[title]}/{limit}")
+                return work[0], work[1]
         if not self.allow_questions:
             self._auto_choice = True
             self.r.msg(role="orchestrator", agent=None, kind="notice", turn=turn,
@@ -1115,7 +1138,9 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
                     "Deliver anyway (they become follow-ups on the pull request), type guidance for the supervisor, or stop.")
         key, text = self.escalate("Acceptance criteria not proven", question,
                                   {"accept": "Deliver anyway, list the unproven criteria as follow-ups", "guidance": "Give guidance", "stop": "Stop the task"},
-                                  auto="accept")
+                                  auto="accept",
+                                  work=("guidance", "For each unproven criterion: if it is not implemented, have the worker implement it; if it is, "
+                                                    "produce concrete evidence (a test, command output, file:line or a screenshot) and cite it."))
         self.state["gate_nudges"] = 0
         if key == "accept":
             self.add_followups([{"severity": "should_fix", "problem": f"{m['id']} not proven at delivery: {m['criterion']} ({m['reason']})"}
@@ -1185,7 +1210,9 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
         question = (f"This blocking finding came back after the worker was asked to fix it {judge.MAX_FIX_ATTEMPTS} times:\n\n{rows}\n\n"
                     "Accept it as a follow-up on the pull request, type guidance for the team, or stop.")
         key, text = self.escalate("A blocking finding keeps coming back", question,
-                                  {"accept": "Accept as follow-up", "guidance": "Give guidance", "stop": "Stop the task"}, auto="accept")
+                                  {"accept": "Accept as follow-up", "guidance": "Give guidance", "stop": "Stop the task"}, auto="accept",
+                                  work=("guidance", "The same fix was tried twice and the finding is still there. Step back: reproduce it with a failing "
+                                                    "test first, find the root cause, and take a different approach than before."))
         for f in recurring:
             if key == "accept":
                 ledger.set_status(f["id"], "accepted")
@@ -1211,7 +1238,9 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
                     "Accept the revised items as follow-ups, type guidance for the supervisor, or stop.")
         key, text = self.escalate("Revision produced no change", question,
                                   {"accept": "Accept the revised items as follow-ups", "guidance": "Give guidance", "stop": "Stop the task"},
-                                  auto="accept")
+                                  auto="accept",
+                                  work=("guidance", "The last revision changed nothing in the working tree. Make the requested changes in the files "
+                                                    "themselves, then report the diff."))
         ledger = judge.Ledger(self.state.get("ledger"))
         if key == "accept":
             rows = [ledger.get(r) for r in refs if ledger.get(r)]
@@ -1276,7 +1305,9 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
                     "Deliver with these findings listed as follow-ups, allow one more review round (type guidance if you like), or stop.")
         key, text = self.escalate("Review rounds used up", question,
                                   {"deliver": "Deliver, list the open findings as follow-ups", "more": "Allow one more review round", "stop": "Stop the task"},
-                                  auto="deliver")
+                                  auto="deliver",
+                                  work=("more", "Fix every blocking finding above exactly as the reviewer describes, with a test for each, "
+                                                "then send it back for review. Do not deliver known blocking bugs."))
         if key == "deliver":
             for f in observed:
                 ledger.set_status(f["id"], "accepted")
@@ -1301,7 +1332,9 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
                     "Deliver anyway with the failing checks recorded, type guidance for the supervisor, or stop.")
         key, text = self.escalate("Verification still failing", question,
                                   {"accept": "Deliver anyway, record the failing checks", "guidance": "Give guidance", "stop": "Stop the task"},
-                                  auto="accept")
+                                  auto="accept",
+                                  work=("guidance", "These checks fail only with your change. Read the failure output, find the root cause and fix it; "
+                                                    "if a check is genuinely wrong, fix the check and explain why."))
         self.state["verify_triage"] = 0
         if key == "accept":
             self.record_blocked([{"check": f.get("command") or "Verification", "action_required": True,

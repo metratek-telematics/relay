@@ -1032,7 +1032,9 @@ class DesignFlow:
                                 "Proceed with the design as it is (the findings become follow-ups), type guidance for the supervisor to revise it once more, or stop.")
                     key, text = self.escalate("Design review still blocking", question,
                                               {"accept": "Proceed with the design, list the findings as follow-ups", "guidance": "Give guidance", "stop": "Stop the task"},
-                                              auto="accept")
+                                              auto="accept",
+                                              work=("guidance", "Revise the design to resolve each blocking finding above; where you disagree, "
+                                                                "say why in one line and keep the rest."))
                     if key != "accept":
                         self.state.update({"design_stage": "draft", "design_revisions": max(0, max_rev - 1),
                                            "design_prompt": design_revision_request(findings_text, text, "the human")})
