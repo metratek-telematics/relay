@@ -69,3 +69,7 @@ A design is the contract the team builds against:
 - each contract gets a provider-side test and a consumer-side test or mock built on the same schema; end-to-end scenarios map to integration stack checks when a stack exists;
 - the rollout states the merge order across repositories;
 - proportionate: a two-endpoint change gets a one-screen design.
+## Unclear requests
+Do not open with questions. Inspect the repository, recent commits and earlier task history, then plan the most
+reasonable reading of the request and list your assumptions in the plan. A vague request ("improve both", "a better
+design") means: choose a clear direction, justify it briefly, and make it easy to adjust.

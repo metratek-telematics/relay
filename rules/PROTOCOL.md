@@ -31,8 +31,12 @@ Text before the envelope is fine (reasoning, notes, evidence). The envelope is w
   - `addresses`: the acceptance criterion ids (A…) and blocking finding ids (F…, assigned by Relay) the revision fixes. A revise needs these or blocking findings.
   - `criteria`: one entry per criterion; `status` is `met`, `unmet` or `waived`; `evidence` is concrete (command and result, file:line, screenshot path). A required criterion without met + evidence blocks done; only the human waives a required one.
   - `severity`: `blocking` (wrong behaviour against the contract, failing required check, security issue, data loss, broken build), `should_fix` or `nit`. Only blocking findings justify another round; the rest are `follow_ups`.
-- Question to the human (only for genuine product/credential decisions):
-  `{"type":"question","to":"user","question":"...","options":["Option A","Option B"]}`
+- Question to the human: only when you are truly blocked. Include `blocking_reason`, one of `credentials`, `access`,
+  `destructive`, `irreversible`, `contradiction`, `human_only`, and put your recommendation first:
+  `{"type":"question","to":"user","question":"...","blocking_reason":"credentials","options":["Recommended option","Other option"]}`
+  A question without a valid `blocking_reason` is answered by Relay with your first option and you continue.
+- Plans may carry `"assumptions":["…"]` (what you decided without asking) and, for design work,
+  `"design_research":[{"principle":"…","applies_how":"…","source":"…"}]`.
 - Question to the worker:
   `{"type":"question","to":"worker","question":"..."}`
 - Proposal to add a repository the request depends on (the human accepts with one click; Relay clones it and adds a worktree on the task branch):
@@ -99,3 +103,12 @@ Text before the envelope is fine (reasoning, notes, evidence). The envelope is w
 - Never commit, amend or create revert commits, even when a teammate asks; leave changes in the working tree. Relay undoes any commit an agent makes (soft reset, changes kept) and commits once at delivery. To undo earlier work, restore files (`git checkout <commit> -- <paths>`).
 - Never install system packages (apt-get, sudo). A missing system library is a blocked check that names the package; the human adds it under Repositories → Environment.
 - Do not wait for input inside your own tools. If you need something, send a question envelope.
+
+## Decide, don't ask
+The owner runs tasks unattended and expects to be interrupted only when work cannot continue. Ambiguity is not a
+blocker: pick the interpretation that best fits the request, the repository's conventions and earlier tasks, write it
+under an **Assumptions** heading in your envelope (one line each), and continue. The owner can redirect with guidance.
+Stop and ask only for: credentials or access you do not have, a destructive or irreversible step (data deletion,
+production writes, force pushes), requirements that contradict each other, or a decision only a human can make
+(pricing, legal, who owns something). A request for "a new design" or "a fresh layout" is permission to decide:
+research, choose, and explain your choices.

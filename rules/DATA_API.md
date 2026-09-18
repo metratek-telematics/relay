@@ -44,3 +44,13 @@ When request/response behavior changes:
 - update tests;
 - preserve compatibility when possible;
 - document breaking behavior.
+
+## Database changes
+- Change schemas with migration files in the repository (its migration tool or numbered SQL files), with a way back
+  (down migration or reversal notes). Never change a shared or production database by hand.
+- Read the current schema first: use a database connector (`relay-connect schema <name> <table>`, read-only) when the
+  task has one, otherwise the repository's migrations and models.
+- Prove the migration on a disposable database: the task's integration stack (`relay-stack up`, which starts the
+  repository's own Postgres service and runs its fixtures) or a local one the tests create. Run it up, run the tests,
+  and run it down again when a down path exists.
+- Report the migration, how it was tested, and anything a human must do when deploying it (order, backfill, downtime).

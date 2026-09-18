@@ -298,12 +298,51 @@ class Pipeline(design.DesignFlow, multirepo.MultiRepo):
         self.state["judge_note"] = (self.state.get("judge_note") + "\n\n" if self.state.get("judge_note") else "") + note
 
     # ------------------------------------------------------------ questions
+    # Reasons that justify stopping to ask the owner under the "blocked" question policy.
+    BLOCKING_REASONS = {"credentials", "access", "destructive", "irreversible", "contradiction", "human_only"}
+
+    def decide_without_asking(self, asker_role, env, question, options):
+        """Under the "blocked" policy, answer a non-blocking question on the owner's behalf.
+
+        Returns the follow-up prompt, or None when the question really needs the human."""
+        policy = str((self.task.get("workflow") or {}).get("question_policy") or self.cfg.get("question_policy") or "blocked").lower()
+        if policy != "blocked":
+            return None
+        reason = str(env.get("blocking_reason") or "").strip().lower()
+        if reason in self.BLOCKING_REASONS:
+            return None
+        labels = [(o.get("label") if isinstance(o, dict) else str(o)) for o in options]
+        rec = str(env.get("recommended") or "").strip()
+        pick = next((l for l in labels if rec and l and rec.lower() in l.lower()), None) \
+            or next((l for l in labels if l and "recommend" in l.lower()), None) or (labels[0] if labels else "")
+        agent, _ = self.role_agent(asker_role)
+        decision = (f"Go with: {pick}." if pick else "Use your best judgement.")
+        self.r.msg(role=asker_role, agent=agent, kind="question", content=question, options=options, answered=True,
+                   answer=f"(decided by Relay) {decision} The owner is only interrupted when an agent is truly blocked; "
+                          "they can redirect at any time.", turn=self.state.get("turn"))
+        self.r.timeline(asker_role, "Decided without asking", truncate(f"{decision} · {question}", 200))
+        return protocol.human_answer(question, (
+            f"{decision} Relay's policy is to interrupt the owner only when you are truly blocked "
+            "(credentials or access, a destructive or irreversible step, contradictory requirements, or a decision only a human can make). "
+            "Otherwise choose the most reasonable option that fits the request and the repository, state it under an "
+            "\"Assumptions\" heading in your next envelope, and continue. The owner may redirect you with guidance later."))
+
+    def needs_design_research(self) -> bool:
+        cfg = self.cfg
+        if not cfg.get("design_research", True):
+            return False
+        text = " ".join(str(self.task.get(k) or "") for k in ("name", "requirements", "template"))
+        return "DESIGN_RESEARCH" in protocol.rule_names_for("supervisor", {**cfg, "lean_prompts": True}, text)
+
     def ask_human(self, asker_role, env):
         """Block until the human answers. Returns the follow-up prompt for the asker."""
         if env.get("add_repo"):
             return self.ask_add_repo(asker_role, env)
         question = env.get("question") or env.get("content") or "(no question text)"
         options = env.get("options") if isinstance(env.get("options"), list) else []
+        decided = self.decide_without_asking(asker_role, env, question, options)
+        if decided is not None:
+            return decided
         agent, _ = self.role_agent(asker_role)
         if not self.allow_questions:
             self.r.msg(role=asker_role, agent=agent, kind="question", content=question, options=options, answered=True,
@@ -726,7 +765,33 @@ class Pipeline(design.DesignFlow, multirepo.MultiRepo):
             if env2.get("type") == "plan":
                 env = {**env, **{k: v for k, v in env2.items() if v}}
                 criteria = judge.normalize_acceptance(env.get("acceptance"))
+        if self.needs_design_research() and len(env.get("design_research") or []) < 3:
+            # Design work starts from researched principles, not the first idea (rules/DESIGN_RESEARCH.md).
+            self.r.timeline("supervisor", "Design research missing", "Asking the supervisor to research before designing")
+            _, env3 = self.supervisor_turn(
+                "ORCHESTRATOR · this is design work, and your plan has no design research. Before any design: search the web "
+                "(you have web search) for current UI/UX practice relevant to this screen (usability heuristics, Laws of UX, WCAG 2.2 AA, "
+                "the fitting platform guidelines, and how established products solve the same thing). Then reply with the same plan "
+                'envelope plus "design_research":[{"principle":"…","applies_how":"…","source":"url or name"}] (5 to 10 items) and '
+                '"assumptions":["…"]. The repository\'s own design rules and tokens take precedence over anything you find.',
+                f"{_label(sup_agent)} is researching design principles", turn=0)
+            if env3.get("type") == "plan":
+                env = {**env, **{k: v for k, v in env3.items() if v}}
+        research = [r for r in (env.get("design_research") or []) if isinstance(r, (dict, str))]
+        if research:
+            lines = [f"- **{r.get('principle', '')}**: {r.get('applies_how', '')}" + (f" ({r.get('source')})" if r.get("source") else "")
+                     if isinstance(r, dict) else f"- {r}" for r in research]
+            self.artifact("design_research", "DESIGN_RESEARCH.md", "# Design research\n\n" + "\n".join(lines) + "\n")
+            self.r.timeline("supervisor", "Design research", f"{len(research)} principles")
+        assumptions = [str(a) for a in (env.get("assumptions") or []) if str(a).strip()]
+        if assumptions:
+            self.r.msg(role="supervisor", agent=sup_agent, kind="notice", turn=0,
+                       content="**Assumptions** (decided without asking you; redirect any time with a message)\n" + "\n".join(f"- {a}" for a in assumptions))
         plan = {"summary": env.get("summary", ""), "plan": env.get("plan", ""), **protocol.normalize_packet(env)}
+        if research:
+            plan["design_research"] = research[:12]
+        if assumptions:
+            plan["assumptions"] = assumptions[:12]
         plan["acceptance"] = judge.criterion_texts(criteria) or plan["acceptance"]
         plan["system_design"] = multirepo.normalize_design(env.get("system_design"))
         plan["work_packages"] = multirepo.normalize_packages(env.get("work_packages"))
@@ -954,6 +1019,12 @@ class Pipeline(design.DesignFlow, multirepo.MultiRepo):
             self._auto_choice = True
             self.r.msg(role="orchestrator", agent=None, kind="notice", turn=turn,
                        content=f"{title}. Agent questions are disabled for this task, so Relay chose: {choices[auto]}.")
+            return auto, ""
+        if str((self.task.get("workflow") or {}).get("question_policy") or self.cfg.get("question_policy") or "blocked").lower() == "blocked":
+            self._auto_choice = True
+            self.r.msg(role="orchestrator", agent=None, kind="notice", turn=self.state.get("turn"),
+                       content=f"{title}. Relay only interrupts you when a task is truly blocked, so it chose: {choices[auto]}. "
+                               "You can redirect with guidance.")
             return auto, ""
         ap = getattr(self.m, "autopilot", None)
         if ap and ap.quiet():
