@@ -165,22 +165,42 @@ def choose_agent(task: dict, cfg: dict) -> tuple[str, str, str]:
     sup = roles.get("supervisor") or {}
     agent = (cfg.get("retro_agent") or "").strip() or sup.get("agent") or ""
     model = (cfg.get("retro_model") or "").strip() or ((cfg.get("subagent_models") or {}).get(agent) or "").strip()
-    if not model:
-        model = (sup.get("model") or "") if agent == sup.get("agent") else ((cfg.get("agent_defaults") or {}).get(agent) or {}).get("model", "")
+    if retro_provider(task, cfg):
+        model = (sup.get("model") or "").strip()  # an OpenRouter id (or the automatic free pick); blank = OpenRouter default
+    elif not model:
+        model = (sup.get("model") or "") if agent == sup.get("agent") and not sup.get("provider") \
+            else ((cfg.get("agent_defaults") or {}).get(agent) or {}).get("model", "")
     efforts = C.AGENTS.get(agent, {}).get("efforts") or []
     effort = (cfg.get("retro_effort") or "").strip()
     effort = effort if effort in efforts else (efforts[0] if efforts else "")
     return agent, model, effort
 
 
-def run_agent(agent: str, model: str, effort: str, text: str, cfg: dict, workdir: Path, timeout: float) -> dict:
-    """One turn through the agent's adapter, the way the Agents page tests an agent."""
+def retro_provider(task: dict, cfg: dict) -> str:
+    """A supervisor on OpenRouter runs its retrospective there too, unless another agent or model is configured for it."""
+    sup = ((task.get("workflow") or {}).get("roles") or {}).get("supervisor") or {}
+    agent = (cfg.get("retro_agent") or "").strip() or sup.get("agent") or ""
+    if agent == sup.get("agent") and sup.get("provider") == "openrouter" and not (cfg.get("retro_model") or "").strip():
+        return "openrouter"
+    return ""
+
+
+def run_agent(agent: str, model: str, effort: str, text: str, cfg: dict, workdir: Path, timeout: float, provider: str = "",
+              task_id: str = "") -> dict:
+    """One turn through the agent's adapter, the way the Agents page tests an agent (on OpenRouter when provider says so)."""
     ad = agents.adapter(agent)
     workdir.mkdir(parents=True, exist_ok=True)
     if not (workdir / ".git").exists():
         quiet(["git", "init", "-q"], cwd=workdir, timeout=30)
     cfg = {**cfg, "claude_max_turns_per_call": 3}
+    orp = None
+    if provider == "openrouter":
+        from . import openrouter_launch as ORL
+        orp = ORL.begin_turn({"id": task_id}, "retro", agent, model, cfg, workdir, None, env_base=ad.env(cfg))
+        cfg, model = orp.cfg, orp.model_arg
     args, env, stdin, session = ad.build(text, workdir, cfg, model, None, workdir, "retro", effort=effort)
+    if orp is not None:
+        args = orp.apply(env, args)
     ctx = agents.TurnContext()
     started = time.time()
     p = subprocess.Popen(args, cwd=str(workdir), stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
@@ -198,6 +218,10 @@ def run_agent(agent: str, model: str, effort: str, text: str, cfg: dict, workdir
         except Exception:
             tail.append(line)
     res = ad.finalize(ctx, p.returncode, workdir, session)
+    if orp is not None:
+        from . import openrouter_launch as ORL
+        info = ORL.end_turn(orp, res, res.setdefault("usage", {}))
+        res["model"] = info.get("final_model") or orp.model
     res["seconds"] = round(time.time() - started, 1)
     if p.returncode != 0 and not res.get("text"):
         res["ok"] = False
@@ -221,7 +245,8 @@ def run(manager, tid: str) -> dict | None:
     try:
         existing = lessons.approved(card.get("repo") or "")
         text = prompt(digest(task, manager.store.messages(tid), card, existing), int(cfg.get("retro_max_lessons") or 3))
-        res = run_agent(agent, model, effort, text, cfg, RUNTIME_DIR / tid / "retro", float(cfg.get("retro_timeout_seconds") or 300))
+        res = run_agent(agent, model, effort, text, cfg, RUNTIME_DIR / tid / "retro", float(cfg.get("retro_timeout_seconds") or 300),
+                        provider=retro_provider(task, cfg), task_id=tid)
         usage = res.get("usage") or {}
         cost, estimated = manager.estimate_cost(agent, usage)
         meta.update(seconds=res.get("seconds"), cost_usd=round(cost, 4), estimated=estimated, model=res.get("model") or model,

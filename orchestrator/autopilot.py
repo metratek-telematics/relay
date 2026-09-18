@@ -74,7 +74,7 @@ DEFAULTS = {
     "digest_hours": 24,                   # default period of the Digest page
 }
 
-INFRA_FAILURES = {"agent_timeout", "agent_error", "protocol", "rate_limit"}
+INFRA_FAILURES = {"agent_timeout", "agent_error", "protocol", "rate_limit", "provider_unavailable"}
 RATE_LIMIT_RE = re.compile(r"rate.?limit|usage limit|limit reached|quota exceeded|too many requests|\b429\b|overloaded|insufficient (?:credits|balance)", re.I)
 ETA_DEFAULT_SECONDS = 20 * 60
 
@@ -344,13 +344,19 @@ def limit_state(agent: str, model: str, account: dict | None, health: dict | Non
 
 def parse_fallback(entry) -> tuple[str, str]:
     """"agent" or "agent:model" (the model may itself contain colons, e.g. kilo/x/y:free)."""
+    a, m, _ = parse_fallback_full(entry)
+    return a, m
+
+
+def parse_fallback_full(entry) -> tuple[str, str, str]:
+    """(agent, model, provider) from "agent", "agent:model", "agent+openrouter:model" or a dict with those keys."""
     if isinstance(entry, dict):
-        return (str(entry.get("agent") or "").strip(), str(entry.get("model") or "").strip())
+        return (str(entry.get("agent") or "").strip(), str(entry.get("model") or "").strip(),
+                str(entry.get("provider") or "").strip().lower())
     s = str(entry or "").strip()
-    if ":" in s:
-        a, m = s.split(":", 1)
-        return a.strip(), m.strip()
-    return s, ""
+    a, m = (s.split(":", 1) if ":" in s else (s, ""))
+    a, _, prov = a.strip().partition("+")
+    return a.strip(), m.strip(), prov.strip().lower()
 
 
 def plan_capacity(roles: dict, state_of, settings: dict) -> dict:
@@ -365,11 +371,14 @@ def plan_capacity(roles: dict, state_of, settings: dict) -> dict:
     action = settings.get("limit_action") or "fallback"
     _state = state_of
 
-    def state_of(agent, model, role):  # older callers take (agent, model) only
+    def state_of(agent, model, role, provider=""):  # older callers take (agent, model[, role]) only
         try:
-            return _state(agent, model, role)
+            return _state(agent, model, role, provider)
         except TypeError:
-            return _state(agent, model)
+            try:
+                return _state(agent, model, role)
+            except TypeError:
+                return _state(agent, model)
     new_roles = {r: dict(v or {}) for r, v in (roles or {}).items()}
     switches, blocked = [], []
     for role in C.ROLES:
@@ -377,22 +386,24 @@ def plan_capacity(roles: dict, state_of, settings: dict) -> dict:
         agent = (cur.get("agent") or "").strip()
         if not agent:
             continue
-        st = state_of(agent, (cur.get("model") or "").strip(), role)
+        prov = (cur.get("provider") or "").strip().lower()
+        st = state_of(agent, (cur.get("model") or "").strip(), role, prov)
         if st.get("ok"):
             continue
         chosen = None
         if action == "fallback":
             for entry in fallbacks.get(role) or []:
-                fa, fm = parse_fallback(entry)
-                if not fa or fa not in C.AGENTS or (fa == agent and fm == (cur.get("model") or "")):
+                fa, fm, fp = parse_fallback_full(entry)
+                if not fa or fa not in C.AGENTS or (fa == agent and fm == (cur.get("model") or "") and fp == prov):
                     continue
-                if state_of(fa, fm, role).get("ok"):
-                    chosen = (fa, fm)
+                if state_of(fa, fm, role, fp).get("ok"):
+                    chosen = (fa, fm, fp)
                     break
         if chosen:
-            new_roles[role] = {"agent": chosen[0], "model": chosen[1], "effort": cur.get("effort") if cur.get("effort") in (C.AGENTS[chosen[0]].get("efforts") or []) else ""}
-            switches.append({"role": role, "from": {"agent": agent, "model": cur.get("model") or ""},
-                             "to": {"agent": chosen[0], "model": chosen[1]}, "reason": st.get("reason")})
+            new_roles[role] = {"agent": chosen[0], "model": chosen[1], "provider": chosen[2],
+                               "effort": cur.get("effort") if cur.get("effort") in (C.AGENTS[chosen[0]].get("efforts") or []) else ""}
+            switches.append({"role": role, "from": {"agent": agent, "model": cur.get("model") or "", "provider": prov},
+                             "to": {"agent": chosen[0], "model": chosen[1], "provider": chosen[2]}, "reason": st.get("reason")})
         else:
             blocked.append({"role": role, "agent": agent, **st})
     if blocked:
@@ -734,23 +745,54 @@ class Autopilot:
             return False
         return any(r.get("id") == model and (r.get("free") or r.get("included")) for r in rows)
 
-    def agent_state(self, agent: str, model: str = "", role: str = "") -> dict:
+    def agent_state(self, agent: str, model: str = "", role: str = "", provider: str = "", project: str | None = None) -> dict:
         s = self.settings()
+        if provider == "openrouter":
+            return self.openrouter_state(agent, model, role, project)
         model = self.resolve_model(role, agent, model) if role else model
         free = self.model_is_free(agent, model)
         return limit_state(agent, model, self._account(agent), self._health(agent),
                            float(s.get("limit_threshold_percent") or 90), time.time(), free=free)
+
+    def openrouter_state(self, agent: str, model: str, role: str = "", project: str | None = None) -> dict:
+        """A role on OpenRouter: the CLI must be installed (its own sign-in does not matter), OpenRouter must have a key,
+        credits for a paid model, free requests left today for a free one, and room under the spend caps."""
+        from . import config as C, openrouter as OR
+        lbl = C.AGENTS.get(agent, {}).get("label", agent)
+        if not OR.supports(agent):
+            return {"ok": False, "reason": f"{lbl} cannot run on OpenRouter", "resets_at": None, "kind": "unavailable"}
+        h = self._health(agent) or {}
+        if h and h.get("installed") is False:
+            return {"ok": False, "reason": f"{lbl} is not installed", "resets_at": None, "kind": "unavailable"}
+        if not (model or "").strip():
+            glob = (self.m.cfg().get("roles") or {}).get(role) or {}
+            if (glob.get("agent") or "") == agent and (glob.get("provider") or "") == "openrouter":
+                model = glob.get("model") or ""
+        model = (model or "").strip() or (OR.settings().get("default_model") or OR.AUTO_FREE)
+        acc = OR.account_cached() if not self._account_fn else self._account_fn("openrouter")
+        tasks = None
+        try:
+            tasks = self.m.store.list()
+        except Exception:
+            pass
+        return OR.capacity_state(model, project, tasks, acc)
 
     def capacity(self, t: dict) -> dict:
         s = self.settings()
         if not s.get("limit_check", True):
             return {"ok": True, "roles": None, "switches": []}
         cache: dict = {}
+        project = None
+        try:
+            from .org import projects
+            project = projects.project_of_task(t)
+        except Exception:
+            project = None
 
-        def state_of(agent, model, role=""):
-            key = (agent, model, role)
+        def state_of(agent, model, role="", provider=""):
+            key = (agent, model, role, provider)
             if key not in cache:
-                cache[key] = self.agent_state(agent, model, role)
+                cache[key] = self.agent_state(agent, model, role, provider, project)
             return cache[key]
         return plan_capacity((t.get("workflow") or {}).get("roles") or {}, state_of, s)
 
@@ -843,8 +885,9 @@ class Autopilot:
         from . import config as C
         for sw in cap["switches"]:
             rows.append({"time": now(), **sw})
-            fr = C.AGENTS.get(sw["from"]["agent"], {}).get("label", sw["from"]["agent"])
-            to = C.AGENTS.get(sw["to"]["agent"], {}).get("label", sw["to"]["agent"]) + (f" ({sw['to']['model']})" if sw["to"]["model"] else "")
+            fr = C.AGENTS.get(sw["from"]["agent"], {}).get("label", sw["from"]["agent"]) + (" on OpenRouter" if sw["from"].get("provider") else "")
+            to = C.AGENTS.get(sw["to"]["agent"], {}).get("label", sw["to"]["agent"]) + (" on OpenRouter" if sw["to"].get("provider") else "") \
+                + (f" ({sw['to']['model']})" if sw["to"]["model"] else "")
             self.m.timeline(tid, "system", f"Autopilot switched the {sw['role']}", f"{fr} → {to}: {sw['reason']}")
         self.m.store.update(tid, immediate=True, workflow=wf, fallbacks=rows[-20:])
         self.m.notify("info", "Switched to a fallback agent", f"{label(t)}: " + "; ".join(

@@ -52,6 +52,8 @@ def team_key(team: dict) -> str:
         a = (x.get("agent") or "").strip()
         if not a:
             continue
+        if x.get("provider"):
+            a += f"+{x['provider']}"  # the same CLI on OpenRouter is a different team member
         s = a + (f":{x['model']}" if x.get("model") else "") + (f"@{x['effort']}" if x.get("effort") else "")
         parts.append(s)
     return ">".join(parts)
@@ -67,7 +69,8 @@ def team_from_key(key: str) -> dict:
         if "@" in part:
             part, effort = part.rsplit("@", 1)
         agent, _, model = part.partition(":")
-        roles[names[i]] = {"agent": agent, "model": model, "effort": effort}
+        agent, _, provider = agent.partition("+")
+        roles[names[i]] = {"agent": agent, "model": model, "effort": effort, **({"provider": provider} if provider else {})}
     return roles
 
 
@@ -75,8 +78,8 @@ def team_label(key: str, agents: dict | None = None) -> str:
     agents = agents or {}
     out = []
     for r, x in team_from_key(key).items():
-        lbl = (agents.get(x["agent"]) or {}).get("label", x["agent"].capitalize())
-        extra = " ".join(v for v in (x["model"], x["effort"]) if v)
+        lbl = (agents.get(x["agent"]) or {}).get("label", x["agent"].capitalize()) + (" via OpenRouter" if x.get("provider") == "openrouter" else "")
+        extra = " ".join(v for v in ("Auto · best free model" if x["model"] == "openrouter:auto-free" else x["model"], x["effort"]) if v)
         out.append(lbl + (f" ({extra})" if extra else ""))
     return " → ".join(out)
 

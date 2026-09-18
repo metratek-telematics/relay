@@ -68,6 +68,9 @@ FAILURES = [
     ("verification", "Verification kept failing", r"verification still fails"),
     ("protocol", "Agent broke the protocol", r"valid protocol envelope|unexpected supervisor envelope|did not produce a plan"),
     ("agent_timeout", "Agent turn timed out", r"turn timeout|exceeded the .* minute"),
+    ("provider_credits", "OpenRouter credits or spend cap", r"openrouter[^\n]{0,40}(?:out of credits|402|spend(?:ing)? (?:cap|limit)|cap reached|monthly cap)"),
+    ("provider_auth", "OpenRouter rejected the key", r"openrouter[^\n]{0,40}(?:401|rejected the api key|has no api key)"),
+    ("provider_unavailable", "OpenRouter model or provider unavailable", r"openrouter[^\n]{0,60}(?:503|502|404|no provider|not available|provider is down)"),
     ("agent_error", "Agent kept crashing", r"failed \d+ times in a row|agent turn failed|exited with code"),
     ("configuration", "Team or settings problem", r"no agent (is assigned|configured)|unknown agent"),
     ("delivery", "Commit, push or pull request failed", r"worktree is on|git push|pull request|gh pr|push .*failed|commit"),
@@ -140,6 +143,13 @@ def team(task: dict) -> dict:
             continue
         out[r] = {"agent": agent, "model": (roles.get(r) or {}).get("model") or (sessions.get(r) or {}).get("model") or "",
                   "effort": (roles.get(r) or {}).get("effort") or ""}
+        if (roles.get(r) or {}).get("provider"):
+            # On OpenRouter: the model setting (maybe the automatic free pick) and the models that actually answered.
+            out[r]["provider"] = roles[r]["provider"]
+            out[r]["model"] = (roles.get(r) or {}).get("model") or "openrouter:auto-free"
+            used = (sessions.get(r) or {}).get("or_models") or []
+            if used:
+                out[r]["models_used"] = list(used)
     return out
 
 

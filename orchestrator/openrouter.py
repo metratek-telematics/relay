@@ -683,6 +683,24 @@ def account(refresh: bool = False) -> dict:
     return dict(data)
 
 
+def account_cached() -> dict | None:
+    """The last account reading without waiting on the network (the scheduler runs twice a second); a stale or missing
+    reading is refreshed in the background. None until the first reading arrives."""
+    key = api_key()
+    hit = _account_cache
+    fresh = hit["data"] is not None and hit["key"] == key and time.time() - hit["at"] < ACCOUNT_TTL
+    if not fresh and key and not hit.get("refreshing"):
+        hit["refreshing"] = True
+
+        def run():
+            try:
+                account(refresh=True)
+            finally:
+                hit["refreshing"] = False
+        threading.Thread(target=run, name="relay-openrouter-account", daemon=True).start()
+    return dict(hit["data"]) if hit["data"] is not None and hit["key"] == key else None
+
+
 def invalidate_account():
     _account_cache["at"] = 0.0
 
@@ -885,7 +903,8 @@ def capacity_state(model: str, project: str | None = None, tasks=None, acc: dict
     free = is_free(model or s.get("default_model") or AUTO_FREE)
     if cap and not free:
         return {"ok": False, "reason": cap["reason"], "resets_at": cap["until"], "kind": "budget"}
-    acc = acc if acc is not None else account()
+    if acc is None:
+        return {"ok": True, "reason": "", "resets_at": None, "kind": ""}  # no reading yet: do not hold the queue for it
     if not acc.get("ok"):
         if acc.get("status") == 401:
             return {"ok": False, "reason": acc.get("error") or "OpenRouter rejected the API key", "resets_at": None, "kind": "unavailable"}
