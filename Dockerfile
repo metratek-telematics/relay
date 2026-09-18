@@ -80,6 +80,8 @@ COPY --chown=${UID}:${GID} . .
 RUN chmod +x /app/docker/entrypoint.sh /app/run.sh \
  && printf '#!/bin/sh\nexec node /app/tools/screenshot.cjs "$@"\n' > /usr/local/bin/relay-screenshot \
  && chmod 755 /usr/local/bin/relay-screenshot \
+ && printf '#!/bin/sh\nexec node /app/tools/browse.cjs "$@"\n' > /usr/local/bin/relay-browse \
+ && chmod 755 /usr/local/bin/relay-browse \
  && printf '#!/bin/sh\nexec /opt/venv/bin/python /app/tools/relay_stack.py "$@"\n' > /usr/local/bin/relay-stack \
  && chmod 755 /usr/local/bin/relay-stack \
  && chmod 755 /app/tools/bin/relay-connect /app/tools/bin/relay-tools \

@@ -85,3 +85,14 @@ Implementation report must list:
 - meaningful result;
 - any command not run and why;
 - any pre-existing failures.
+
+## Real shapes, real interactions
+- Code that consumes data produced elsewhere (postMessage/event payloads, API responses, store state, props from
+  another component): open the PRODUCER and use the fields it actually sends. Build test fixtures from the real
+  producer output, never from what you wish it sent. A fixture with a field the producer does not emit proves nothing.
+- Interactive UI (clicks, picks, selections, drag, keyboard): prove it by driving the RUNNING app with
+  `relay-browse <url> steps.json` (click the real element, then assert the state changed). Its report includes the
+  real postMessage traffic between frames and components, so you can see the actual payload shape. Unit tests with
+  mocks do not prove an interaction works.
+- Check the whole lifecycle of UI state: what you set on open/select is cleared on close/deselect/cancel, and
+  competing handlers (e.g. a map's `click` firing before `singleclick`, a popup and a pick mode) do not both act.

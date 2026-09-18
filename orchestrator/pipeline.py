@@ -529,6 +529,12 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
                          "`relay-screenshot <url> <out.png> --width 1440 --height 900 --theme light|dark [--full]` "
                          "(also prints console errors and failed requests). Save screenshots under the run folder, not the repository: "
                          f"{self.run_dir / 'screenshots'}")
+            lines.append("- To prove an interaction works, drive the running app like a user: `relay-browse <url> steps.json --out "
+                         f"{self.run_dir / 'browse'}` with steps such as "
+                         '[{"click":"#pick"},{"click":{"x":640,"y":360}},{"frame":"iframe#map"},{"click":".vessel"},{"frame":null},'
+                         '{"expect":{"js":"…state changed…"}},{"screenshot":"after"}]. '
+                         "The report lists each step, recorded values, the real postMessage payloads between frames/components, "
+                         "and console errors. Paste the relevant part as evidence.")
         return "\n".join(lines)
 
     def forbidden_terms_file(self):
