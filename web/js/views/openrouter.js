@@ -1,4 +1,4 @@
-// OpenRouter: the model browser (Models & usage), the provider settings (Settings → Providers) and the helpers the
+// OpenRouter: the model browser (Models & usage), the provider settings (Settings → Model providers) and the helpers the
 // team picker uses. The server side is orchestrator/openrouter.py; agents reach OpenRouter through Relay's gateway.
 import { $, $$, esc, icon, toast, modal, fmtCost, timeAgo, debounce } from "../ui.js";
 import { S, agentLabel } from "../state.js";
@@ -34,7 +34,7 @@ export function accountHtml(d, { relay = true } = {}) {
   const a = (d || {}).account || {};
   const rel = (d || {}).relay || {};
   const chips = [];
-  if (!d || d.configured === false) return `<div class="acct-notes"><span class="muted">No OpenRouter key yet. An admin adds one in <a href="#/settings/providers">Settings → Providers</a>; the model list below works without one.</span></div>`;
+  if (!d || d.configured === false) return `<div class="acct-notes"><span class="muted">No OpenRouter key yet. An admin adds one in <a href="#/settings/providers">Settings → Model providers</a>; the model list below works without one.</span></div>`;
   if (!a.ok) return `<div class="acct-notes"><span class="err">${esc(a.error || "OpenRouter did not answer.")}</span></div>`;
   const left = a.credits_remaining;
   chips.push(["Credits left", left == null ? "unknown" : money(left, 2)]);
@@ -154,7 +154,7 @@ export function openRouterCard() {
   const no = Object.keys(meta).filter((a) => meta[a].openrouter && !meta[a].openrouter.ok);
   const p = (S.providers || {}).openrouter || {};
   return `<div class="card" id="orCard"><div class="card-head"><h3>${icon("layers", "sm")} OpenRouter</h3><span class="badge ${p.configured ? "green" : "amber"}">${p.configured ? "ready" : "no key"}</span></div><div class="card-body hint stack">
-    <div>Any role can run its agent on OpenRouter instead of the agent's own sign-in: pick <strong>Runs on · OpenRouter</strong> in the team. ${p.configured ? `Default model: <code>${esc(orLabel(p.default_model))}</code>.` : 'An admin adds the key in <a href="#/settings/providers">Settings → Providers</a>.'}</div>
+    <div>Any role can run its agent on OpenRouter instead of the agent's own sign-in: pick <strong>Runs on · OpenRouter</strong> in the team. ${p.configured ? `Default model: <code>${esc(orLabel(p.default_model))}</code>.` : 'An admin adds the key in <a href="#/settings/providers">Settings → Model providers</a>.'}</div>
     <div><strong>Runs on OpenRouter:</strong> ${ok.map((a) => esc(agentLabel(a))).join(", ")}.</div>
     ${no.length ? `<div><strong>Cannot:</strong> ${no.map((a) => `<span title="${esc(meta[a].openrouter.why || "")}">${esc(agentLabel(a))}</span>`).join(", ")} (hover for why).</div>` : ""}
     <div class="row wrap"><button class="btn sm" id="orBrowse">${icon("layers")}Models &amp; usage</button>${p.configured ? `<button class="btn sm" id="orTestAll" title="One short turn per installed agent, through OpenRouter">${icon("zap")}Test on OpenRouter</button>` : ""}<a class="btn sm" href="#/settings/providers">${icon("settings")}Provider settings</a></div>
@@ -195,7 +195,7 @@ export function openOpenRouterTests() {
   };
 }
 
-// ---------------------------------------------------------------------------- Settings → Providers
+// ---------------------------------------------------------------------------- Settings → Model providers
 export async function mountProviders(body) {
   body.innerHTML = '<div class="card"><div class="card-body"><span class="muted">Loading provider settings…</span></div></div>';
   let d;

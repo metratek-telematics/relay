@@ -3,7 +3,7 @@
 A team role can run an agent CLI "on OpenRouter": the CLI keeps its own tools and loop, but every model call goes
 to OpenRouter with Relay's key instead of the CLI's own sign-in. This module owns what does not depend on a CLI:
 
-  settings     Settings → Providers → OpenRouter, kept in the organisation settings (secrets masked, admin only):
+  settings     Settings → Model providers, kept in the organisation settings (secrets masked, admin only):
                the API key, how agents connect, attribution headers, routing preferences, fallback models, spend caps.
   catalog      the public /api/v1/models list (cached 6 h), parsed into rows the model browser, the pickers and the
                capacity check share: prices per 1M tokens, context, tools, reasoning, structured outputs, modalities.
@@ -714,7 +714,7 @@ def spendable(acc: dict) -> float | None:
 # ============================================================================ errors
 ERROR_TEXT = {
     400: ("bad_request", "OpenRouter rejected the request (400 bad request)"),
-    401: ("provider_auth", "OpenRouter rejected the API key (401 unauthorized): check Settings → Providers → OpenRouter"),
+    401: ("provider_auth", "OpenRouter rejected the API key (401 unauthorized): check Settings → Model providers"),
     402: ("provider_credits", "OpenRouter: out of credits (402 payment required); add credits at openrouter.ai/settings/credits, raise the key's limit, or pick a :free model"),
     403: ("provider_blocked", "OpenRouter refused the request (403): a moderation flag or a guardrail on the key"),
     404: ("model_unavailable", "OpenRouter: this model is not available (404 not found); pick another model"),
@@ -752,6 +752,10 @@ def describe_error(status: int | None, message: str = "", metadata: dict | None 
             text = detail or "Relay's OpenRouter spend cap is reached (402)"
             cat = "provider_budget"
             detail = ""
+    if re.search(r"key limit exceeded", detail, re.I):
+        return {"category": "provider_credits", "status": status, "retry": False, "config": True,
+                "message": f"OpenRouter: this API key reached its spending limit ({status}); raise the key's limit on "
+                           "openrouter.ai/settings/keys or pick a :free model"}
     if status == 429 and re.search(r"per[- ]day|daily|free-models-per", detail, re.I):
         # The account's free requests for today are gone: every free model shares that quota, so waiting or rotating
         # to another free model cannot help before midnight UTC.
@@ -766,7 +770,7 @@ def describe_error(status: int | None, message: str = "", metadata: dict | None 
     if status == 404 and m:
         # Not the model's fault: no provider takes a parameter the CLI sent. Another model would fail the same way.
         text = (f"OpenRouter: no provider for this model supports the '{m.group(1)}' parameter this agent sends (404); "
-                "turn off 'Only providers that support every parameter' in Settings → Providers, or pick another model")
+                "turn off 'Only providers that support every parameter' in Settings → Model providers, or pick another model")
         return {"category": "provider_params", "message": text, "status": status, "retry": False, "config": True, "params": True}
     if status == 404 and re.search(r"data policy|privacy", detail, re.I):
         text = "OpenRouter: no endpoint matches your data policy (404); relax the privacy settings or pick another model"
@@ -908,9 +912,9 @@ def capacity_state(model: str, project: str | None = None, tasks=None, acc: dict
     """Can a role on OpenRouter with this model start now? Same shape as autopilot.limit_state."""
     s = s or settings()
     if not s.get("enabled", True):
-        return {"ok": False, "reason": "OpenRouter is turned off in Settings → Providers", "resets_at": None, "kind": "unavailable"}
+        return {"ok": False, "reason": "OpenRouter is turned off in Settings → Model providers", "resets_at": None, "kind": "unavailable"}
     if not api_key(s):
-        return {"ok": False, "reason": "OpenRouter has no API key (Settings → Providers)", "resets_at": None, "kind": "unavailable"}
+        return {"ok": False, "reason": "OpenRouter has no API key (Settings → Model providers)", "resets_at": None, "kind": "unavailable"}
     cap = cap_state(tasks, project, s)
     free = is_free(model or s.get("default_model") or AUTO_FREE)
     if cap and not free:

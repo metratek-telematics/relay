@@ -69,6 +69,7 @@ and Thorough presets. Details in [docs/RUNNING.md](docs/RUNNING.md#models-effort
 |---|---|
 | [docs/RUNNING.md](docs/RUNNING.md) | Windows, Ubuntu and Docker setup, first task, models and usage, troubleshooting |
 | [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) | A task from start to finish, and how to steer the team |
+| [docs/OPENROUTER.md](docs/OPENROUTER.md) | Running agents on OpenRouter: setup, which agents, routing, costs, privacy |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Components, sessions, the protocol, persistence |
 | [rules/](rules/) | The policies agents receive, including [DESIGN.md](rules/DESIGN.md) for UI work |
 | [CHANGELOG.md](CHANGELOG.md) | What changed in each release |

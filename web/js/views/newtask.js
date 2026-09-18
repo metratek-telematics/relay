@@ -359,7 +359,7 @@ export function openNewTask(prefill = {}) {
       const h = S.agents || {};
       const onOR = (x) => r[x].provider === "openrouter";
       const warn = ["supervisor", "worker", "reviewer"].filter((x) => r[x].agent && h[r[x].agent] && (onOR(x) ? !h[r[x].agent].installed : !h[r[x].agent].ok)).map((x) => `${agentLabel(r[x].agent)} (${x}) is not ready: ${onOR(x) ? "not installed" : h[r[x].agent].error || "check Agents page"}`);
-      if (["supervisor", "worker", "reviewer"].some((x) => r[x].agent && onOR(x)) && !((S.providers || {}).openrouter || {}).configured) warn.push("OpenRouter has no API key yet: an admin adds one in Settings → Providers.");
+      if (["supervisor", "worker", "reviewer"].some((x) => r[x].agent && onOR(x)) && !((S.providers || {}).openrouter || {}).configured) warn.push("OpenRouter has no API key yet: an admin adds one in Settings → Model providers.");
       body.innerHTML = `<h2>${edit ? "Save changes" : "Ready to launch"}</h2>
         <div class="summary-box">
           <div><b>Repository</b>${esc(data.repo)}</div>

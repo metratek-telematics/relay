@@ -386,7 +386,7 @@ class Handler(BaseHTTPRequestHandler):
     def _model_call(self, t: Turn, path: str, body: dict):
         s = OR.settings()
         if not OR.api_key(s):
-            return self._relay_error(401, "Relay: no OpenRouter API key is set (Settings → Providers → OpenRouter)")
+            return self._relay_error(401, "Relay: no OpenRouter API key is set (Settings → Model providers)")
         if path.endswith("/count_tokens"):
             return self._forward(t, "POST", path, {**body, "model": t.model}, record=False)
         asked = str(body.get("model") or "")
@@ -400,28 +400,31 @@ class Handler(BaseHTTPRequestHandler):
         wait_budget = float(s.get("rate_limit_wait_seconds") or 0)
         waited = 0.0
         last = None
+        cap = None
+        if TASKS_FN and any(not OR.is_free(m) for m in candidates):
+            try:
+                cap = OR.cap_state(TASKS_FN(), t.project, s, extra=t.spent())
+            except Exception:
+                cap = None
         i = 0
         while i < len(candidates):
             model = candidates[i]
-            if not OR.is_free(model) and TASKS_FN:
-                cap = None
-                try:
-                    cap = OR.cap_state(TASKS_FN(), t.project, s, extra=t.spent())
-                except Exception:
-                    cap = None
-                if cap:
-                    return self._relay_error(402, f"Relay: {cap['reason']}. Raise the cap in Settings → Providers → OpenRouter or pick a free model.",
+            if cap and not OR.is_free(model):
+                nxt = next((j for j in range(i + 1, len(candidates)) if OR.is_free(candidates[j])), None)
+                if nxt is None:
+                    return self._relay_error(402, f"Relay: {cap['reason']}. Raise the cap in Settings → Model providers or pick a free model.",
                                              "relay_cap")
+                i = nxt  # capped: only free fallbacks may run
+                continue
             waited += _pace_free(model, int(s.get("free_rate_per_minute") or 20))
             out = dict(body)
             out["model"] = model
-            if not path.endswith("/messages"):
-                _merge_routing(out, OR.routing(s))
+            _merge_routing(out, OR.routing(s))  # the Anthropic skin validates and honours `provider` too (checked live)
             if path.endswith("/chat/completions") and not isinstance(out.get("usage"), dict):
                 out["usage"] = {"include": True}
             if path.endswith("/chat/completions") and not t.auto and i + 1 < len(candidates):
                 # OpenRouter's own model fallback inside one request; Relay's rotation still covers the other APIs.
-                out["models"] = candidates[i:i + 3]
+                out["models"] = [m for m in candidates[i:i + 3] if not cap or OR.is_free(m)]
             self._streamed = None
             res = self._forward(t, "POST", path, out, final=False)
             if res is None:

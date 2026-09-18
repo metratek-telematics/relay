@@ -240,10 +240,10 @@ def begin_turn(task: dict, role: str, agent: str, model: str, cfg: dict, run_dir
                tasks=None, project: str | None = None) -> TurnPlan:
     s = OR.settings()
     if not s.get("enabled", True):
-        raise RuntimeError("OpenRouter is turned off in Settings → Providers → OpenRouter.")
+        raise RuntimeError("OpenRouter is turned off in Settings → Model providers.")
     key = OR.api_key(s)
     if not key:
-        raise RuntimeError("OpenRouter has no API key: an admin adds one under Settings → Providers → OpenRouter.")
+        raise RuntimeError("OpenRouter has no API key: an admin adds one under Settings → Model providers.")
     p = TurnPlan()
     p.requested = (model or "").strip() or (s.get("default_model") or OR.AUTO_FREE)
     p.model, p.auto, p.pick, rotation = resolve_model(p.requested, session, tasks, s)
