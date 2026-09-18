@@ -422,7 +422,16 @@ class MultiRepo:
         options = [accept, "Continue without it"]
         question = env.get("question") or f"Add {label} to this task? {reason}"
         env = {**env, "question": question, "options": options}
-        text = self._ask(asker_role, env, extra={"add_repo": {"repo": ref, "component": (comp or {}).get("id", ""), "reason": reason,
+        policy = str((self.task.get("workflow") or {}).get("question_policy") or self.cfg.get("question_policy") or "blocked").lower()
+        if policy == "blocked":
+            # The request needs that repository; adding it is reversible (a worktree on a branch), so do not stop for it.
+            agent, _ = self.role_agent(asker_role)
+            self.r.msg(role=asker_role, agent=agent, kind="question", content=question, options=options, answered=True,
+                       answer=f"(decided by Relay) {accept}.", turn=self.state.get("turn"))
+            text = {"text": accept, "extra": {"add_repo": True}}
+        else:
+            text = None
+        text = text or self._ask(asker_role, env, extra={"add_repo": {"repo": ref, "component": (comp or {}).get("id", ""), "reason": reason,
                                                             "cloned": bool(comp and comp.get("path") and Path(comp["path"]).is_dir())}})
         answer = (text or {}).get("text") or ""
         extra = (text or {}).get("extra") or {}

@@ -12,7 +12,7 @@ from .util import RULES_DIR, read_text, truncate
 _rules_cache = {"at": 0, "data": {}}
 
 RULE_FILES = ["CORE", "PROTOCOL", "SUPERVISOR", "WORKER", "REVIEW", "PLANNER", "ENGINEERING", "FRONTEND",
-              "DESIGN", "TESTING", "SECURITY", "GIT_GITHUB", "PERFORMANCE_RELIABILITY", "DATA_API", "DOCUMENTATION"]
+              "DESIGN", "DESIGN_RESEARCH", "TESTING", "SECURITY", "GIT_GITHUB", "PERFORMANCE_RELIABILITY", "DATA_API", "DOCUMENTATION"]
 
 
 def rules() -> dict:
@@ -33,9 +33,9 @@ LEAN_RULES = {
     "reviewer": ["CORE", "REVIEW", "PROTOCOL"],
 }
 FULL_RULES = {
-    "supervisor": ["CORE", "SUPERVISOR", "PROTOCOL", "PLANNER", "ENGINEERING", "FRONTEND", "DESIGN", "TESTING",
+    "supervisor": ["CORE", "SUPERVISOR", "PROTOCOL", "PLANNER", "ENGINEERING", "FRONTEND", "DESIGN", "DESIGN_RESEARCH", "TESTING",
                    "SECURITY", "GIT_GITHUB", "PERFORMANCE_RELIABILITY", "DATA_API", "DOCUMENTATION"],
-    "worker": ["CORE", "WORKER", "PROTOCOL", "ENGINEERING", "FRONTEND", "DESIGN", "TESTING", "SECURITY",
+    "worker": ["CORE", "WORKER", "PROTOCOL", "ENGINEERING", "FRONTEND", "DESIGN", "DESIGN_RESEARCH", "TESTING", "SECURITY",
                "GIT_GITHUB", "PERFORMANCE_RELIABILITY", "DATA_API", "DOCUMENTATION"],
     "reviewer": ["CORE", "REVIEW", "PROTOCOL", "ENGINEERING", "FRONTEND", "DESIGN", "TESTING", "SECURITY", "DATA_API"],
 }
@@ -45,6 +45,8 @@ CONTEXTUAL = {
                  "layout", "design", "screen", "dashboard", "modal", "button", "form", "table", "responsive", "theme"),
     "DESIGN": ("frontend", "ui", "css", "overhaul", "look and feel", "react", "vue", "svelte", "component", "page", "style", "html", "tsx", "jsx",
                "layout", "design", "screen", "dashboard", "modal", "button", "form", "table", "responsive", "theme"),
+    "DESIGN_RESEARCH": ("redesign", "new design", "fresh design", "new layout", "layout", "look and feel", "overhaul", "visual",
+                        "restyle", "modernize", "modernise", "ui design", "ux", "new idea", "symbols", "icons", "theme", "design"),
     "TESTING": ("test", "spec", "coverage", "pytest", "jest", "vitest"),
     "SECURITY": ("auth", "token", "password", "secret", "permission", "crypt", "login", "session", "sql"),
     "DATA_API": ("api", "endpoint", "schema", "database", "migration", "sql", "query", "rest", "graphql"),

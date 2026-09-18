@@ -83,9 +83,9 @@ export function mountRiskCheck(host, getDraft, { onChange } = {}) {
         <span class="muted">${pct(r.p_fail)} chance of failing or scoring under 60 · base ${pct(r.base)} (${esc(r.base_text)})</span></div>
       ${r.factors.length ? `<ul class="lx-factors">${r.factors.map((f) => `<li><span>${esc(f.text)}</span><span class="muted mono">+${f.weight}</span></li>`).join("")}</ul>` : '<p class="muted lx-none">Nothing in the request or the history suggests extra risk.</p>'}
       ${r.mitigations.length ? `<div class="lx-mitigations">${r.mitigations.filter((m) => m.id !== "clarify").map((m) => mitigation(m)).join("")}</div>` : ""}
-      ${clar ? `<div class="lx-clarify"><div class="field-label">${icon("question", "sm")}Clarify before the team starts <span class="muted">(answers are added to the request)</span></div>
+      ${clar ? `<details class="lx-clarify"><summary class="field-label">${icon("question", "sm")}Optional: sharpen the request <span class="muted">(skip it and the team decides and states its assumptions)</span></summary>
         ${clar.questions.map((q, i) => `<label class="lx-q"><span>${esc(q)}</span><textarea rows="2" data-lx-q="${i}" placeholder="Your answer (optional)">${esc(answers.get(i) || "")}</textarea></label>`).join("")}
-        <button type="button" class="btn sm" id="lxAddAnswers">${icon("plus")}Add answers to the request</button></div>` : ""}`;
+        <button type="button" class="btn sm" id="lxAddAnswers">${icon("plus")}Add answers to the request</button></details>` : ""}`;
     $$("[data-lx-q]", host).forEach((t) => t.addEventListener("input", () => answers.set(Number(t.dataset.lxQ), t.value)));
     const add = $("#lxAddAnswers", host);
     if (add) add.onclick = () => {

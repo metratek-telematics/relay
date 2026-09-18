@@ -277,6 +277,13 @@ DEFAULTS = {
     "design_gate": True,
     # Design step (orchestrator/design.py): a reviewed system design before implementation on complex and multi-repository tasks.
     "design_mode": "auto",               # auto (multi-repo, complex, or a feature/refactor rated moderate) | always | never
+    # When agents may interrupt the owner. "blocked": only for credentials/access, destructive or irreversible
+    # choices, contradictions or decisions only a human can make; everything else is decided by the agent with its
+    # assumptions stated (redirect any time with guidance). "always": ask whenever an agent wants to.
+    "question_policy": "blocked",
+    # Live web search for agents that support it (Claude has it built in; Codex gets --search): design research,
+    # current library docs, error messages.
+    "agent_web_search": True,
     "design_approval": "auto",           # auto (complex or multi-repo, when questions are allowed and not quiet hours) | on | off
     "design_max_revisions": 2,           # design revisions after blocking review findings before the human decides
     "design_auto_templates": ["feature", "refactor"],

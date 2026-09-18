@@ -260,7 +260,17 @@ class Manager:
         if parent:
             self.timeline(tid, "user", "Follow-up", f"Builds on {(self.store.get(parent) or {}).get('name', parent)} · {branch}")
         self.emit_task(tid)
+        self.kick_queue()
         return self.get(tid)
+
+    def kick_queue(self):
+        """A task was queued: make sure the queue runs it (first in, first out), unless the autopilot is paused."""
+        ap = getattr(self, "autopilot", None)
+        try:
+            if ap:
+                ap.ensure_queue_running()
+        except Exception:
+            traceback.print_exc()
 
     def update_task(self, tid, patch: dict):
         t = self.store.get(tid)

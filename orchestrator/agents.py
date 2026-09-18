@@ -461,6 +461,8 @@ class CodexAdapter(AgentAdapter):
         else:
             args = ["exec", *common, "-"]
         session["_last_file"] = str(last_file)
+        if cfg.get("agent_web_search", True):
+            args = ["--search", *args]  # global flag: live web search for research and docs, no per-call approval
         return windows_cli("codex", args), self.env(cfg), prompt, session
 
     def _item_events(self, item: dict, phase: str, ctx: TurnContext) -> list[dict]:

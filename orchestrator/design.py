@@ -951,6 +951,8 @@ class DesignFlow:
     def design_approval_wanted(self, design: dict) -> tuple[bool, str]:
         wf = self.task.get("workflow") or {}
         mode = str(wf.get("design_approval") or self.cfg.get("design_approval") or "auto").lower()
+        if mode == "auto" and str(wf.get("question_policy") or self.cfg.get("question_policy") or "blocked").lower() == "blocked":
+            return False, "Relay only interrupts you when a task is blocked; the reviewed design is approved automatically"
         if not self.allow_questions:
             return False, "agent questions are disabled (unattended)"
         ap = getattr(self.m, "autopilot", None)

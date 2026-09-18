@@ -298,7 +298,8 @@ def _money(value) -> float | None:
         return None
 
 
-def limit_state(agent: str, model: str, account: dict | None, health: dict | None, threshold: float, ts: float) -> dict:
+def limit_state(agent: str, model: str, account: dict | None, health: dict | None, threshold: float, ts: float,
+                free: bool | None = None) -> dict:
     """Can `agent` (with `model`) take a turn now? {"ok", "reason", "resets_at"}. Pure."""
     from . import config as C
     lbl = C.AGENTS.get(agent, {}).get("label", agent)
@@ -335,7 +336,7 @@ def limit_state(agent: str, model: str, account: dict | None, health: dict | Non
             return {"ok": False, "reason": f"{lbl}: {val}", "resets_at": None, "kind": "limit"}
         if re.search(r"balance|credits", lab, re.I) and not re.search(r"unlimited", val, re.I):
             amount = _money(val)
-            if amount is not None and amount <= 0 and not _is_free_model(model):
+            if amount is not None and amount <= 0 and not (free if free is not None else _is_free_model(model)):
                 return {"ok": False, "reason": f"{lbl} balance is {val.strip()} and {model or 'the default model'} is paid",
                         "resets_at": None, "kind": "balance"}
     return {"ok": True, "reason": "", "resets_at": None, "kind": ""}
@@ -362,6 +363,13 @@ def plan_capacity(roles: dict, state_of, settings: dict) -> dict:
     from . import config as C
     fallbacks = settings.get("fallbacks") or {}
     action = settings.get("limit_action") or "fallback"
+    _state = state_of
+
+    def state_of(agent, model, role):  # older callers take (agent, model) only
+        try:
+            return _state(agent, model, role)
+        except TypeError:
+            return _state(agent, model)
     new_roles = {r: dict(v or {}) for r, v in (roles or {}).items()}
     switches, blocked = [], []
     for role in C.ROLES:
@@ -369,7 +377,7 @@ def plan_capacity(roles: dict, state_of, settings: dict) -> dict:
         agent = (cur.get("agent") or "").strip()
         if not agent:
             continue
-        st = state_of(agent, (cur.get("model") or "").strip())
+        st = state_of(agent, (cur.get("model") or "").strip(), role)
         if st.get("ok"):
             continue
         chosen = None
@@ -378,7 +386,7 @@ def plan_capacity(roles: dict, state_of, settings: dict) -> dict:
                 fa, fm = parse_fallback(entry)
                 if not fa or fa not in C.AGENTS or (fa == agent and fm == (cur.get("model") or "")):
                     continue
-                if state_of(fa, fm).get("ok"):
+                if state_of(fa, fm, role).get("ok"):
                     chosen = (fa, fm)
                     break
         if chosen:
@@ -701,10 +709,36 @@ class Autopilot:
         except Exception:
             return None
 
-    def agent_state(self, agent: str, model: str = "") -> dict:
+    def resolve_model(self, role: str, agent: str, model: str) -> str:
+        """The model the pipeline will really run (Pipeline.role_agent): the role's own, else the global
+        role's when it uses the same agent, else the agent's default model from settings."""
+        if (model or "").strip():
+            return model.strip()
+        cfg = self.m.cfg()
+        glob = (cfg.get("roles") or {}).get(role) or {}
+        if (glob.get("agent") or "").strip() == agent and (glob.get("model") or "").strip():
+            return glob["model"].strip()
+        return (((cfg.get("agent_defaults") or {}).get(agent) or {}).get("model") or "").strip()
+
+    def model_is_free(self, agent: str, model: str) -> bool:
+        """Free by name (…:free) or by the agent's own model list (Models & usage), which knows the prices."""
+        if _is_free_model(model):
+            return True
+        if not model:
+            return False
+        try:
+            from . import agent_info
+            rows = (agent_info.models(agent, self.m.cfg()) or {}).get("models") or []
+        except Exception:
+            return False
+        return any(r.get("id") == model and (r.get("free") or r.get("included")) for r in rows)
+
+    def agent_state(self, agent: str, model: str = "", role: str = "") -> dict:
         s = self.settings()
+        model = self.resolve_model(role, agent, model) if role else model
+        free = self.model_is_free(agent, model)
         return limit_state(agent, model, self._account(agent), self._health(agent),
-                           float(s.get("limit_threshold_percent") or 90), time.time())
+                           float(s.get("limit_threshold_percent") or 90), time.time(), free=free)
 
     def capacity(self, t: dict) -> dict:
         s = self.settings()
@@ -712,10 +746,10 @@ class Autopilot:
             return {"ok": True, "roles": None, "switches": []}
         cache: dict = {}
 
-        def state_of(agent, model):
-            key = (agent, model)
+        def state_of(agent, model, role=""):
+            key = (agent, model, role)
             if key not in cache:
-                cache[key] = self.agent_state(agent, model)
+                cache[key] = self.agent_state(agent, model, role)
             return cache[key]
         return plan_capacity((t.get("workflow") or {}).get("roles") or {}, state_of, s)
 
@@ -783,6 +817,12 @@ class Autopilot:
                 txt = f"Waiting for limits: {cap['reason']}" + (f" · until {datetime.fromtimestamp(until).strftime('%H:%M')}" if until else "")
                 self.set_waiting(t, {"kind": "limits", "text": txt, "until": until, "reason": cap["reason"]})
                 limit_waits.append({"task_id": t["id"], "until": until, "reason": cap["reason"]})
+                if not until and not (t.get("waiting") or {}).get("notified"):
+                    # Nothing will clear this on its own (no balance, not signed in, not installed): say so once
+                    # instead of leaving a queued task silently parked.
+                    m.notify("warning", "Queued task cannot start", f"{t.get('name', '')}: {cap['reason']}. Change the team, "
+                             "set a fallback agent (Settings → Autopilot) or fix the agent, and it starts on its own.", t["id"], kind="needs_input")
+                    m.store.update(t["id"], touch=False, waiting={**(m.store.get(t["id"]) or {}).get("waiting", {}), "notified": True})
                 continue
             if cap.get("switches"):
                 self.apply_fallbacks(t["id"], cap)
@@ -905,9 +945,24 @@ class Autopilot:
                 log.exception("autopilot tick failed")
             time.sleep(15)
 
+    def ensure_queue_running(self) -> bool:
+        """Queued work must never sit behind a halted queue: start the scheduler when something is queued,
+        unless the owner paused the autopilot (the one explicit "don't start anything" switch)."""
+        if self.settings().get("paused") or self.m.scheduler:
+            return False
+        if not any(t.get("status") == "queued" for t in self.m.store.list()):
+            return False
+        log.info("queued task found while the queue was halted: starting the queue")
+        self.m.start()
+        return True
+
     def tick(self):
         self.last_tick = time.time()
         s = self.settings()
+        try:
+            self.ensure_queue_running()
+        except Exception:
+            log.exception("could not start the queue")
         if s.get("watchdog", True):
             self.watchdog(s)
         if quiet_now(local_now(s), s):
