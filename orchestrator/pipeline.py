@@ -31,7 +31,8 @@ REV_TYPES = {"review"}
 _CONFIG_ERRORS = re.compile(
     r"model[^\n]{0,80}(?:not supported|not found|does not exist|is not available|unknown|invalid)|unknown model|"
     r"not supported when using|401 unauthorized|\b401\b[^\n]{0,40}unauthori|invalid api key|api key (?:is )?(?:missing|invalid|not valid)|"
-    r"not signed in|not logged in|authentication required|no authentication information|please (?:log ?in|sign in)", re.I)
+    r"not signed in|not logged in|authentication required|no authentication information|please (?:log ?in|sign in)|"
+    r"openrouter[^\n]{0,40}(?:out of credits|free-model requests are used up|rejected the api key|spend(?:ing)? limit|cap reached)", re.I)
 
 
 def _config_error(text: str) -> bool:

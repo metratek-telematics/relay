@@ -277,12 +277,13 @@ def end_turn(p: TurnPlan, res: dict, usage: dict) -> dict:
         from . import openrouter_proxy as GW
         tally = GW.close_turn(p.gateway.token)
         info.update(tally=tally)
-        if tally["requests"]:
-            usage["cost_usd"] = round(tally["cost_usd"], 8)
-            usage["cost_exact"] = bool(tally["cost_exact"])
-            for k in ("input", "output", "cached"):
-                if tally[k] and not int(usage.get(k) or 0):
-                    usage[k] = tally[k]
+        # Every model call of the turn went through the gateway, so its tally is the bill, not the CLI's own estimate
+        # (Claude Code, for one, prices unknown models from its own table).
+        usage["cost_usd"] = round(tally["cost_usd"], 8)
+        usage["cost_exact"] = bool(tally["cost_exact"])
+        for k in ("input", "output", "cached"):
+            if tally[k] and not int(usage.get(k) or 0):
+                usage[k] = tally[k]
         models = tally["models"] or [p.model]
         info.update(models=models, model_costs=tally["model_costs"], requests=tally["requests"], rotations=tally["rotations"],
                     final_model=tally.get("final_model") or p.model)

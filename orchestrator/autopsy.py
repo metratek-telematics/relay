@@ -180,7 +180,7 @@ def classify(card: dict, task: dict, messages: list[dict], text: str = "", retro
         hit("protocol", 1.0 * min(4, tr["envelope_nudges"]), f"{tr['envelope_nudges']} missing protocol envelope(s)")
 
     # infra
-    if cat in ("agent_timeout", "agent_error", "relay_bug", "delivery", "configuration", "provider_credits", "provider_auth", "provider_unavailable"):
+    if cat in ("agent_timeout", "agent_error", "relay_bug", "delivery", "configuration", "provider_credits", "provider_auth", "provider_unavailable", "provider_quota"):
         hit("infra", 4, f"failure category {cat}")
     if tr.get("timeouts"):
         hit("infra", 1.5 * min(3, tr["timeouts"]), f"{tr['timeouts']} agent turn timeout(s)")

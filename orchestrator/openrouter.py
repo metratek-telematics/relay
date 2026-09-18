@@ -752,6 +752,12 @@ def describe_error(status: int | None, message: str = "", metadata: dict | None 
             text = detail or "Relay's OpenRouter spend cap is reached (402)"
             cat = "provider_budget"
             detail = ""
+    if status == 429 and re.search(r"per[- ]day|daily|free-models-per", detail, re.I):
+        # The account's free requests for today are gone: every free model shares that quota, so waiting or rotating
+        # to another free model cannot help before midnight UTC.
+        return {"category": "provider_quota", "status": status, "retry": False, "config": False, "quota": True,
+                "message": "OpenRouter: today's free-model requests are used up (429); they reset at 00:00 UTC. "
+                           "Buying 10 credits raises the limit from 50 to 1000 a day, or pick a paid model"}
     if status == 429 and model.endswith(":free"):
         text += "; free models allow 20 requests a minute and 50 a day (1000 a day once the account bought 10 credits)"
     if status == 503 and (settings().get("routing") or {}).get("data_collection") == "deny":

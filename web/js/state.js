@@ -68,6 +68,14 @@ export const toneVar = (tone) => ({ blue: "var(--blue)", accent: "var(--accent)"
 
 export function roleAgent(t, role) { return t?.workflow?.roles?.[role]?.agent || ""; }
 export function roleModel(t, role) { return t?.workflow?.roles?.[role]?.model || S.config?.roles?.[role]?.model || ""; }
+// What a role runs, in words: an OpenRouter role names OpenRouter and, for the automatic free pick, the model it is on now.
+export function roleModelLabel(t, role) {
+  const r = t?.workflow?.roles?.[role] || {};
+  if (r.provider !== "openrouter") return roleModel(t, role) || "default model";
+  const m = r.model || S.providers?.openrouter?.default_model || "openrouter:auto-free";
+  const now = t?.sessions?.[role]?.or_model;
+  return `${m === "openrouter:auto-free" ? "Auto · best free model" : m}${now && now !== m ? ` (now ${now})` : ""} via OpenRouter`;
+}
 export function roleEffort(t, role) { return t?.workflow?.roles?.[role]?.effort || S.config?.roles?.[role]?.effort || ""; }
 export function defaultModelLabel(agent) { const h = S.agents?.[agent]; return h?.default_model ? `CLI default (${h.default_model}${h.default_effort ? ` · ${h.default_effort}` : ""})` : "CLI default"; }
 

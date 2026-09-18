@@ -9,6 +9,8 @@ import { AUTO_FREE, orLabel, orSupported, openOpenRouterBrowser } from "./openro
 
 export function workflowEditor(host, wf, { agents, presets, showAdvanced = true, perTask = false, onChange }) {
   const health = S.agents || {};
+  // On OpenRouter a CLI only has to be installed: its own sign-in is not used.
+  const orReady = (cur, a) => cur.provider === "openrouter" && orSupported(a) && !!health[a]?.installed;
   const roles = ["supervisor", "worker", "reviewer"];
   const draw = () => {
     host.innerHTML = `
@@ -19,7 +21,7 @@ export function workflowEditor(host, wf, { agents, presets, showAdvanced = true,
       </div>
       <div class="role-grid" style="margin-top:12px">${roles.map((r) => { const cur = wf.roles[r] || { agent: "", model: "" }; return `<div class="role-box">
         <div class="rt">${r}${r === "reviewer" ? ' <span style="text-transform:none;letter-spacing:0;font-weight:500">(optional)</span>' : ""}</div>
-        <div class="agent-pick">${Object.keys(agents).filter((a) => agents[a].builtin || health[a]?.installed || cur.agent === a).map((a) => `<button type="button" data-role="${r}" data-agent="${a}" class="${cur.agent === a ? "active" : ""}" style="--agent:${esc(agents[a].color)}" title="${esc(health[a]?.ok ? "ready" : (health[a]?.error || "not ready"))}"><span class="av sm ${a}">${esc(agentInitial(a))}</span>${esc(agents[a].label)}${health[a] && !health[a].ok ? ' <span class="muted">!</span>' : ""}</button>`).join("")}${r === "reviewer" ? `<button type="button" data-role="reviewer" data-agent="" class="${!cur.agent ? "active" : ""}">none</button>` : ""}</div>
+        <div class="agent-pick">${Object.keys(agents).filter((a) => agents[a].builtin || health[a]?.installed || cur.agent === a).map((a) => `<button type="button" data-role="${r}" data-agent="${a}" class="${cur.agent === a ? "active" : ""}" style="--agent:${esc(agents[a].color)}" title="${esc(orReady(cur, a) ? "ready on OpenRouter" : health[a]?.ok ? "ready" : (health[a]?.error || "not ready"))}"><span class="av sm ${a}">${esc(agentInitial(a))}</span>${esc(agents[a].label)}${health[a] && !health[a].ok && !orReady(cur, a) ? ' <span class="muted">!</span>' : ""}</button>`).join("")}${r === "reviewer" ? `<button type="button" data-role="reviewer" data-agent="" class="${!cur.agent ? "active" : ""}">none</button>` : ""}</div>
         ${(() => {
           if (!cur.agent) return '<div class="muted" style="font-size:11px">No agent in this role.</div>';
           const onOR = cur.provider === "openrouter";

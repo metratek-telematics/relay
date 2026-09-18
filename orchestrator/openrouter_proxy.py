@@ -66,6 +66,25 @@ class Turn:
         return sum(float(r.get("cost") or 0) for r in self.records)
 
 
+LOG_FILE = OR.DATA_DIR / "logs" / "openrouter-gateway.log"
+
+
+def _log(t: "Turn", rec: dict):
+    """One line per request (never a token or a key): when, which turn, which model, what came back, what it cost."""
+    try:
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        if LOG_FILE.exists() and LOG_FILE.stat().st_size > 5_000_000:
+            LOG_FILE.replace(LOG_FILE.with_suffix(".log.1"))
+        line = {"t": round(rec.get("t") or time.time(), 3), "ms": int((time.time() - (rec.get("t") or time.time())) * 1000),
+                "task": t.task_id, "role": t.role, "agent": t.agent, "endpoint": rec.get("endpoint"), "model": rec.get("model_sent"),
+                "answered_by": rec.get("model_used"), "status": rec.get("status"), "input": rec.get("input"), "output": rec.get("output"),
+                "cost": rec.get("cost"), "error": rec.get("message") or rec.get("stream_error")}
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(line) + "\n")
+    except OSError:
+        pass
+
+
 def open_turn(task_id: str, project: str | None, role: str, agent: str, model: str, rotation=None, auto=False) -> Turn:
     ensure_started()
     t = Turn(task_id, project, role, agent, model, rotation, auto)
@@ -400,6 +419,9 @@ class Handler(BaseHTTPRequestHandler):
                 _merge_routing(out, OR.routing(s))
             if path.endswith("/chat/completions") and not isinstance(out.get("usage"), dict):
                 out["usage"] = {"include": True}
+            if path.endswith("/chat/completions") and not t.auto and i + 1 < len(candidates):
+                # OpenRouter's own model fallback inside one request; Relay's rotation still covers the other APIs.
+                out["models"] = candidates[i:i + 3]
             self._streamed = None
             res = self._forward(t, "POST", path, out, final=False)
             if res is None:
@@ -415,6 +437,14 @@ class Handler(BaseHTTPRequestHandler):
                 return  # streamed to the client: done
             status, payload, headers, rec = res
             last = (status, payload, headers)
+            d = OR.describe_error(status, OR._err_msg(payload), None, model)
+            if d.get("quota"):
+                OR.invalidate_account()  # the capacity check reads the used-up quota next time
+                if not OR.is_free(model) or not any(not OR.is_free(m) for m in candidates[i + 1:]):
+                    break
+                i = next(j for j in range(i + 1, len(candidates)) if not OR.is_free(candidates[j]))  # a paid fallback still works
+                t.model = candidates[i]
+                continue
             if status == 429 and waited < wait_budget:
                 retry_after = headers.get("retry-after")
                 try:
@@ -425,7 +455,6 @@ class Handler(BaseHTTPRequestHandler):
                 time.sleep(pause)
                 waited += pause
                 continue  # same model again
-            d = OR.describe_error(status, OR._err_msg(payload), None, model)
             if d.get("params"):
                 break  # a parameter no provider takes: every model would refuse it, so do not rotate or blame the model
             if status == 404:
@@ -481,6 +510,7 @@ class Handler(BaseHTTPRequestHandler):
             rec.update(status=502, message=f"OpenRouter is unreachable: {e}", category="provider_unavailable")
             if record:
                 t.records.append(rec)
+                _log(t, rec)
             payload = {"error": {"code": 502, "message": f"Relay could not reach OpenRouter: {e}"}}
             if final:
                 self._json(502, payload)
@@ -501,6 +531,7 @@ class Handler(BaseHTTPRequestHandler):
             rec.update(message=d["message"], category=d["category"])
             if record:
                 t.records.append(rec)
+                _log(t, rec)
             if final:
                 self._send_upstream_error(resp.status, payload, up_headers)
                 return None
@@ -563,5 +594,6 @@ class Handler(BaseHTTPRequestHandler):
             rec["message"] = f"OpenRouter stream error: {rec['stream_error']}"
         if record and path != "/api/v1/models" and not path.startswith("/api/v1/models/"):
             t.records.append(rec)
+            _log(t, rec)
         self._streamed = rec
         return None

@@ -69,6 +69,7 @@ FAILURES = [
     ("protocol", "Agent broke the protocol", r"valid protocol envelope|unexpected supervisor envelope|did not produce a plan"),
     ("agent_timeout", "Agent turn timed out", r"turn timeout|exceeded the .* minute"),
     ("provider_credits", "OpenRouter credits or spend cap", r"openrouter[^\n]{0,40}(?:out of credits|402|spend(?:ing)? (?:cap|limit)|cap reached|monthly cap)"),
+    ("provider_quota", "OpenRouter free requests used up for the day", r"openrouter[^\n]{0,40}free-model requests are used up"),
     ("provider_auth", "OpenRouter rejected the key", r"openrouter[^\n]{0,40}(?:401|rejected the api key|has no api key)"),
     ("provider_unavailable", "OpenRouter model or provider unavailable", r"openrouter[^\n]{0,60}(?:503|502|404|no provider|not available|provider is down)"),
     ("agent_error", "Agent kept crashing", r"failed \d+ times in a row|agent turn failed|exited with code"),

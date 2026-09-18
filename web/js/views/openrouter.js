@@ -56,11 +56,13 @@ export function accountHtml(d, { relay = true } = {}) {
 
 function autoPicksHtml(list, pick) {
   if (!(list || []).length) return '<span class="muted">No free model qualifies right now (free, tool calling, enough context). Relay falls back to OpenRouter\'s free router.</span>';
-  return `<ol class="or-picks">${list.map((c, i) => `<li class="${c.cooldown_until ? "is-cool" : ""}">
+  const more = list.length - 3;
+  return `<ol class="or-picks">${list.map((c, i) => `<li class="${c.cooldown_until ? "is-cool" : ""}" ${i >= 3 ? "data-more-pick hidden" : ""}>
       <div class="or-pick-head"><span class="or-rank">${i + 1}</span><code>${esc(c.id)}</code>${c.score != null ? `<span class="badge outline" title="Relay's score for coding agents">${esc(c.score)}</span>` : ""}
         ${c.cooldown_until ? `<span class="badge amber" title="${esc(c.cooldown_reason || "")}">cooling down until ${esc(new Date(c.cooldown_until * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))}</span>` : ""}
         ${pick ? `<button class="btn xs" data-use="${esc(c.id)}">Use this one</button>` : ""}</div>
-      <div class="or-why muted">${(c.why || []).map(esc).join(" · ")}</div></li>`).join("")}</ol>`;
+      <div class="or-why muted">${(c.why || []).map(esc).join(" · ")}</div></li>`).join("")}</ol>
+    ${more > 0 ? `<button type="button" class="btn xs ghost" data-show-picks aria-expanded="false">Show the whole ranking (${more} more)</button>` : ""}`;
 }
 
 // The OpenRouter model browser. With `pick`, choosing a model (or the automatic free pick) calls onPick(id).
@@ -125,7 +127,14 @@ export function openOpenRouterBrowser({ pick = false, current = "", onPick } = {
   };
   const load = async (refresh) => {
     $("#orHint", m.body).textContent = "Loading the catalog…";
-    try { data = await api.openrouterModels(refresh); $("#orAuto", m.body).innerHTML = autoPicksHtml(data.auto_free, pick); draw(); }
+    try {
+      data = await api.openrouterModels(refresh);
+      const box = $("#orAuto", m.body);
+      box.innerHTML = autoPicksHtml(data.auto_free, pick);
+      const tgl = $("[data-show-picks]", box);
+      if (tgl) tgl.onclick = () => { const open = tgl.getAttribute("aria-expanded") !== "true"; $$("[data-more-pick]", box).forEach((li) => (li.hidden = !open)); tgl.setAttribute("aria-expanded", open); tgl.textContent = open ? "Show the top three" : `Show the whole ranking (${data.auto_free.length - 3} more)`; };
+      draw();
+    }
     catch (e) { $("#orHint", m.body).textContent = e.message; }
     api.openrouterAccount(refresh).then((d) => { $("#orAcct", m.body).innerHTML = accountHtml(d); }).catch((e) => { $("#orAcct", m.body).innerHTML = `<span class="muted">${esc(e.message)}</span>`; });
   };
@@ -226,7 +235,7 @@ export async function mountProviders(body) {
       <div class="field inline"><label>Only providers that support every parameter sent (tool calling included)</label>${sw("require_parameters", !!r.require_parameters, "Require parameters")}</div>
       <div class="field inline"><label>Deny data collection: only providers that do not store or train on prompts</label>${sw("data_collection", r.data_collection === "deny", "Deny data collection")}</div>
       <div class="field inline"><label>Zero data retention endpoints only</label>${sw("zdr", !!r.zdr, "Zero data retention")}</div>
-      <div class="help">Sent as OpenRouter's <code>provider</code> preferences with every request that goes through the gateway (and natively by OpenCode, Kilo, Crush, Aider and Continue in direct mode). Privacy settings always win over what a CLI asks for. Strict privacy narrows the providers a model has; a 503 then says so.</div>
+      <p class="hint" style="margin:8px 0 0">Sent as OpenRouter's <code>provider</code> preferences with every request that goes through the gateway (and natively by OpenCode, Kilo, Crush, Aider and Continue in direct mode). Privacy settings always win over what a CLI asks for. Strict privacy narrows the providers a model has; a 503 then says so.</p>
     </div></div>
     <div class="card"><div class="card-head"><h3>Reliability</h3></div><div class="card-body">
       <div class="field"><label for="orFallbacks">Fallback models (in order)</label><input id="orFallbacks" value="${esc((s.fallback_models || []).join(", "))}" placeholder="e.g. qwen/qwen3-coder:free, openrouter/free" spellcheck="false">
@@ -256,7 +265,7 @@ export async function mountProviders(body) {
         ${supported.map(([a, v]) => `<tr><td>${esc(agentLabel(a))}</td><td>${esc(v.how)}${v.note ? ` <span class="muted">· ${esc(v.note)}</span>` : ""}</td></tr>`).join("")}
         ${unsupported.map(([a, v]) => `<tr><td>${esc(agentLabel(a))}</td><td class="muted">Not supported: ${esc(v.why)}</td></tr>`).join("")}
       </tbody></table></div>
-      <div class="help">The owner's own sign-ins are never used or changed for an OpenRouter turn: every setting is per run. See docs/OPENROUTER.md.</div>
+      <p class="hint" style="margin:0">The owner's own sign-ins are never used or changed for an OpenRouter turn: every setting is per run. See docs/OPENROUTER.md.</p>
     </div></div>`;
 
   const state = { routing: { ...r }, flags: { enabled: s.enabled !== false, attribution: s.attribution !== false } };
