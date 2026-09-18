@@ -54,7 +54,7 @@ export async function openRepoEnv(repo, { onSaved } = {}) {
       <div id="reChecks" class="stack" style="gap:6px">${env.checks.map(checkRow).join("")}</div></div>
     <div class="renv-sec" id="reConnectors"></div>
     <div class="renv-sec" id="reTools"></div>
-    <div class="modal-actions"><span class="muted" style="margin-right:auto">${env.updated ? `Saved ${esc(new Date(env.updated).toLocaleString())}` : "Not saved yet"}</span><button class="btn" data-close>Cancel</button><button class="btn primary" id="reSave">Save</button></div>`, { wide: true });
+    <div class="modal-actions"><span class="muted" style="margin-right:auto">${env.updated ? `Saved ${esc(new Date(Date.parse(env.updated)).toLocaleString())}` : "Not saved yet"}</span><button class="btn" data-close>Cancel</button><button class="btn primary" id="reSave">Save</button></div>`, { wide: true });
 
   const bindDel = () => $$("[data-del]", m.body).forEach((b) => (b.onclick = () => b.closest(".renv-var,.renv-file,.renv-check").remove()));
   const bindSecret = () => $$(".renv-var", m.body).forEach((r) => {

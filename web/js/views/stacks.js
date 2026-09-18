@@ -253,7 +253,7 @@ function renderCard(t, v) {
     ${st.error && st.status === "failed" ? `<div class="stk-err">${esc(st.error.split("\n").slice(0, 6).join("\n"))}</div>` : ""}
     ${job && (job.running || job.error) ? `<details class="stk-job" ${job.error ? "open" : ""}><summary>${job.running ? "Working" : "Last action failed"} · ${esc(job.action)}${job.service ? ` ${esc(job.service)}` : ""}</summary><pre class="pre">${esc((job.error ? job.error + "\n\n" : "") + (job.log || []).slice(-30).join("\n"))}</pre></details>` : ""}
     <ul class="stk-list">${rows || '<li class="muted">The stack definition was removed.</li>'}</ul>
-    ${checkRows ? `<div class="section-title" style="margin:14px 0 6px">End-to-end checks${st.checks?.time || t.stack?.time ? ` <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">· ${esc(new Date(st.checks?.time || t.stack.time).toLocaleTimeString())}</span>` : ""}</div><ul class="stk-checks">${checkRows}</ul>` : ""}
+    ${checkRows ? `<div class="section-title" style="margin:14px 0 6px">End-to-end checks${st.checks?.time || t.stack?.time ? ` <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:400">· ${esc(new Date(Date.parse(st.checks?.time || t.stack.time)).toLocaleTimeString())}</span>` : ""}</div><ul class="stk-checks">${checkRows}</ul>` : ""}
     ${st.status === "down" && st.stop_reason ? `<p class="muted" style="margin:10px 0 0;font-size:11.5px">Stopped: ${esc(st.stop_reason)}. Logs are kept in the run folder.</p>` : ""}`;
 }
 
