@@ -57,6 +57,7 @@ class Turn:
         self.records: list[dict] = []
         self.rotations: list[dict] = []
         self.rerouted = 0
+        self.dead: set = set()   # models that failed for good in this turn: never tried again by it
         self.active = 0
         self.closed = False
         self.lock = threading.Lock()
@@ -156,11 +157,11 @@ def summarize(t: Turn | None) -> dict:
         if r.get("provider") and r["provider"] not in out["providers"]:
             out["providers"].append(r["provider"])
     out["cost_usd"] = round(out["cost_usd"], 8)
-    failed = [r for r in t.records if r.get("status") != 200]
-    if failed and (not out["ok_requests"] or t.records[-1].get("status") != 200):
+    failed = [r for r in t.records if r.get("status") != 200 or r.get("stream_error")]
+    if failed and (not out["ok_requests"] or t.records[-1].get("status") != 200 or t.records[-1].get("stream_error")):
         last = failed[-1]
-        out["last_error"] = {"status": last.get("status"), "message": last.get("message"), "category": last.get("category"),
-                             "model": last.get("model_sent")}
+        out["last_error"] = {"status": last.get("status") if not last.get("stream_error") else 502, "message": last.get("message"),
+                             "category": last.get("category") or "provider_unavailable", "model": last.get("model_sent")}
     out["rotations"] = list(t.rotations)
     out["rerouted"] = t.rerouted
     out["seconds"] = round(time.time() - t.started, 1)
@@ -372,7 +373,11 @@ class Handler(BaseHTTPRequestHandler):
         asked = str(body.get("model") or "")
         if asked and asked != t.model:
             t.rerouted += 1  # side calls (titles, summaries, "small fast" models) run on the role's model, never a surprise one
-        candidates = [t.model] + [m for m in t.rotation if m != t.model]
+        candidates = [m for m in [t.model] + [m for m in t.rotation if m != t.model] if m not in t.dead]
+        if not candidates:
+            last = next((r for r in reversed(t.records) if r.get("status") != 200), None)
+            st = int((last or {}).get("status") or 503)
+            return self._relay_error(st, (last or {}).get("message") or "Relay: every model for this turn failed", "relay_rotation")
         wait_budget = float(s.get("rate_limit_wait_seconds") or 0)
         waited = 0.0
         last = None
@@ -395,8 +400,18 @@ class Handler(BaseHTTPRequestHandler):
                 _merge_routing(out, OR.routing(s))
             if path.endswith("/chat/completions") and not isinstance(out.get("usage"), dict):
                 out["usage"] = {"include": True}
+            self._streamed = None
             res = self._forward(t, "POST", path, out, final=False)
             if res is None:
+                srec = self._streamed or {}
+                if srec.get("stream_error") and not srec.get("output") and i + 1 < len(candidates):
+                    # The provider broke off after the 200 (overloaded, upstream error): the CLI sees the error and
+                    # retries, and that retry goes to the next model instead of the same busy one.
+                    if t.auto:
+                        OR.cooldown(model, f"stream error: {srec['stream_error']}", 503)
+                    t.dead.add(model)
+                    t.rotations.append({"from": model, "to": candidates[i + 1], "status": "stream", "at": time.time()})
+                    t.model = candidates[i + 1]
                 return  # streamed to the client: done
             status, payload, headers, rec = res
             last = (status, payload, headers)
@@ -410,8 +425,14 @@ class Handler(BaseHTTPRequestHandler):
                 time.sleep(pause)
                 waited += pause
                 continue  # same model again
-            if status in (429, 404, 502, 503) and i + 1 < len(candidates):
-                reason = OR.describe_error(status, rec.get("message") or "", None, model)["message"]
+            d = OR.describe_error(status, OR._err_msg(payload), None, model)
+            if d.get("params"):
+                break  # a parameter no provider takes: every model would refuse it, so do not rotate or blame the model
+            if status == 404:
+                t.dead.add(model)  # gone for this turn; a 429 or an outage may clear, so a lone model keeps being tried
+            if status in (429, 404, 502, 503) and i + 1 < len(candidates) and len(t.rotations) < 6:
+                t.dead.add(model)
+                reason = d["message"]
                 if t.auto or status != 429:
                     OR.cooldown(model, reason, status)
                 nxt = candidates[i + 1]
@@ -421,7 +442,7 @@ class Handler(BaseHTTPRequestHandler):
                 waited = 0.0
                 continue
             if status in (429, 404, 503) and t.auto:
-                OR.cooldown(model, OR.describe_error(status, rec.get("message") or "", None, model)["message"], status)
+                OR.cooldown(model, d["message"], status)
             break
         if last:
             status, payload, headers = last
@@ -542,4 +563,5 @@ class Handler(BaseHTTPRequestHandler):
             rec["message"] = f"OpenRouter stream error: {rec['stream_error']}"
         if record and path != "/api/v1/models" and not path.startswith("/api/v1/models/"):
             t.records.append(rec)
+        self._streamed = rec
         return None

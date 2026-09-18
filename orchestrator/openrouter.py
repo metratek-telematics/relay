@@ -61,7 +61,7 @@ DEFAULTS = {
         "allow_fallbacks": True,      # other providers of the same model when one is down
         "data_collection": "allow",   # deny: only providers that do not store or train on prompts
         "zdr": False,                 # zero data retention endpoints only
-        "require_parameters": True,   # only providers that support every parameter sent (tools!)
+        "require_parameters": False,  # only providers that support every parameter sent; strict, some CLIs send extras
         "order": [], "ignore": [],    # provider slugs
     },
     "fallback_models": [],            # tried in order when a model is rate limited or unavailable
@@ -756,6 +756,12 @@ def describe_error(status: int | None, message: str = "", metadata: dict | None 
         text += "; free models allow 20 requests a minute and 50 a day (1000 a day once the account bought 10 credits)"
     if status == 503 and (settings().get("routing") or {}).get("data_collection") == "deny":
         text += "; data collection is set to deny, which rules out some providers"
+    m = re.search(r"support the provided '?([\w.]+)'?", detail)
+    if status == 404 and m:
+        # Not the model's fault: no provider takes a parameter the CLI sent. Another model would fail the same way.
+        text = (f"OpenRouter: no provider for this model supports the '{m.group(1)}' parameter this agent sends (404); "
+                "turn off 'Only providers that support every parameter' in Settings → Providers, or pick another model")
+        return {"category": "provider_params", "message": text, "status": status, "retry": False, "config": True, "params": True}
     if status == 404 and re.search(r"data policy|privacy", detail, re.I):
         text = "OpenRouter: no endpoint matches your data policy (404); relax the privacy settings or pick another model"
         cat = "provider_unavailable"

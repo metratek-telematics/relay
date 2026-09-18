@@ -40,7 +40,7 @@ export const api = {
   mergeChangeSet: (id, body) => post(`/api/tasks/${encodeURIComponent(id)}/merge`, body),
   health: (force) => get(`/api/health${force ? "?force=1" : ""}`),
   agents: (force) => get(`/api/agents${force ? "?force=1" : ""}`),
-  testAgent: (name, model) => post(`/api/agents/${name}/test`, { model }),
+  testAgent: (name, model, provider) => post(`/api/agents/${name}/test`, { model, ...(provider ? { provider } : {}) }),
   installAgent: (name, action) => post(`/api/agents/${name}/install`, { action }),
   agentJobs: () => get("/api/agents/jobs"),
   agentModels: (name, refresh) => get(`/api/agents/${name}/models${refresh ? "?refresh=1" : ""}`),

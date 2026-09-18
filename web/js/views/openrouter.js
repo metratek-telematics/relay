@@ -148,12 +148,42 @@ export function openRouterCard() {
     <div>Any role can run its agent on OpenRouter instead of the agent's own sign-in: pick <strong>Runs on · OpenRouter</strong> in the team. ${p.configured ? `Default model: <code>${esc(orLabel(p.default_model))}</code>.` : 'An admin adds the key in <a href="#/settings/providers">Settings → Providers</a>.'}</div>
     <div><strong>Runs on OpenRouter:</strong> ${ok.map((a) => esc(agentLabel(a))).join(", ")}.</div>
     ${no.length ? `<div><strong>Cannot:</strong> ${no.map((a) => `<span title="${esc(meta[a].openrouter.why || "")}">${esc(agentLabel(a))}</span>`).join(", ")} (hover for why).</div>` : ""}
-    <div class="row wrap"><button class="btn sm" id="orBrowse">${icon("layers")}Models &amp; usage</button><a class="btn sm" href="#/settings/providers">${icon("settings")}Provider settings</a></div>
+    <div class="row wrap"><button class="btn sm" id="orBrowse">${icon("layers")}Models &amp; usage</button>${p.configured ? `<button class="btn sm" id="orTestAll" title="One short turn per installed agent, through OpenRouter">${icon("zap")}Test on OpenRouter</button>` : ""}<a class="btn sm" href="#/settings/providers">${icon("settings")}Provider settings</a></div>
   </div></div>`;
 }
 export function bindOpenRouterCard(root) {
   const b = $("#orBrowse", root);
   if (b) b.onclick = () => openOpenRouterBrowser();
+  const t = $("#orTestAll", root);
+  if (t) t.onclick = () => openOpenRouterTests();
+}
+
+// One "pong" turn per installed agent on OpenRouter's default model: proves the gateway, the recipe and the cost path.
+export function openOpenRouterTests() {
+  const ids = Object.keys(S.agentMeta || {}).filter((a) => orSupported(a) && (S.agents?.[a] || {}).installed);
+  const def = ((S.providers || {}).openrouter || {}).default_model || AUTO_FREE;
+  const m = modal(`<h2>${icon("zap")} Test agents on OpenRouter</h2>
+    <p class="hint">Each agent gets one short turn on <code>${esc(orLabel(def))}</code> through Relay's gateway. Free models cost nothing but count against the daily free requests.</p>
+    <div class="field"><label for="orTestModel">Model</label><input id="orTestModel" value="${esc(def)}" spellcheck="false"></div>
+    <div class="md-table"><table class="or-tests"><thead><tr><th>Agent</th><th>Result</th><th>Model that answered</th><th class="num">Cost</th></tr></thead><tbody>
+      ${ids.map((a) => `<tr data-row="${esc(a)}"><td>${esc(agentLabel(a))}</td><td class="muted">not run</td><td></td><td class="num"></td></tr>`).join("") || '<tr><td colspan="4" class="muted">No installed agent can run on OpenRouter.</td></tr>'}
+    </tbody></table></div>
+    <div class="modal-actions"><button class="btn" data-close>Close</button><button class="btn primary" id="orRun">${icon("play")}Run tests</button></div>`, { wide: true });
+  $("#orRun", m.body).onclick = async (e) => {
+    e.target.disabled = true;
+    const model = $("#orTestModel", m.body).value.trim();
+    for (const a of ids) {
+      const row = $(`[data-row="${a}"]`, m.body);
+      row.children[1].innerHTML = `${icon("spinner", "spin")} running`;
+      try {
+        const r = await api.testAgent(a, model, "openrouter");
+        row.children[1].innerHTML = r.ok ? `<span class="ok-text">${icon("check", "sm")} replied in ${esc(r.seconds)}s</span>` : `<span class="err">${esc((r.error || "failed").slice(0, 300))}</span>`;
+        row.children[2].innerHTML = r.models ? r.models.map((x) => `<code>${esc(x)}</code>`).join(" ") : "";
+        row.children[3].textContent = r.cost_usd != null ? (Number(r.cost_usd) ? fmtCost(r.cost_usd) : "$0") : "";
+      } catch (err) { row.children[1].innerHTML = `<span class="err">${esc(err.message)}</span>`; }
+    }
+    e.target.disabled = false;
+  };
 }
 
 // ---------------------------------------------------------------------------- Settings → Providers

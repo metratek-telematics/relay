@@ -324,6 +324,7 @@ class Handler(BaseHTTPRequestHandler):
         msg = {401: "User not found.", 402: "Insufficient credits. Add more using https://openrouter.ai/settings/credits",
                403: "Your input was flagged", 429: f"{model} is temporarily rate-limited upstream. Please retry shortly.",
                502: "Provider returned error", 503: "No endpoints found that can handle the requested parameters."}.get(st, "Error")
+        msg = f.get("message") or msg
         meta = {"limit_source": "openrouter_credits"} if st == 402 else ({"provider_name": "MockProvider", "raw": "rate limited"} if st == 429 else None)
         self._error(st, msg, meta, {"Retry-After": "1"} if st == 429 else None)
         return True

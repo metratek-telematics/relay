@@ -347,8 +347,24 @@ def agent_test(name):
     if not (scratch / ".git").exists():
         quiet(["git", "init", "-q"], cwd=scratch, timeout=30)
     # Test what tasks will actually use: the model asked for, else the agent's default model from settings.
-    model = body().get("model") or ((cfg.get("agent_defaults") or {}).get(name) or {}).get("model") or ""
+    provider = (body().get("provider") or "").strip().lower()
+    orp = None
+    if provider == "openrouter":
+        # The same path a task role on OpenRouter takes: gateway token, per-run config, real cost.
+        from orchestrator import openrouter as OR, openrouter_launch as ORL
+        if not OR.supports(name):
+            return jsonify({"ok": False, "error": f"{C.AGENTS[name]['label']} cannot run on OpenRouter: {OR.SUPPORT[name]['why']}"})
+        try:
+            orp = ORL.begin_turn({"id": "agent-test"}, "test", name, body().get("model") or "", cfg, scratch, None, env_base=ad.env(cfg),
+                                 tasks=manager.store.list())
+        except RuntimeError as e:
+            return jsonify({"ok": False, "error": str(e)})
+        cfg, model = orp.cfg, orp.model_arg
+    else:
+        model = body().get("model") or ((cfg.get("agent_defaults") or {}).get(name) or {}).get("model") or ""
     args, env, stdin, session = ad.build("Reply with exactly the single word: pong", scratch, cfg, model, None, scratch, "test")
+    if orp is not None:
+        args = orp.apply(env, args)
     ctx = TurnContext()
     started = time.time()
     lines = []
@@ -363,16 +379,42 @@ def agent_test(name):
             except Exception:
                 pass
         res = ad.finalize(ctx, p.returncode, scratch, session)
+        info = None
+        if orp is not None:
+            from orchestrator import openrouter_launch as ORL
+            info = ORL.end_turn(orp, res, res.setdefault("usage", {}))
+            orp = None
         txt = (res.get("last_message") or res.get("text") or "").strip()
         ok = p.returncode == 0 and "pong" in txt.lower()
         agents.invalidate_health()
-        return jsonify({"ok": ok, "rc": p.returncode, "seconds": round(time.time() - started, 1), "reply": txt[:300],
-                        "session_id": res.get("session_id"), "model": res.get("model"), "usage": res.get("usage"),
-                        "error": None if ok else (res.get("error") or "\n".join([l for l in lines if l.strip()][-8:]))})
+        out = {"ok": ok, "rc": p.returncode, "seconds": round(time.time() - started, 1), "reply": txt[:300],
+               "session_id": res.get("session_id"), "model": res.get("model"), "usage": res.get("usage"),
+               "error": None if ok else (res.get("error") or "\n".join([l for l in lines if l.strip()][-8:]))}
+        if info is not None:
+            out.update(provider="openrouter", model=info.get("final_model"), models=info.get("models"), requests=info.get("requests"),
+                       rotations=info.get("rotations"), cost_usd=(res.get("usage") or {}).get("cost_usd"))
+            if out["error"]:
+                out["error"] = _mask_secret(out["error"])
+        return jsonify(out)
     except subprocess.TimeoutExpired:
         return jsonify({"ok": False, "error": "Timed out after 180 s", "seconds": 180}), 200
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 200
+    finally:
+        if orp is not None:  # the turn never finished: close its gateway session
+            try:
+                from orchestrator import openrouter_proxy as GW
+                if orp.gateway is not None:
+                    GW.close_turn(orp.gateway.token, wait=1, resolve_costs=False)
+            except Exception:
+                pass
+
+
+def _mask_secret(text: str) -> str:
+    """The OpenRouter key never appears in an answer, whatever a CLI printed."""
+    from orchestrator import openrouter as OR
+    k = OR.api_key()
+    return text.replace(k, "••••••••") if k and text else text
 
 
 # ----------------------------------------------------------------------------- settings
