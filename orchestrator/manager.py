@@ -116,11 +116,13 @@ class Manager:
         if t:
             self.emit("task", self.task_view(t))
 
-    def notify(self, level, title, body="", tid=None, kind="info"):
+    def notify(self, level, title, body="", tid=None, kind="info", actions=None):
         # `kind` lets each browser decide which events deserve a desktop alert or a
         # sound without guessing from titles: delivered, failed, stopped,
         # needs_input, approval, pr_opened, github_issue or info.
         n = {"id": new_id("n"), "level": level, "kind": kind, "title": title, "body": body, "task_id": tid, "time": now(), "read": False}
+        if actions:  # one-click follow-ups the browser can offer (e.g. "Use A instead" on a design choice)
+            n["actions"] = list(actions)[:4]
         self.notifications.insert(0, n)
         self.notifications = self.notifications[:100]
         self.emit("notify", n)
@@ -185,6 +187,8 @@ class Manager:
             # Design step (orchestrator/design.py): auto | always | never, and the approval gate auto | on | off.
             "design_mode": _choice(wf_in.get("design_mode"), ("auto", "always", "never"), cfg.get("design_mode") or "auto"),
             "design_approval": _choice(wf_in.get("design_approval"), ("auto", "on", "off"), cfg.get("design_approval") or "auto"),
+            # Design exploration (orchestrator/exploration.py): pause with the mockups before building, whatever the panel decides.
+            "show_mockups": bool(wf_in.get("show_mockups", False)),
         }
         return wf
 
@@ -690,6 +694,54 @@ class Manager:
             raise ValueError("That question is no longer pending")
         r.answer(t["pending"].get("id"), text, extra)
 
+    def choose_direction(self, tid, direction, note=""):
+        """The owner picks a design direction: answers a pending pick, or switches a running task to another mockup."""
+        from . import exploration
+        t = self.store.get(tid)
+        if not t:
+            raise KeyError("Task not found")
+        ex = dict(t.get("exploration") or {})
+        ids = [d.get("id") for d in ex.get("directions") or []]
+        direction = str(direction or "").strip().upper()[:1]
+        if direction not in ids:
+            raise ValueError("This task has no such design direction")
+        p = t.get("pending") or {}
+        if p.get("kind") == "design_pick" and self.runners.get(tid):
+            self.runners[tid].answer(p["id"], f"Use {direction}" + (f" · {note}" if note else ""), {"direction": direction})
+            return {"applied": "answer", "direction": direction}
+        if direction == ex.get("chosen"):
+            return {"applied": "unchanged", "direction": direction}
+        before = ex.get("chosen") or ""
+        ex.update(chosen=direction, chosen_by="owner_override", owner_note=str(note or "").strip()[:500],
+                  override={"from": before, "to": direction, "time": now()})
+        ex["hybrid"] = [h for h in ex.get("hybrid") or [] if h.get("from") != direction]
+        self.store.update(tid, immediate=True, exploration=ex)
+        if t.get("run_dir") and Path(t["run_dir"]).is_dir():
+            p_md = Path(t["run_dir"]) / "FOCUS_GROUP.md"
+            p_md.write_text(exploration.focus_group_md(ex), encoding="utf-8")
+            self.artifact(tid, "focus_group", str(p_md))
+        crit = [c for c in t.get("acceptance") or [] if c.get("id") != "D1"]
+        if crit or t.get("acceptance"):
+            self.store.update(tid, immediate=True, acceptance=crit + judge.normalize_acceptance([exploration.acceptance_row(ex)], source="exploration"))
+        self.timeline(tid, "user", f"Design direction changed: {before or '?'} → {direction}", truncate(note or "", 200))
+        if t.get("status") in TERMINAL:
+            self.emit_task(tid)
+            try:  # the override is a learning signal (persona weights): re-record the finished run's outcome now
+                self.learning.engine.record(tid, run_autopsy=False)
+            except Exception:
+                pass
+            return {"applied": "recorded", "direction": direction,
+                    "note": "This task has finished, so the choice is recorded for learning only. Start a follow-up task to rebuild it."}
+        text = (f"The owner switched the design direction from {before or 'the panel pick'} to {direction}. From now on build to mockup {direction}: "
+                + exploration.direction_block(ex, t.get("worktree") or "") + "\nRework what differs from it; acceptance D1 now names this direction.")
+        res = self.guidance(tid, text, "worker", "queue")
+        cur = self.store.get(tid) or {}
+        # The supervisor judges against the new direction too (a "both" row would be consumed by whichever role reads first).
+        rows = list(cur.get("guidance") or []) + [{"id": new_id("g"), "time": now(), "text": text, "to": "supervisor", "consumed": False}]
+        self.store.update(tid, immediate=True, guidance=rows)
+        self.emit_task(tid)
+        return {**res, "direction": direction}
+
     def approve(self, tid, approved=True, note=""):
         self.answer(tid, None, note, {"approved": bool(approved)})
 
@@ -712,7 +764,7 @@ class Manager:
             self.store.update(tid, immediate=True, guidance=rows)
             r.interrupt(text)
             return {"applied": "interrupt"}
-        if r and t.get("pending") and t["pending"].get("kind") == "question":
+        if r and t.get("pending") and t["pending"].get("kind") in ("question", "design_pick"):
             # Treat guidance during a pending question as the answer.
             r.answer(t["pending"]["id"], text, {})
             row["consumed"] = True

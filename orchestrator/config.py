@@ -288,6 +288,21 @@ DEFAULTS = {
     "design_max_revisions": 2,           # design revisions after blocking review findings before the human decides
     "design_auto_templates": ["feature", "refactor"],
     "design_doc_mode": "commit",         # commit docs/designs/<date>-<slug>.md to the primary repository | comment on the PR | off
+    # Design exploration (orchestrator/exploration.py): for UI/design tasks, 2-3 mockup directions are drawn, rendered and
+    # scored by an internal focus group before building; Relay picks the winner itself and asks only on a real coin flip.
+    "design_exploration": "auto",        # auto (tasks where rules/DESIGN_RESEARCH.md applies) | off
+    "design_directions": 3,              # 2 or 3 directions
+    "design_personas": [
+        "First-time user: has never seen this product; judges whether the purpose, the main action and every label are obvious without help.",
+        "Daily power user: works in {product} all day; judges scanning speed, information density, keyboard use and the fewest steps for frequent jobs.",
+        "Accessibility auditor: WCAG 2.2 AA; contrast, 24x24 px targets, visible focus, keyboard order, screen-reader semantics, reflow at 320 px, reduced motion.",
+        "Product owner and brand keeper: consistency with the repository's design system, DESIGN.md, tokens and voice, and fit with the request and the research.",
+    ],
+    "design_focus_group_mode": "full",   # full: one reviewer turn per persona · lean: one turn simulating the whole panel
+    "design_ask_when_close": "auto",     # auto (only when question_policy is not "blocked") | on | off: ask on a coin flip
+    "design_close_margin": 0.5,          # top two within this many points (of 10) and materially different = a coin flip
+    "design_pick_timeout_minutes": 240,  # an unanswered pick uses the panel's choice after this long (0 waits)
+    "design_render_timeout_seconds": 180,
     # Relay installs a task's dependencies itself before agents start (npm ci and friends).
     "env_prepare": True,
     "env_prepare_timeout_minutes": 20,

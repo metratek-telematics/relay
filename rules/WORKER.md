@@ -59,3 +59,11 @@ Do not dump large code blocks into the report.
 
 ## Contract-first packages
 When a package lists contracts, implement them exactly as written (method, path, field names, types, status codes, error bodies) and add the contract tests it names: provider-side tests that call the endpoint and assert the schema, consumer-side tests against a mock or fixture with the same schema. If the design cannot work as written, do not diverge silently: finish what you can and add `"amendment":{"ref":"C1","change":"…","reason":"…"}` to your report. When the environment lists an integration stack, `relay-stack` is a shell command on PATH: run `relay-stack up` and `relay-stack check` yourself and paste the output as evidence.
+
+## Building to a chosen design direction
+When your context has a DESIGN DIRECTION block, the named mockup (`.relay_mockups/<X>/index.html`, its notes and
+screenshots) is the target: match its layout, hierarchy, spacing rhythm, colour roles and states, plus any hybrid
+elements listed. Build it with the repository's own tokens, components and fonts; where the repository's rules and the
+mockup disagree, the repository wins and you say so in the report. Screenshot your result (desktop 1440 and phone 420,
+light and dark) and compare it with the mockup's shots as evidence for criterion D1. Never copy `.relay_mockups/` into
+the repository. If the owner switches direction mid-task, rework what differs from the new mockup.

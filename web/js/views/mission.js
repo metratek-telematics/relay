@@ -8,6 +8,7 @@ import { inboxItemHtml, bindInbox } from "./digest.js";
 import { openNewTask } from "./newtask.js";
 import { seedActivity, activity, activityHtml, stepperHtml, teamHtml, repoChips, phases } from "../live.js";
 import { inProject } from "./org/org.js";
+import { mockupThumb } from "./mockups.js";
 
 const RANGES = [["today", "Today"], ["24h", "24 h"], ["3d", "3 days"], ["7d", "7 days"]];
 const HOURS = { "24h": 24, "3d": 72, "7d": 168 };
@@ -131,6 +132,8 @@ export function mountMission(main, tab) {
     const said = activity.get(t.id)?.said;
     const pct = pk.total ? Math.round((pk.done / pk.total) * 100) : 0;
     const p = t.process || {};
+    // While a team explores design directions, the card shows the mockup it is looking at.
+    const thumb = t.checkpoint?.phase === "explore" || t.pending?.kind === "design_pick" ? mockupThumb(t) : null;
     return `<article class="agent-card" data-task="${esc(t.id)}" style="--agent:var(--${esc(p.agent || roleAgent(t, "worker") || "accent")}, var(--accent))">
       <header class="ac-head">
         <span class="live-dot" aria-hidden="true"></span>
@@ -138,6 +141,7 @@ export function mountMission(main, tab) {
         <span class="ac-clock mono" data-elapsed="${esc(t.id)}" title="Elapsed">${fmtSec(taskElapsed(t))}</span>
       </header>
       <div class="ac-meta">${repoChips(t, 2)}${teamHtml(t)}<span class="ac-cost mono" title="Estimated spend so far">${cost ? money(cost) : ""}</span></div>
+      ${thumb ? `<a class="ac-thumb" href="#/task/${esc(t.id)}/mockups" title="Exploring design directions · ${esc(thumb.id)} ${esc(thumb.title)}"><img src="${esc(thumb.url)}" alt="Mockup ${esc(thumb.id)}: ${esc(thumb.title)}" loading="lazy"><span class="ac-thumb-cap">${icon("image", "sm")}Exploring directions · ${esc((t.exploration.directions || []).length)} mockups</span></a>` : ""}
       <div class="ac-activity" data-activity="${esc(t.id)}">${activityHtml(t)}</div>
       ${said ? `<p class="ac-said" data-said="${esc(t.id)}"><span class="av xs ${esc(said.agent || "system")}"></span>${esc(said.text)}</p>` : `<p class="ac-said muted" data-said="${esc(t.id)}">${esc(t.detail || "")}</p>`}
       <footer class="ac-foot">

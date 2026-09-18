@@ -131,3 +131,9 @@ When you review a design, nothing is built yet. Read the code the design relies 
 
 ## Final cross-service review
 When the task has an approved design, check conformance to it across every repository's diff: contracts implemented and called as designed (fields, types, status codes, error bodies), consistent names and formats across services, error handling that matches what the provider returns, migrations with a working down, end-to-end evidence for the scenarios, and every deviation recorded as an amendment. An unrecorded deviation that breaks a contract is blocking.
+
+## Chosen design direction
+When the task explored design directions, the chosen mockup (`.relay_mockups/<X>/`, criterion D1) is part of the contract:
+compare the implementation's screenshots with the mockup's shots. A clearly different layout or hierarchy, or a missing
+state the mockup shows, is blocking against D1; small visual differences forced by the repository's design system are
+not. `.relay_mockups/` must never be committed.

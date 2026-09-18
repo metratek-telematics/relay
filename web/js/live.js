@@ -65,17 +65,19 @@ export function activityHtml(t, { compact = false } = {}) {
 // ---------------------------------------------------------------------------- phases
 // One outline of a task's life used everywhere: Plan → Design → Build → Verify → Review → Deliver.
 const STEP_OF_STATUS = { running: "plan", preparing: "plan", planning: "plan", implementing: "build", verifying: "verify", reviewing: "review", delivering: "deliver" };
-const STEP_OF_PHASE = { kickoff: "plan", design: "design", dialogue: "build", review: "review", deliver: "deliver", done: "done" };
+const STEP_OF_PHASE = { kickoff: "plan", design: "design", explore: "explore", dialogue: "build", review: "review", deliver: "deliver", done: "done" };
 
 export function phases(t) {
   const hasDesign = !!(t.design && (t.design.version || t.design.status)) || t.checkpoint?.phase === "design";
   const hasReview = !!roleAgent(t, "reviewer");
-  const keys = ["plan", ...(hasDesign ? ["design"] : []), "build", "verify", ...(hasReview ? ["review"] : []), "deliver"];
-  const LABEL = { plan: "Plan", design: "Design", build: "Build", verify: "Verify", review: "Review", deliver: "Deliver" };
+  const hasExplore = !!(t.exploration && t.exploration.status && t.exploration.status !== "skipped") || t.checkpoint?.phase === "explore";
+  const keys = ["plan", ...(hasDesign ? ["design"] : []), ...(hasExplore ? ["explore"] : []), "build", "verify", ...(hasReview ? ["review"] : []), "deliver"];
+  const LABEL = { plan: "Plan", design: "Design", explore: "Explore", build: "Build", verify: "Verify", review: "Review", deliver: "Deliver" };
   const failed = ["failed", "stopped", "interrupted"].includes(t.status);
   let cur;
   if (t.status === "done") cur = "done";
   else if (t.checkpoint?.phase === "design" && LIVE.has(t.status)) cur = "design";
+  else if (t.checkpoint?.phase === "explore" && (LIVE.has(t.status) || t.status === "needs_input")) cur = "explore";
   else if (STEP_OF_STATUS[t.status]) cur = STEP_OF_STATUS[t.status];
   else cur = STEP_OF_PHASE[t.checkpoint?.phase] || (t.started_at ? "plan" : null);
   if (cur && !keys.includes(cur) && cur !== "done") cur = cur === "review" ? "verify" : "build";

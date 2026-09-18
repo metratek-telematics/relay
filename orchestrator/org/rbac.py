@@ -45,6 +45,7 @@ RULES: list[tuple[tuple, re.Pattern, str, str]] = [(m, re.compile(rx), r, label)
     (("PATCH",), rf"^/api/tasks/{T}/acceptance$", "member", "edit acceptance criteria"),
     (("POST",), rf"^/api/tasks/{T}/(start|stop|pause|resume|retry|answer|approve|reject|guidance|archive|duplicate|queue|unqueue|move|retro)$", "member", "run and steer tasks"),
     (("POST",), rf"^/api/tasks/{T}/scorecard/refresh$", "member", "refresh a scorecard"),
+    (("POST",), rf"^/api/tasks/{T}/mockups/choose$", "member", "pick a design direction"),
     (("POST",), rf"^/api/tasks/{T}/repos$", "member", "add a repository to a task"),
     (("POST",), rf"^/api/tasks/{T}/open/.+$", "member", "open a task's folder"),
     (("PUT",), rf"^/api/tasks/{T}/repo-file$", "member", "edit files in a task's worktree"),

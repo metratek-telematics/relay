@@ -13,7 +13,7 @@ const SECTIONS = [["workflow", "Team and workflow", "layers"], ["agents", "Agent
 const GROUPS = [["Team", ["workflow", "agents", "tools", "verification", "prompts", "rules"]], ["Automation", ["autopilot", "budget", "tokens", "notifications"]], ["Integrations", ["git", "workspace"]], ["You", ["appearance", "about"]]];
 // Words each section answers to, so the search finds "quiet hours" under Autopilot.
 const KEYWORDS = {
-  workflow: "preset supervisor worker reviewer team max turns review rounds approval questions design step learning retrospective lessons scorecard parallel",
+  workflow: "preset supervisor worker reviewer team max turns review rounds approval questions design step learning retrospective lessons scorecard parallel exploration mockups focus group personas directions",
   agents: "codex claude gemini model effort login account subagent timeout sandbox cli arguments",
   verification: "tests checks commands detect lint build design gate forbidden terms",
   prompts: "templates saved prompts snippets",
@@ -61,7 +61,7 @@ export function mountSettings(main, section) {
     $$("[data-cfg]", body).forEach((i) => {
       const k = i.dataset.cfg;
       const handler = () => {
-        let v = i.type === "checkbox" ? i.checked : i.type === "number" ? Number(i.value) : i.value;
+        let v = i.type === "checkbox" ? i.checked : i.type === "number" || i.dataset.num ? Number(i.value) : i.value;
         if (i.dataset.list) v = v.split("\n").map((x) => x.trim()).filter(Boolean);
         if (i.dataset.args) v = v.trim() ? v.trim().split(/\s+/) : [];
         save({ [k]: v });
@@ -107,6 +107,7 @@ export function mountSettings(main, section) {
             <div class="field"><label>Design document in pull requests</label><select data-cfg="design_doc_mode">${[["commit", "Commit docs/designs/<date>-<slug>.md to the primary repository"], ["comment", "Post it as a comment on the primary pull request"], ["off", "Keep it in Relay only"]].map(([v, l]) => `<option value="${v}" ${(c.design_doc_mode || "commit") === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select><div class="help">Every pull request links it from its Change set section, with the merge order across repositories.</div></div>
           </div>
         </div></div>
+        ${explorationCard(c)}
         ${learningCard(c)}`;
       const wf = { preset: c.workflow_preset, roles: JSON.parse(JSON.stringify(c.roles || {})), max_turns: c.max_turns, max_review_rounds: c.max_review_rounds, verify_mode: c.verify_mode, approval_before_delivery: c.approval_before_delivery, allow_agent_questions: c.allow_agent_questions, verification_commands: c.verification_commands || [], auto_detect_verification: c.auto_detect_verification, design_mode: c.design_mode, design_approval: c.design_approval };
       const persist = debounce((w) => save({ workflow_preset: w.preset, roles: JSON.parse(JSON.stringify(w.roles)), max_turns: w.max_turns, max_review_rounds: w.max_review_rounds, verify_mode: w.verify_mode, approval_before_delivery: w.approval_before_delivery, allow_agent_questions: w.allow_agent_questions, verification_commands: w.verification_commands, auto_detect_verification: w.auto_detect_verification, design_mode: w.design_mode, design_approval: w.design_approval }), 400);
@@ -516,6 +517,25 @@ function autopilotSettings(c) {
         <div class="field"><label>Digest covers (hours)</label><input type="number" min="1" max="168" data-ap="digest_hours" value="${esc(a.digest_hours ?? 24)}"></div>
       </div>
     </div></div>`;
+}
+
+// Design exploration (orchestrator/exploration.py): mockups and an internal focus group before UI work is built.
+function explorationCard(c) {
+  const ask = c.design_ask_when_close === true ? "on" : c.design_ask_when_close === false ? "off" : String(c.design_ask_when_close || "auto");
+  return `<div class="card"><div class="card-head"><h3>Design exploration</h3><span class="badge ${c.design_exploration === "off" ? "" : "green"}">${c.design_exploration === "off" ? "off" : "auto"}</span></div><div class="card-body">
+    <p class="help" style="margin-top:0">For design and layout work, the designer draws 2 or 3 different directions as mockups, Relay renders them (desktop and phone, light and dark), and a panel of personas scores them. Relay builds the winner without asking you; the choice appears on the task's Mockups tab with one click to switch.</p>
+    <div class="grid3">
+      <div class="field"><label for="cfgDx">Explore directions</label><select id="cfgDx" data-cfg="design_exploration">${[["auto", "Auto: design and layout tasks"], ["off", "Off"]].map(([v, l]) => `<option value="${v}" ${(c.design_exploration || "auto") === v ? "selected" : ""}>${l}</option>`).join("")}</select></div>
+      <div class="field"><label for="cfgDn">Directions</label><select id="cfgDn" data-cfg="design_directions" data-num="1">${[2, 3].map((n) => `<option value="${n}" ${Number(c.design_directions || 3) === n ? "selected" : ""}>${n}</option>`).join("")}</select></div>
+      <div class="field"><label for="cfgDm">Focus group cost</label><select id="cfgDm" data-cfg="design_focus_group_mode">${[["full", "Full: one reviewer turn per persona"], ["lean", "Lean: one turn for the whole panel"]].map(([v, l]) => `<option value="${v}" ${(c.design_focus_group_mode || "full") === v ? "selected" : ""}>${l}</option>`).join("")}</select></div>
+    </div>
+    <div class="grid3">
+      <div class="field"><label for="cfgDa">Ask me on a close call</label><select id="cfgDa" data-cfg="design_ask_when_close">${[["auto", "Auto: only when agents may ask freely"], ["on", "Yes, when the top two are close and different"], ["off", "Never: the panel decides"]].map(([v, l]) => `<option value="${v}" ${ask === v ? "selected" : ""}>${l}</option>`).join("")}</select><div class="help">With the default question policy (ask only when blocked), Relay decides and tells you.</div></div>
+      <div class="field"><label for="cfgDc">Close-call margin (points of 10)</label><input id="cfgDc" type="number" min="0" max="5" step="0.1" data-cfg="design_close_margin" value="${esc(c.design_close_margin ?? 0.5)}"></div>
+      <div class="field"><label for="cfgDt">Answer timeout (minutes)</label><input id="cfgDt" type="number" min="0" max="10080" data-cfg="design_pick_timeout_minutes" value="${esc(c.design_pick_timeout_minutes ?? 240)}"><div class="help">After this, Relay builds the panel's pick. 0 waits for you.</div></div>
+    </div>
+    <div class="field"><label for="cfgDp">Personas (one per line, "Name: what they judge")</label><textarea id="cfgDp" data-cfg="design_personas" data-list="1" rows="4">${esc((c.design_personas || []).join("\n"))}</textarea><div class="help"><code>{product}</code> is replaced with the repository's description. Up to 6 personas; each scores clarity, efficiency, accessibility, design-system fit, research fit and feasibility from 1 to 10.</div></div>
+  </div></div>`;
 }
 
 function bindAutopilot(body, c, save, render) {

@@ -219,6 +219,18 @@ function renderConn() {
 onConnection(renderConn);
 
 // ---------------------------------------------------------------------------- notifications
+// A design choice made without asking offers one click to build another direction instead (orchestrator/exploration.py).
+function notifyAction(p) {
+  const pick = (p.actions || []).find((a) => a.direction);
+  if (p.kind === "design_choice" && pick && p.task_id) {
+    return { duration: 20000, action: { label: pick.label || `Use ${pick.direction} instead`, onClick: async () => {
+      try { const r = await api.chooseDirection(p.task_id, pick.direction); toast("success", `Switched to ${pick.direction}`, r.note || "The team gets the new direction at its next turn."); }
+      catch (e) { toast("error", "Could not change the direction", e.message); }
+    } } };
+  }
+  return p.task_id ? { action: { label: "Open", onClick: () => navigate(`#/task/${p.task_id}`) } } : {};
+}
+
 function renderNotifBadge() { const unread = (S.notifications || []).filter((n) => !n.read).length; $("#notifBadge").hidden = !unread; }
 const LEVEL_TONE = { success: "ok", error: "alarm", warning: "warn", info: "info" };
 $("#notifBtn").onclick = () => {
@@ -298,7 +310,7 @@ function onEvent(ev) {
       break;
     }
     case "artifact": if (S.route.id === p.task_id && view) view.update("artifact", p); break;
-    case "notify": S.notifications.unshift(p); S.notifications = S.notifications.slice(0, 100); renderNotifBadge(); toast(p.level, p.title, p.body, p.task_id ? { action: { label: "Open", onClick: () => navigate(`#/task/${p.task_id}`) } } : {}); deliver(p); break;
+    case "notify": S.notifications.unshift(p); S.notifications = S.notifications.slice(0, 100); renderNotifBadge(); toast(p.level, p.title, p.body, notifyAction(p)); deliver(p); break;
     case "github": S.github = { ...S.github, ...p }; view?.update?.("github", p); break;
     case "config": S.config = p; applyTheme(p.ui_theme, p.ui_density); break;
     case "queue": S.queue = { ...S.queue, ...p }; view?.update?.("queue", p); break;

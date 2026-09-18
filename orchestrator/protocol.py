@@ -523,6 +523,12 @@ def nudge(role, types=None) -> str:
     if types and "design" in types:
         return ("ORCHESTRATOR · your last reply did not end with a valid JSON envelope. Do not redo the inspection. "
                 'Reply now with ONLY the {"type":"design",...} envelope inside a fenced ```json block, reflecting the design you worked out.')
+    if types and "mockups" in types:
+        return ("ORCHESTRATOR · your last reply did not end with a valid JSON envelope. Do not redraw anything. Reply now with ONLY "
+                '{"type":"mockups","summary":"…","directions":[{"id":"A","title":"…","idea":"…","optimises_for":"…","differs_by":"…"}]} inside a fenced ```json block.')
+    if types and "focus_review" in types:
+        return ("ORCHESTRATOR · your last reply did not end with a valid JSON envelope. Do not start over. Reply now with ONLY the "
+                '{"type":"focus_review",…} envelope (scores 1 to 10 per criterion and direction, preferred, borrow) inside a fenced ```json block.')
     if types and "review" in types and role != "reviewer":
         role = "reviewer"
     expect = {"supervisor": 'a "plan", "instruction", "decision" or "question" envelope',
