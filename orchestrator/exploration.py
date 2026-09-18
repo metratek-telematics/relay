@@ -276,6 +276,11 @@ def aggregate(reviews: list[dict], letters: str, weights: dict | None = None) ->
     return agg
 
 
+def hybrid_text(h: dict) -> str:
+    """"From B: compact attention cards" (the panel's words are kept; they often name the direction themselves)."""
+    return f"from {h.get('from')}: {str(h.get('what') or '').rstrip('.')}"
+
+
 def hybrid_notes(reviews: list[dict], agg: dict) -> list[dict]:
     """What to borrow into the winner: suggestions from the panel (most frequent first) and clear criterion leads."""
     winner = agg.get("winner")
@@ -291,11 +296,11 @@ def hybrid_notes(reviews: list[dict], agg: dict) -> list[dict]:
             row["votes"] += 1
     out = sorted(counts.values(), key=lambda x: (-x["votes"], x["from"], x["what"]))[:3]
     for t in agg.get("tradeoffs") or []:
-        if len(out) >= 4:
+        if len(out) >= 3:
             break
         what = CRITERION_LABEL[t["criterion"]].lower()
         if not any(o["from"] == t["leader"] and what in o["what"].lower() for o in out):
-            out.append({"from": t["leader"], "what": f"its stronger {what} (+{t['by']:g})", "votes": 0, "auto": True})
+            out.append({"from": t["leader"], "what": f"what makes its {what} stronger (+{t['by']:g} points)", "votes": 0, "auto": True})
     return out
 
 
@@ -630,7 +635,7 @@ def focus_group_md(ex: dict) -> str:
     if ex.get("rationale"):
         lines += [ex["rationale"], ""]
     if ex.get("hybrid"):
-        lines += ["## Hybrid", ""] + [f"- Take {h['from']}'s {h['what']}" for h in ex["hybrid"]] + [""]
+        lines += ["## Hybrid", ""] + [f"- {hybrid_text(h)}" for h in ex["hybrid"]] + [""]
     lines += ["## Scores (mean ± variance across personas)", "", "| Direction | Mean | Variance | " + " | ".join(label for _, label in CRITERIA) + " |",
               "|---|---|---|" + "---|" * len(CRITERIA)]
     for d in dirs:
@@ -665,7 +670,7 @@ def direction_block(ex: dict, wt) -> str:
     if row.get("idea"):
         lines.append(f"- Idea: {row['idea']}")
     for h in ex.get("hybrid") or []:
-        lines.append(f"- Hybrid: also take {h['from']}'s {h['what']} (see {Path(wt) / MOCKUP_DIR / h['from'] if wt else h['from']})")
+        lines.append(f"- Hybrid: {hybrid_text(h)} (see {Path(wt) / MOCKUP_DIR / h['from'] if wt else h['from']})")
     if ex.get("owner_note"):
         lines.append(f"- Owner note: {ex['owner_note']}")
     lines.append("- The mockup is the target for layout, information hierarchy, spacing rhythm, colour roles and states. Build it with the "
@@ -677,7 +682,7 @@ def direction_block(ex: dict, wt) -> str:
 def acceptance_row(ex: dict) -> dict:
     d = ex.get("chosen")
     row = next((x for x in ex.get("directions") or [] if x["id"] == d), {})
-    hyb = "; plus " + "; ".join(f"{h['from']}'s {h['what']}" for h in ex.get("hybrid") or []) if ex.get("hybrid") else ""
+    hyb = "; plus " + "; ".join(hybrid_text(h) for h in ex.get("hybrid") or []) if ex.get("hybrid") else ""
     return {"id": "D1", "criterion": f"The UI matches the chosen design direction {d}" + (f" ({row.get('title')})" if row.get("title") else "")
             + f": layout, hierarchy, colour roles and key states as in {MOCKUP_DIR}/{d}/index.html, built with the repository's tokens{hyb}",
             "how_to_verify": f"screenshot: relay-screenshot the implemented screen at 1440 and 420 wide, light and dark, and compare with {MOCKUP_DIR}/{d}/shots/*.png",
@@ -932,7 +937,7 @@ class ExplorationFlow:
                      f"{agg['directions'][winner]['votes']} of {len(ex.get('reviews') or [])} personas prefer it)"
                      + (f"; {runner} “{titles.get(runner)}” {agg['directions'][runner]['mean']:g}" if runner else "") + ".")
         if agg["hybrid"]:
-            rationale += " Hybrid: take " + "; ".join(f"{h['from']}'s {h['what']}" for h in agg["hybrid"]) + f" into {winner}."
+            rationale += f" Hybrid, borrowed into {winner}: " + "; ".join(hybrid_text(h) for h in agg["hybrid"]) + "."
         ex.update(panel_pick=winner, runner_up=runner, margin=agg["margin"], similarity=sim, close_call=cc, hybrid=agg["hybrid"],
                   rationale=rationale, weights=weights, decision=dec["reason"], status="deciding")
         self.save_exploration(ex)

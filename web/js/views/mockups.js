@@ -64,7 +64,7 @@ export function mountMockups(host, getTask) {
           ${chosenRow ? `<p class="mk-by">${icon(ex.chosen_by?.startsWith("owner") ? "user" : "sparkles", "sm")}<span>Chosen ${esc(BY[ex.chosen_by] || "by the focus group")}${ex.panel_pick && ex.panel_pick !== chosen ? ` · the panel preferred ${esc(ex.panel_pick)}` : ""}</span></p>` : ""}
           ${pending ? `<p class="mk-by">${icon("clock", "sm")}<span>${esc(t.pending.exploration?.reason || "Relay waits for you")}${t.pending.exploration?.timeout_minutes ? `. Without an answer Relay builds ${esc(t.pending.exploration.winner)} after ${esc(Math.round(t.pending.exploration.timeout_minutes))} minutes.` : "."}</span></p>` : ""}
           ${ex.rationale ? `<p class="mk-why">${esc(ex.rationale)}</p>` : ""}
-          ${(ex.hybrid || []).length && chosen ? `<ul class="mk-hybrid" aria-label="Borrowed from other directions">${ex.hybrid.map((h) => `<li>${icon("layers", "sm")}<span>Also take <b>${esc(h.from)}</b>'s ${esc(h.what)}</span></li>`).join("")}</ul>` : ""}
+          ${(ex.hybrid || []).length && chosen ? `<ul class="mk-hybrid" aria-label="Borrowed from other directions">${ex.hybrid.map((h) => `<li>${icon("layers", "sm")}<span>From <b>${esc(h.from)}</b>: ${esc(String(h.what || "").replace(/\.$/, ""))}</span></li>`).join("")}</ul>` : ""}
           ${ex.owner_note ? `<p class="mk-why"><b>Your note:</b> ${esc(ex.owner_note)}</p>` : ""}
         </div>
         <dl class="mk-facts">
@@ -136,7 +136,7 @@ export function mountMockups(host, getTask) {
         ${(n.strengths || []).length ? `<p class="mk-plus"><span>Works</span> ${esc(n.strengths.join("; "))}</p>` : ""}
         ${(n.problems || []).length ? `<p class="mk-minus"><span>Problems</span> ${esc(n.problems.join("; "))}</p>` : ""}</div></li>`;
     }).join("");
-    return `<details class="mk-persona"><summary><span>${esc(rv.persona)}</span><span class="muted">prefers ${esc(rv.preferred || "–")}${(rv.borrow || []).length ? ` · would borrow ${esc(rv.borrow.map((b) => `${b.from}'s ${b.what}`).join("; "))}` : ""}</span></summary><ul>${rows}</ul></details>`;
+    return `<details class="mk-persona"><summary><span>${esc(rv.persona)}</span><span class="muted">prefers ${esc(rv.preferred || "–")}${(rv.borrow || []).length ? ` · would borrow from ${esc(rv.borrow.map((b) => `${b.from}: ${b.what}`).join("; "))}` : ""}</span></summary><ul>${rows}</ul></details>`;
   }
 
   function bind() {
