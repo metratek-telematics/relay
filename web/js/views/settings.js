@@ -8,9 +8,10 @@ import { openShortcuts, keysFor } from "../shortcuts.js";
 import { mountConnectors } from "./connectors.js";
 import { mountTools } from "./tools.js";
 import { mountTokens } from "./tokens.js";
+import { mountProviders } from "./openrouter.js";
 
-const SECTIONS = [["workflow", "Team and workflow", "layers"], ["agents", "Agents and models", "bot"], ["verification", "Verification", "shield"], ["prompts", "Saved prompts", "message"], ["rules", "Rules", "docs"], ["autopilot", "Autopilot", "clock"], ["budget", "Usage and budget", "gauge"], ["notifications", "Notifications", "bell"], ["git", "Git and GitHub", "github"], ["tools", "Agent tools", "package"], ["tokens", "Token efficiency", "gauge"], ["workspace", "Workspace and access", "user"], ["appearance", "Appearance", "sun"], ["about", "About", "info"]];
-const GROUPS = [["Team", ["workflow", "agents", "tools", "verification", "prompts", "rules"]], ["Automation", ["autopilot", "budget", "tokens", "notifications"]], ["Integrations", ["git", "workspace"]], ["You", ["appearance", "about"]]];
+const SECTIONS = [["workflow", "Team and workflow", "layers"], ["agents", "Agents and models", "bot"], ["verification", "Verification", "shield"], ["prompts", "Saved prompts", "message"], ["rules", "Rules", "docs"], ["autopilot", "Autopilot", "clock"], ["budget", "Usage and budget", "gauge"], ["notifications", "Notifications", "bell"], ["git", "Git and GitHub", "github"], ["providers", "Model providers", "layers"], ["tools", "Agent tools", "package"], ["tokens", "Token efficiency", "gauge"], ["workspace", "Workspace and access", "user"], ["appearance", "Appearance", "sun"], ["about", "About", "info"]];
+const GROUPS = [["Team", ["workflow", "agents", "tools", "verification", "prompts", "rules"]], ["Automation", ["autopilot", "budget", "tokens", "notifications"]], ["Integrations", ["providers", "git", "workspace"]], ["You", ["appearance", "about"]]];
 // Words each section answers to, so the search finds "quiet hours" under Autopilot.
 const KEYWORDS = {
   workflow: "preset supervisor worker reviewer team max turns review rounds approval questions design step learning retrospective lessons scorecard parallel exploration mockups focus group personas directions",
@@ -26,6 +27,7 @@ const KEYWORDS = {
   about: "version data folder archive",
   tools: "toolbox mcp servers cli tools requests install catalog",
   tokens: "token efficiency cache prompt size context compression",
+  providers: "openrouter api key provider routing models free credits spend cap fallback privacy data collection zdr",
   workspace: "people roles users projects audit log integrations slack telegram email api tokens usage budgets sso onboarding",
 };
 
@@ -352,6 +354,8 @@ export function mountSettings(main, section) {
       renderPrompts(c);
     } else if (cur === "connectors") {
       mountConnectors(body);
+    } else if (cur === "providers") {
+      mountProviders(body);
     } else if (cur === "tools") {
       mountTools(body);
     } else if (cur === "tokens") {

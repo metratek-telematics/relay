@@ -455,6 +455,11 @@ kbd { font-size: 10px; padding: 1px 5px; border-radius: 4px; background: var(--p
 .ccard strong { display: flex; align-items: center; gap: 8px; color: var(--green); font-size: 14px; }
 .ccard .row { margin-top: 8px; }
 .m-sys { margin: 8px 0 8px 34px; color: var(--text-3); font-size: var(--fs-xs); display: flex; align-items: center; gap: 6px; }
+.m-provider { align-items: flex-start; }
+.m-provider .mp-text { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; min-width: 0; }
+.m-provider .mp-src { font-weight: 600; color: var(--text-2); }
+.m-provider code { overflow-wrap: anywhere; }
+.m-provider .err { color: var(--red); }
 
 .qcard { border: 1px solid color-mix(in srgb, var(--purple) 45%, var(--border)); background: var(--panel); border-radius: var(--r-lg); box-shadow: var(--shadow-2); overflow: hidden; margin: 10px 0 14px; }
 .qcard.pending { box-shadow: 0 0 0 4px var(--purple-soft), var(--shadow-2); }
@@ -1505,3 +1510,34 @@ path.ch-agent.gemini, .sw.ch-agent.gemini { fill: var(--gemini); background: var
 .merge-order .step { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 600; background: var(--accent); color: var(--bg); }
 .nx-design summary { cursor: pointer; font-size: 12.5px; display: inline-flex; gap: 6px; align-items: center; margin: 6px 0; }
 .nx-design-body { max-height: 420px; overflow: auto; border: 1px solid var(--border); border-radius: var(--r-sm); padding: 8px 12px; }
+/* OpenRouter: model browser, provider settings, cost view (views/openrouter.js) */
+.or-auto { border: 1px solid var(--border); border-radius: var(--r); background: var(--panel-2); padding: 10px 12px; margin: 12px 0 4px; }
+.or-picks { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.or-picks li { display: grid; gap: 2px; min-width: 0; }
+.or-picks li.is-cool { opacity: .7; }
+.or-pick-head { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; }
+.or-pick-head code { overflow-wrap: anywhere; min-width: 0; }
+.or-rank { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 99px; background: var(--panel); border: 1px solid var(--border); font-size: 11px; font-weight: 700; color: var(--text-2); flex: none; }
+.or-why { font-size: var(--fs-xs); padding-left: 26px; overflow-wrap: anywhere; }
+.or-filters { gap: 8px 14px; margin: 12px 0 8px; align-items: center; }
+.or-filters label.row { gap: 6px; font-size: var(--fs-sm); }
+.or-filters .search-field { flex: 1 1 180px; min-width: 0; }
+.or-filters select { width: auto; max-width: 100%; }
+.or-models { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.or-turns { overflow-x: auto; }
+.or-turns table { width: 100%; font-size: var(--fs-xs); }
+.or-turns td code { overflow-wrap: anywhere; }
+.or-turns .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.or-caps input { width: 120px; }
+.notice-inline { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border-radius: var(--r); border: 1px solid var(--border); margin-bottom: 12px; font-size: var(--fs-sm); }
+.notice-inline.warn { border-color: var(--amber); background: color-mix(in srgb, var(--amber) 10%, transparent); }
+.notice-inline code { overflow-wrap: anywhere; }
+.acct .err, .acct-notes .err { color: var(--red); }
+.ok-text { color: var(--green); display: inline-flex; gap: 4px; align-items: center; }
+.role-provider { display: flex; gap: 4px; flex-wrap: wrap; margin: 2px 0 6px; }
+.role-provider button { font-size: 11px; padding: 3px 8px; border-radius: 99px; border: 1px solid var(--border); background: var(--panel); color: var(--text-2); cursor: pointer; }
+.role-provider button.active { border-color: var(--accent); color: var(--text); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.role-provider button:disabled { opacity: .5; cursor: not-allowed; }
+.or-model-pick { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.or-model-pick select { flex: 1; min-width: 0; }
+@media (max-width: 640px) { .or-why { padding-left: 0; } .or-filters label.row { flex: 1 1 45%; } }

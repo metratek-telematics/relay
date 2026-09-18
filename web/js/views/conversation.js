@@ -304,6 +304,12 @@ export function renderMessage(m, t, prevInfo) {
     return `<div class="m m-complete" ${idAttr}><div class="ccard"><strong>${icon("check")}Delivered</strong><div class="md" style="margin-top:6px">${md(m.content || "")}</div>
       <div class="row wrap"><button class="btn sm primary" data-open-tab="result">${icon("play")}Try it</button><button class="btn sm" data-follow-up title="Start a new task that builds on this branch">${icon("arrowRight")}Follow up</button>${m.pr_url ? `<a class="btn sm" href="${esc(m.pr_url)}" target="_blank" rel="noopener">${icon("external")}Open pull request</a>` : ""}${m.branch ? `<span class="badge outline">${icon("branch", "sm")}${esc(m.branch)}</span>` : ""}</div></div></div>`;
   }
+  if (k === "provider") {
+    // Which OpenRouter model really answered this turn, and what the turn cost (from OpenRouter, not an estimate).
+    const cost = Number(m.cost_usd || 0);
+    const rot = (m.rotations || []).map((r) => `${r.from} → ${r.to} (${r.status})`).join(", ");
+    return `<div class="m m-sys m-provider" ${idAttr}>${icon("layers", "sm")}<span class="mp-text"><span class="mp-src">OpenRouter</span>${(m.models || []).map((x) => `<code>${esc(x)}</code>`).join(" ")}${m.content && /automatic free pick/.test(m.content) ? '<span class="badge outline">auto free pick</span>' : ""}${rot ? `<span title="Rotated after a rate limit or an unavailable model">switched ${esc(rot)}</span>` : ""}<span>${m.requests ? `${m.requests} request${m.requests === 1 ? "" : "s"} · ` : ""}${cost ? `$${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}` : "$0"}${m.cost_exact === false ? " (estimated)" : ""}</span>${m.error ? `<span class="err">${esc(m.error)}</span>` : ""}</span></div>`;
+  }
   if (k === "file_edit") {
     return `<div class="m m-sys" ${idAttr}>${icon("edit", "sm")} You edited <code>${esc(m.content)}</code> in the worktree</div>`;
   }

@@ -614,13 +614,28 @@ export function mountInspector(container, getTask, opts = {}) {
     const m = t.metrics || {};
     const roles = ["supervisor", "worker", "reviewer"];
     const ma = m.agents || {};
+    // Turns that ran on OpenRouter: the model that actually answered each one and its cost as OpenRouter reported it.
+    const orTurns = (m.log || []).filter((x) => x.provider === "openrouter");
+    const orTotal = orTurns.reduce((a, x) => a + Number(x.cost_usd || 0), 0);
+    const orModels = {};
+    for (const x of orTurns) for (const [id, c] of Object.entries(x.or_model_costs || { [x.model || "?"]: x.cost_usd || 0 })) {
+      const e = (orModels[id] = orModels[id] || { cost: 0, turns: 0 }); e.cost += Number(c || 0); e.turns += 1;
+    }
+    const orCard = orTurns.length ? `<div class="card" id="orSpend"><div class="card-head"><h3>${icon("layers", "sm")} OpenRouter spend</h3><span class="mono"><b>${fmtCost(orTotal, orTurns.some((x) => x.estimated))}</b> · ${orTurns.length} turn${orTurns.length === 1 ? "" : "s"} · ${orTurns.reduce((a, x) => a + (x.or_requests || 0), 0)} requests</span></div><div class="card-body stack">
+        <div class="or-models">${Object.entries(orModels).sort((a, b) => b[1].cost - a[1].cost).map(([id, e]) => `<span class="acct-item"><span class="muted">${esc(id)}</span><strong>${fmtCost(e.cost)}</strong></span>`).join("")}</div>
+        <div class="md-table or-turns"><table><thead><tr><th>Turn</th><th>Role</th><th>Agent</th><th>Model that answered</th><th class="num">Requests</th><th class="num">Tokens in / out</th><th class="num">Cost</th></tr></thead><tbody>
+          ${orTurns.slice(-40).map((x) => `<tr><td class="muted">${esc(fmtTime(new Date(x.end * 1000).toISOString()))}</td><td>${esc(ROLE_LABEL[x.role] || x.role)}</td><td>${esc(agentLabel(x.agent))}</td><td><code>${esc((x.or_models || [x.model]).join(", "))}</code>${x.or_auto ? ' <span class="badge outline">auto free</span>' : ""}${x.or_error ? ` <span class="badge red" title="OpenRouter answered ${esc(x.or_status || "")}">${esc(x.or_status || "error")}</span>` : ""}</td><td class="num">${x.or_requests || 0}</td><td class="num">${fmtNum(x.input)} / ${fmtNum(x.output)}</td><td class="num" title="${x.estimated ? "Estimated from the catalog price" : "As OpenRouter reported it"}">${fmtCost(x.cost_usd, x.estimated)}</td></tr>`).join("")}
+        </tbody></table></div>
+        <div class="hint">Costs come from OpenRouter's own usage report for each request (free models cost $0). A ~ marks a turn priced from the catalog because OpenRouter did not report it.</div>
+      </div></div>` : "";
     body.innerHTML = `<div class="stack">
+      ${orCard}
       <div class="card"><div class="card-head"><h3>Spend by agent</h3><span class="muted" style="font-size:11px">~ = estimated at API-equivalent rates</span></div><div class="card-body stack">
         ${Object.keys(ma).length ? Object.entries(ma).map(([a, d]) => `<div class="row between"><span class="row"><span class="av sm ${esc(a)}">${esc(agentInitial(a))}</span><strong>${esc(agentLabel(a))}</strong><span class="muted">${d.turns} turn${d.turns === 1 ? "" : "s"}</span></span><span class="mono">${fmtNum(d.input)} in · ${fmtNum(d.cached || 0)} cached · ${fmtNum(d.output)} out · <b>${fmtCost(d.cost_usd, d.estimated)}</b></span></div>`).join("") : '<div class="empty small">No turns yet.</div>'}
         <div class="hint">Claude Code reports real cost. Codex and Gemini report tokens only, so their spend is estimated from the pricing table in Settings → Agents. With subscription plans none of this is billed per token; use it for comparison and budgeting.</div>
       </div></div>
       ${roles.filter((r) => roleAgent(t, r)).map((r) => { const s = sess[r] || {}; const a = roleAgent(t, r); const mr = (m.roles || {})[r] || {}; return `<div class="sess">
-        <div class="row between"><span class="row"><span class="av sm ${esc(a)}">${esc(agentInitial(a))}</span><strong>${esc(ROLE_LABEL[r])}</strong><span class="muted">${esc(agentLabel(a))}${s.model ? ` · ${esc(s.model)}` : ""}</span></span><span class="badge ${s.id ? "green" : ""}">${s.id ? `${s.turns || 0} turn${s.turns === 1 ? "" : "s"}` : "no session"}</span></div>
+        <div class="row between"><span class="row"><span class="av sm ${esc(a)}">${esc(agentInitial(a))}</span><strong>${esc(ROLE_LABEL[r])}</strong><span class="muted">${esc(agentLabel(a))}${((t.workflow || {}).roles || {})[r]?.provider === "openrouter" ? " on OpenRouter" : ""}${s.model ? ` · ${esc(s.model)}` : ""}${s.or_model && s.or_model !== s.model ? ` · auto free pick ${esc(s.or_model)}` : ""}</span></span><span class="badge ${s.id ? "green" : ""}">${s.id ? `${s.turns || 0} turn${s.turns === 1 ? "" : "s"}` : "no session"}</span></div>
         ${s.id ? `<div class="sid"><span class="muted">session</span><code>${esc(s.id)}</code><button title="Copy" data-copy="${esc(s.id)}">${icon("copy", "sm")}</button></div>` : '<div class="muted" style="font-size:11px">Starts when this role first runs. Sessions persist, so the agent remembers the whole task.</div>'}
         <div class="stat-row"><div class="stat"><b>${fmtNum(mr.input || 0)}</b><span>input tok</span></div><div class="stat"><b>${fmtNum(mr.output || 0)}</b><span>output tok</span></div><div class="stat"><b>${fmtCost(mr.cost_usd, mr.estimated)}</b><span>${mr.estimated ? "est. cost" : "cost"}</span></div><div class="stat"><b>${fmtDur(mr.seconds || 0)}</b><span>time</span></div><div class="stat"><b>${mr.tool_calls || 0}</b><span>tool calls</span></div></div>
       </div>`; }).join("")}

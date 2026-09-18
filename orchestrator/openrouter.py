@@ -236,8 +236,8 @@ def public(s: dict | None = None) -> dict:
     envk, src = env_key()
     s["has_api_key"] = own or bool(envk)
     s["key_source"] = "settings" if own else src
+    s["key_hint"] = _key_hint(s["api_key"] if own else envk)
     s["api_key"] = MASK if own else ""
-    s["key_hint"] = _key_hint(api_key(s) if own else envk)
     s["base_url"] = base_url() if base_overridden() else ""
     return s
 

@@ -145,7 +145,7 @@ def _fence(obj) -> str:
 
 def _final_text(role: str, last: str) -> str:
     if role == "supervisor":
-        if re.search(r"REPORT FROM WORKER|REVIEW FROM REVIEWER|done was NOT accepted|did not end with a valid JSON|ANSWER FROM", last):
+        if "You are the SUPERVISOR" not in last:  # anything after the kickoff: a report, a review, a nudge
             return "The file is in place and matches the request.\n\n" + _fence({
                 "type": "decision", "decision": "done", "summary": f"{FILE} created",
                 "criteria": [{"id": "A1", "status": "met", "evidence": f"`test -f {FILE}` → exit 0; file:1 reads '# Hello from OpenRouter'"}],

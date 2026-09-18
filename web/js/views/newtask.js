@@ -5,6 +5,7 @@ import { api } from "../api.js";
 import { connectorPicker } from "./connectors.js";
 import { mountTaskTools } from "./tools.js";
 import { mountTeamAdvice, mountRiskCheck } from "./advice.js";
+import { AUTO_FREE, orLabel, orSupported, openOpenRouterBrowser } from "./openrouter.js";
 
 export function workflowEditor(host, wf, { agents, presets, showAdvanced = true, perTask = false, onChange }) {
   const health = S.agents || {};
@@ -21,10 +22,27 @@ export function workflowEditor(host, wf, { agents, presets, showAdvanced = true,
         <div class="agent-pick">${Object.keys(agents).filter((a) => agents[a].builtin || health[a]?.installed || cur.agent === a).map((a) => `<button type="button" data-role="${r}" data-agent="${a}" class="${cur.agent === a ? "active" : ""}" style="--agent:${esc(agents[a].color)}" title="${esc(health[a]?.ok ? "ready" : (health[a]?.error || "not ready"))}"><span class="av sm ${a}">${esc(agentInitial(a))}</span>${esc(agents[a].label)}${health[a] && !health[a].ok ? ' <span class="muted">!</span>' : ""}</button>`).join("")}${r === "reviewer" ? `<button type="button" data-role="reviewer" data-agent="" class="${!cur.agent ? "active" : ""}">none</button>` : ""}</div>
         ${(() => {
           if (!cur.agent) return '<div class="muted" style="font-size:11px">No agent in this role.</div>';
+          const onOR = cur.provider === "openrouter";
+          const orOk = orSupported(cur.agent);
+          const why = ((S.agentMeta[cur.agent] || {}).openrouter || {}).why || "";
+          const provider = `<label class="rl">Runs on</label><div class="role-provider" role="group" aria-label="${esc(r)} runs on">
+            <button type="button" data-prov-role="${r}" data-prov="" class="${onOR ? "" : "active"}" aria-pressed="${!onOR}">${esc(agentLabel(cur.agent))} sign-in</button>
+            <button type="button" data-prov-role="${r}" data-prov="openrouter" class="${onOR ? "active" : ""}" aria-pressed="${onOR}" ${orOk ? "" : `disabled title="${esc(why)}"`}>OpenRouter</button></div>`;
+          const efforts = (S.agentMeta[cur.agent] || {}).efforts || [];
+          if (onOR) {
+            const def = ((S.providers || {}).openrouter || {}).default_model || AUTO_FREE;
+            const catalog = [...new Set([AUTO_FREE, ...((S.config.models || {}).openrouter || []), ...((S.config.model_recent || {}).openrouter || [])])];
+            const custom = cur.model && !catalog.includes(cur.model);
+            return `${provider}<label class="rl">OpenRouter model</label>
+            <div class="or-model-pick"><select data-model-sel="${r}" aria-label="OpenRouter model for the ${esc(r)}"><option value="">OpenRouter default (${esc(orLabel(def))})</option>${catalog.map((m) => `<option value="${esc(m)}" ${cur.model === m ? "selected" : ""}>${esc(orLabel(m))}</option>`).join("")}<option value="__custom__" ${custom ? "selected" : ""}>Custom…</option></select>
+              <button type="button" class="btn xs" data-or-browse="${r}" title="Browse OpenRouter models">${icon("layers", "sm")}Browse</button></div>
+            <input data-model="${r}" placeholder="OpenRouter model id, e.g. anthropic/claude-sonnet-4.5" value="${esc(custom ? cur.model : "")}" ${custom ? "" : "hidden"}>
+            <label class="rl">Reasoning effort</label>
+            ${efforts.length ? `<select data-effort="${r}"><option value="">CLI default</option>${efforts.map((e) => `<option value="${e}" ${cur.effort === e ? "selected" : ""}>${e}</option>`).join("")}</select>` : '<select disabled><option>not supported by this CLI</option></select>'}`;
+          }
           const catalog = [...new Set([...((S.config.models || {})[cur.agent] || []), ...((S.config.model_recent || {})[cur.agent] || [])])];
           const custom = cur.model && !catalog.includes(cur.model);
-          const efforts = (S.agentMeta[cur.agent] || {}).efforts || [];
-          return `<label class="rl">Model</label>
+          return `${provider}<label class="rl">Model</label>
           <select data-model-sel="${r}"><option value="">${esc(defaultModelLabel(cur.agent))}</option>${catalog.map((m) => `<option value="${esc(m)}" ${cur.model === m ? "selected" : ""}>${esc(m)}</option>`).join("")}<option value="__custom__" ${custom ? "selected" : ""}>Custom…</option></select>
           <input data-model="${r}" placeholder="exact model id passed to the CLI" value="${esc(custom ? cur.model : "")}" ${custom ? "" : "hidden"}>
           <label class="rl">Reasoning effort</label>
@@ -49,10 +67,27 @@ export function workflowEditor(host, wf, { agents, presets, showAdvanced = true,
     $$("[data-preset]", host).forEach((b) => (b.onclick = () => {
       wf.preset = b.dataset.preset;
       const p = presets.find((x) => x.id === wf.preset);
-      if (p) for (const r of roles) wf.roles[r] = { agent: p.roles[r]?.agent || "", model: "", effort: "" };
+      if (p) for (const r of roles) wf.roles[r] = { agent: p.roles[r]?.agent || "", model: "", effort: "", provider: "" };
       draw(); onChange && onChange(wf);
     }));
-    $$("[data-role][data-agent]", host).forEach((b) => (b.onclick = () => { const same = wf.roles[b.dataset.role]?.agent === b.dataset.agent; wf.roles[b.dataset.role] = { agent: b.dataset.agent, model: same ? (wf.roles[b.dataset.role]?.model || "") : "", effort: same ? (wf.roles[b.dataset.role]?.effort || "") : "" }; wf.preset = "custom"; draw(); onChange && onChange(wf); }));
+    $$("[data-role][data-agent]", host).forEach((b) => (b.onclick = () => {
+      const prev = wf.roles[b.dataset.role] || {};
+      const same = prev.agent === b.dataset.agent;
+      // Moving a role to another agent keeps it on OpenRouter (same model) when the new agent can run there.
+      const keepOR = prev.provider === "openrouter" && orSupported(b.dataset.agent);
+      wf.roles[b.dataset.role] = { agent: b.dataset.agent, model: same || keepOR ? (prev.model || "") : "", effort: same ? (prev.effort || "") : "", provider: same || keepOR ? (prev.provider || "") : "" };
+      wf.preset = "custom"; draw(); onChange && onChange(wf);
+    }));
+    $$("[data-prov-role]", host).forEach((b) => (b.onclick = () => {
+      const r = b.dataset.provRole, cur = wf.roles[r] || {};
+      if ((cur.provider || "") === b.dataset.prov) return;
+      wf.roles[r] = { ...cur, provider: b.dataset.prov, model: "" };  // model ids differ between a CLI's own login and OpenRouter
+      draw(); onChange && onChange(wf);
+    }));
+    $$("[data-or-browse]", host).forEach((b) => (b.onclick = () => {
+      const r = b.dataset.orBrowse;
+      openOpenRouterBrowser({ pick: true, current: wf.roles[r]?.model || "", onPick: (id) => { wf.roles[r] = { ...wf.roles[r], model: id }; draw(); onChange && onChange(wf); } });
+    }));
     $$("[data-model-sel]", host).forEach((s) => s.addEventListener("change", () => {
       const r = s.dataset.modelSel;
       const input = host.querySelector(`[data-model="${r}"]`);
@@ -77,7 +112,11 @@ export function defaultWorkflow() {
   const cfg = S.config || {};
   const p = (S.presets || []).find((x) => x.id === cfg.workflow_preset);
   const roles = {};
-  for (const r of ["supervisor", "worker", "reviewer"]) roles[r] = { agent: p ? (p.roles[r]?.agent || "") : (cfg.roles?.[r]?.agent || ""), model: cfg.roles?.[r]?.model || "", effort: cfg.roles?.[r]?.effort || "" };
+  for (const r of ["supervisor", "worker", "reviewer"]) {
+    const agent = p ? (p.roles[r]?.agent || "") : (cfg.roles?.[r]?.agent || "");
+    const same = (cfg.roles?.[r]?.agent || "") === agent;
+    roles[r] = { agent, model: cfg.roles?.[r]?.model || "", effort: cfg.roles?.[r]?.effort || "", provider: same ? (cfg.roles?.[r]?.provider || "") : "" };
+  }
   return { preset: cfg.workflow_preset || "custom", roles, max_turns: cfg.max_turns || 12, max_review_rounds: cfg.max_review_rounds || 3, verify_mode: cfg.verify_mode || "each_report",
     approval_before_delivery: !!cfg.approval_before_delivery, allow_agent_questions: cfg.allow_agent_questions !== false, design_mode: cfg.design_mode || "auto", design_approval: cfg.design_approval || "auto", show_mockups: false, verification_commands: [], auto_detect_verification: cfg.auto_detect_verification !== false };
 }
@@ -316,14 +355,16 @@ export function openNewTask(prefill = {}) {
     } else {
       const r = data.workflow.roles;
       const h = S.agents || {};
-      const warn = ["supervisor", "worker", "reviewer"].filter((x) => r[x].agent && h[r[x].agent] && !h[r[x].agent].ok).map((x) => `${agentLabel(r[x].agent)} (${x}) is not ready: ${h[r[x].agent].error || "check Agents page"}`);
+      const onOR = (x) => r[x].provider === "openrouter";
+      const warn = ["supervisor", "worker", "reviewer"].filter((x) => r[x].agent && h[r[x].agent] && (onOR(x) ? !h[r[x].agent].installed : !h[r[x].agent].ok)).map((x) => `${agentLabel(r[x].agent)} (${x}) is not ready: ${onOR(x) ? "not installed" : h[r[x].agent].error || "check Agents page"}`);
+      if (["supervisor", "worker", "reviewer"].some((x) => r[x].agent && onOR(x)) && !((S.providers || {}).openrouter || {}).configured) warn.push("OpenRouter has no API key yet: an admin adds one in Settings → Providers.");
       body.innerHTML = `<h2>${edit ? "Save changes" : "Ready to launch"}</h2>
         <div class="summary-box">
           <div><b>Repository</b>${esc(data.repo)}</div>
           ${checkedRelated().length ? `<div><b>Also changes</b>${checkedRelated().map((r) => esc(r.name)).join(", ")} <span class="muted">(same branch in each, one pull request per repository)</span></div>` : ""}
           ${parent ? `<div><b>Follows up</b>${esc(parent.name)}</div>` : ""}
           <div><b>Request</b>${esc((data.requirements || `Issue #${data.issue}`).slice(0, 400))}${data.requirements.length > 400 ? "…" : ""}</div>
-          <div><b>Team</b>${["supervisor", "worker", "reviewer"].filter((x) => r[x].agent).map((x) => `${esc(agentLabel(r[x].agent))} (${x}${r[x].model ? `, ${esc(r[x].model)}` : ", CLI default model"}${r[x].effort ? `, ${esc(r[x].effort)} effort` : ""})`).join(" · ")}</div>
+          <div><b>Team</b>${["supervisor", "worker", "reviewer"].filter((x) => r[x].agent).map((x) => `${esc(agentLabel(r[x].agent))}${onOR(x) ? " via OpenRouter" : ""} (${x}${onOR(x) ? `, ${esc(orLabel(r[x].model || ((S.providers || {}).openrouter || {}).default_model || AUTO_FREE))}` : r[x].model ? `, ${esc(r[x].model)}` : ", CLI default model"}${r[x].effort ? `, ${esc(r[x].effort)} effort` : ""})`).join(" · ")}</div>
           <div><b>Budget</b>${data.workflow.max_turns} work packages · ${data.workflow.max_review_rounds} review rounds · verification ${esc(data.workflow.verify_mode)}${data.workflow.approval_before_delivery ? " · approval gate on" : ""}</div>
           <div><b>Design first</b>${esc({ auto: "auto", always: "always", never: "never" }[data.workflow.design_mode || "auto"])}${checkedRelated().length && (data.workflow.design_mode || "auto") === "auto" ? " · this multi-repository task gets a reviewed design before implementation" : ""} · design approval ${esc(data.workflow.design_approval || "auto")}</div>
           <div><b>Delivery</b>isolated branch → ${S.config.github_auto_create_pr ? "draft PR" : "branch only"} (never merges)</div>

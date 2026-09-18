@@ -105,7 +105,9 @@ def plan(agent: str, model: str, conn: dict, run_dir, role: str, cfg: dict, env_
         data = _state(run_dir, f"cline-openrouter-{slug}")
         providers = {"version": 1, "lastUsedProvider": "openai-compatible", "modes": {},
                      "providers": {"openai-compatible": {"settings": {"provider": "openai-compatible", "apiKey": tok, "model": model,
-                                                                      "baseUrl": base}, "tokenSource": "manual"}}}
+                                                                      "baseUrl": base}, "tokenSource": "manual",
+                                                         # Without updatedAt Cline ignores the entry and falls back to api.openai.com.
+                                                         "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())}}}
         f = _private(data / "settings" / "providers.json", json.dumps(providers, indent=2))
         out["cleanup"].append(str(f))
         env["CLINE_DATA_DIR"] = str(data)
