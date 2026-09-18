@@ -371,14 +371,16 @@ def plan_capacity(roles: dict, state_of, settings: dict) -> dict:
     action = settings.get("limit_action") or "fallback"
     _state = state_of
 
+    import inspect
+    try:
+        _params = inspect.signature(_state).parameters
+        _arity = 9 if any(p.kind == p.VAR_POSITIONAL for p in _params.values()) else len(_params)
+    except (TypeError, ValueError):
+        _arity = 4
+
     def state_of(agent, model, role, provider=""):  # older callers take (agent, model[, role]) only
-        try:
-            return _state(agent, model, role, provider)
-        except TypeError:
-            try:
-                return _state(agent, model, role)
-            except TypeError:
-                return _state(agent, model)
+        return (_state(agent, model, role, provider) if _arity >= 4 else _state(agent, model, role) if _arity == 3
+                else _state(agent, model))
     new_roles = {r: dict(v or {}) for r, v in (roles or {}).items()}
     switches, blocked = [], []
     for role in C.ROLES:

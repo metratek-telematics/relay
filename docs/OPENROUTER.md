@@ -12,12 +12,16 @@ team can be "OpenCode on `qwen/qwen3-coder`", "Claude Code on `anthropic/claude-
 2. In Relay, open **Settings → Model providers** (admins only) and paste the key. **Test** calls OpenRouter's
    `/api/v1/key` and `/api/v1/credits` and shows the limit, the usage, the tier (free or paid), today's free requests
    and the credits left. The key is stored in the organisation settings on this server (file mode 0600), is masked in
-   every response and in the audit log, and is never given to an agent (see *How agents connect*).
+   every response and in the audit log, and is never handed to an agent process (see *How agents connect*). Like
+   Relay's other secrets it lives in Relay's data folder, so an agent running as the same user could in principle read
+   that file; a per-key credit limit on openrouter.ai caps the damage either way.
 3. In a team (New task → Team, or Settings → Team and workflow), pick an agent for a role and set **Runs on →
    OpenRouter**. Choose a model from the list, **Browse** the OpenRouter catalog, or keep **Auto · best free model**.
 
 A deployment can provide the key instead of the settings page: `RELAY_OPENROUTER_API_KEY`, or
-`RELAY_OPENROUTER_API_KEY_FILE` pointing at a file (for Docker secrets). A key saved in the settings wins.
+`RELAY_OPENROUTER_API_KEY_FILE` pointing at a file (for Docker secrets). A key saved in the settings wins. Relay reads
+these once at start and removes them from its own environment, so agents and checks, which inherit that environment,
+never see them.
 
 ## Which agents can run on OpenRouter
 
@@ -58,7 +62,11 @@ of them:
   retried by the same turn, and at most six switches happen per turn;
 - side calls a CLI makes on its own (titles, summaries, "small fast" models) stay on the role's model, so a turn never
   spends on a model nobody chose;
-- the spend caps: a request that would pass one is refused with a `402` that says which cap;
+- fields that pick models or paid add-ons (`models`, `route`, `plugins`, `transforms`, `preset`) are removed from
+  what an agent sends: only Relay chooses the model;
+- the spend caps: a request that would pass one is refused with a `402` that says which cap. Every request is charged
+  to a monthly ledger as soon as it completes, so stopped, interrupted or timed-out turns, retrospectives, agent tests
+  and later-deleted tasks all count;
 - the real cost of every request (see *Cost*).
 
 **Directly.** The CLI gets the key in its environment and talks to OpenRouter itself. Routing preferences then only
@@ -108,7 +116,8 @@ the number of requests and any error, so spend can be read per role, agent, task
 
 ### Caps and alerts
 
-- **Monthly cap, all projects** and **per project** (Settings → Model providers). At a cap, paid OpenRouter models stop:
+- **Monthly cap, all projects** and **per project** (Settings → Model providers; only owners change caps, like other
+  budgets). At a cap, paid OpenRouter models stop:
   the gateway refuses paid requests and autopilot does not start tasks whose roles need them (it switches to a fallback
   agent or waits for the month to turn). Free models keep working.
 - **Low credits**: one notification a day when the credits left fall below the threshold (only for accounts that have

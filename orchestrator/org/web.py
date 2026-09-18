@@ -1094,6 +1094,11 @@ def provider_openrouter_put():
     if not isinstance(b, dict):
         return jsonify({"error": "Send the OpenRouter settings as an object."}), 400
     b.pop("has_api_key", None), b.pop("key_source", None), b.pop("key_hint", None), b.pop("base_url", None)
+    cur = OR.settings()
+    if (("monthly_cap_usd" in b and float(b.get("monthly_cap_usd") or 0) != float(cur.get("monthly_cap_usd") or 0))
+            or ("project_caps" in b and (b.get("project_caps") or {}) != (cur.get("project_caps") or {}))) \
+            and rbac.level(role_now()) < rbac.level("owner"):
+        return jsonify({"error": "Spend caps are budgets: only an owner can change them."}), 403
     if b.get("api_key") not in (None, MASK) and b.get("api_key") and not re.match(r"^sk-or-[\w-]{10,}$", str(b["api_key"]).strip()):
         return jsonify({"error": "That does not look like an OpenRouter key (they start with sk-or-)."}), 400
     try:

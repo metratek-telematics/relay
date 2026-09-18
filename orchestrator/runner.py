@@ -296,6 +296,16 @@ class Runner:
 
     # ------------------------------------------------------------------ agent turn
     def run_agent(self, role, agent_name, prompt, cwd, cfg, model, session, run_dir, label="", turn=None, effort="") -> dict:
+        holder: dict = {}
+        try:
+            return self._run_agent(role, agent_name, prompt, cwd, cfg, model, session, run_dir, label, turn, effort, holder)
+        except BaseException as e:
+            if holder.get("orp") is not None:
+                # Stopped, interrupted, timed out or crashed mid-turn: what the turn spent on OpenRouter is still recorded.
+                self._openrouter_abort(holder["orp"], role, agent_name, turn, holder.get("t0"), e)
+            raise
+
+    def _run_agent(self, role, agent_name, prompt, cwd, cfg, model, session, run_dir, label, turn, effort, holder) -> dict:
         self.wait_if_paused()
         self.check_stop()
         ad = adapter(agent_name)
@@ -311,6 +321,7 @@ class Runner:
         orp = None
         if (cfg.get("_provider") or "") == "openrouter":
             orp = self._openrouter_begin(role, agent_name, model, cfg, run_dir, session, ad)
+            holder.update(orp=orp, t0=time.time())
             cfg, model = orp.cfg, orp.model_arg
         args, env, stdin_text, session = ad.build(sent_prompt, Path(cwd), cfg, model, session, Path(run_dir), role, effort=effort or "")
         if orp is not None:
@@ -411,16 +422,12 @@ class Runner:
 
         timeout = float(cfg.get("agent_turn_timeout_minutes") or 0) * 60 or None
         self.m.turn_started(self.tid, role, agent_name, label, turn)
-        try:
-            rc, elapsed = self._spawn(args, cwd, env, stdin_text, on_line, timeout, role, agent_name, label)
-        except BaseException:
-            if orp is not None:
-                self._openrouter_abort(orp)
-            raise
+        rc, elapsed = self._spawn(args, cwd, env, stdin_text, on_line, timeout, role, agent_name, label)
         flush_delta(final=delta_msg["buf"]) if delta_msg["id"] else None
         res = ad.finalize(ctx, rc, Path(run_dir), session)
         or_info = None
         if orp is not None:
+            holder.pop("orp", None)
             or_info = self._openrouter_end(orp, res, role, agent_name, turn)
         if res.get("tools") and not tool_msgs:
             # CLIs that only report their tool calls after the turn (Crush, Continue): show them anyway.
@@ -489,13 +496,17 @@ class Runner:
             self.msg(role=role, agent=agent_name, kind="notice", content=note)
         return orp
 
-    def _openrouter_abort(self, orp):
+    def _openrouter_abort(self, orp, role, agent_name, turn, t0, exc):
+        """Close the gateway session of a turn that did not finish, and record what it spent and which models ran."""
+        from . import openrouter_launch as ORL
         try:
-            if orp.gateway is not None:
-                from . import openrouter_proxy as GW
-                GW.close_turn(orp.gateway.token, wait=2, resolve_costs=False)
-        except Exception:
-            pass
+            usage = {"input": 0, "output": 0, "cached": 0, "cost_usd": 0.0}
+            info = ORL.end_turn(orp, {"ok": False, "error": str(exc) or type(exc).__name__}, usage)
+            extra = ORL.log_extra(info, usage)
+            extra["or_error"] = True
+            self.m.metrics_add(self.tid, agent_name, role, usage, time.time() - (t0 or time.time()), 0, turn, extra=extra)
+        except Exception as e:
+            self.rawlog(f"openrouter accounting after an unfinished turn: {e}", "system")
 
     def _openrouter_end(self, orp, res, role, agent_name, turn):
         from . import openrouter_launch as ORL

@@ -202,7 +202,8 @@ class CapacityTest(unittest.TestCase):
 
     def test_monthly_cap(self):
         s = OR.settings({"api_key": "sk-or-v1-x", "monthly_cap_usd": 1.0})
-        tasks = [{"id": "t1", "metrics": {"log": [{"provider": "openrouter", "end": time.time(), "cost_usd": 1.5, "role": "worker", "agent": "opencode"}]}}]
+        OR.ledger_add(1.5, "t1", None, "worker", "opencode", "paid/model")
+        tasks = []
         st = OR.capacity_state("paid/model", None, tasks, self.acc(), s)
         self.assertEqual(st["kind"], "budget")
         self.assertTrue(OR.capacity_state("x/y:free", None, tasks, self.acc(), s)["ok"])  # free models keep working
@@ -410,10 +411,49 @@ class GatewayTest(unittest.TestCase):
         self.assertEqual(tally["last_error"]["status"], 402)
         self.assertIn("out of credits", tally["last_error"]["message"])
 
+    def test_key_leaves_the_environment(self):
+        self.assertNotIn("RELAY_OPENROUTER_API_KEY", os.environ)  # agents and checks inherit os.environ
+        self.assertNotIn("RELAY_OPENROUTER_BASE_URL", os.environ)
+        self.assertEqual(OR.env_key(), (KEY, "environment"))
+
+    def test_agents_cannot_pick_models_or_paid_plugins(self):
+        t = GW.open_turn("task1", None, "worker", "opencode", "qwen/qwen3-coder:free")
+        st, _ = call_gateway(t.token, "/api/v1/chat/completions", {"model": "x", "models": ["openai/o1-pro"], "plugins": [{"id": "web"}],
+                                                                   "route": "fallback", "messages": [{"role": "user", "content": "hi"}]})
+        self.assertEqual(st, 200)
+        GW.close_turn(t.token)
+        log = mock_log()[-1]
+        self.assertEqual((log["model"], log["models"]), ("qwen/qwen3-coder:free", None))
+
+    def test_get_paths_are_strict(self):
+        t = GW.open_turn("task1", None, "worker", "opencode", "a/b")
+        port = GW.ensure_started()
+        for path in ("/api/v1/models/../key", "/api/v1/models/..%2fcredits", "/api/v1/credits"):
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+            c.request("GET", path, headers={"Authorization": f"Bearer {t.token}"})
+            r = c.getresponse()
+            r.read()
+            self.assertEqual(r.status, 404, path)
+        GW.close_turn(t.token)
+
+    def test_charges_reach_the_ledger_even_when_the_turn_is_never_closed(self):
+        before = OR.ledger_spend(OR._month_start())
+        t = GW.open_turn("task-ledger", "proj-x", "worker", "opencode", "anthropic/claude-sonnet-4.5")
+        call_gateway(t.token, "/api/v1/chat/completions", {"model": "x", "messages": [{"role": "user", "content": "hi"}]}, stream=True)
+        for _ in range(50):  # the gateway charges right after the last chunk
+            if OR.ledger_spend(OR._month_start()) > before:
+                break
+            time.sleep(0.02)
+        self.assertGreater(OR.ledger_spend(OR._month_start()), before)
+        self.assertGreater(OR.ledger_spend(OR._month_start(), "proj-x"), 0)
+        GW.close_turn(t.token)
+
     def test_spend_cap_refuses_paid_requests(self):
         from orchestrator.org import settings as OS
-        OS.save({"providers": {"openrouter": {"monthly_cap_usd": 0.5}}})
-        GW.TASKS_FN = lambda: [{"id": "t", "metrics": {"log": [{"provider": "openrouter", "end": time.time(), "cost_usd": 0.6}]}}]
+        spent = OR.ledger_spend(OR._month_start())
+        OS.save({"providers": {"openrouter": {"monthly_cap_usd": round(spent + 0.5, 4)}}})
+        OR.ledger_add(0.6, "t", None, "worker", "opencode", "paid/x")
+        GW.TASKS_FN = lambda: []
         try:
             t = GW.open_turn("task1", None, "worker", "opencode", "anthropic/claude-sonnet-4.5")
             st, text = call_gateway(t.token, "/api/v1/chat/completions", {"model": "x", "messages": [{"role": "user", "content": "hi"}]})
@@ -430,6 +470,27 @@ class GatewayTest(unittest.TestCase):
 
 
 class AccountingTest(unittest.TestCase):
+    def test_direct_mode_prices_from_the_catalog(self):
+        from orchestrator.org import settings as OS
+        OS.save({"providers": {"openrouter": {"connection": "direct"}}})
+        try:
+            p = ORL.begin_turn({"id": "t"}, "worker", "claude", "anthropic/claude-sonnet-4.5", {}, tempfile.mkdtemp(dir=TMP), {}, tasks=[])
+            self.assertEqual(p.recipe["env"]["ANTHROPIC_AUTH_TOKEN"], KEY)  # direct: the CLI holds the key
+            usage = {"input": 1_000_000, "output": 0, "cost_usd": 99.0}  # the CLI's own (wrong) price table
+            ORL.end_turn(p, {"ok": True}, usage)
+            self.assertAlmostEqual(usage["cost_usd"], 3.0)
+            self.assertFalse(usage["cost_exact"])
+        finally:
+            OS.save({"providers": {"openrouter": {"connection": "proxy"}}})
+
+    def test_abort_closes_the_session_and_removes_credential_files(self):
+        p = ORL.begin_turn({"id": "t"}, "worker", "cline", "qwen/qwen3-coder:free", {}, tempfile.mkdtemp(dir=TMP), {}, tasks=[])
+        f = Path(p.recipe["cleanup"][0])
+        self.assertTrue(f.exists())
+        ORL.abort(p)
+        self.assertFalse(f.exists())
+        self.assertIsNone(GW.get_turn(p.gateway.token))
+
     def test_end_turn_records_real_cost(self):
         mock_reset()
         p = ORL.begin_turn({"id": "t"}, "worker", "opencode", "anthropic/claude-sonnet-4.5", {}, tempfile.mkdtemp(dir=TMP), {}, tasks=[])

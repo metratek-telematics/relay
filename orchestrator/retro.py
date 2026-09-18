@@ -176,6 +176,14 @@ def choose_agent(task: dict, cfg: dict) -> tuple[str, str, str]:
     return agent, model, effort
 
 
+def _project_of(task: dict):
+    try:
+        from .org import projects
+        return projects.project_of_task(task)
+    except Exception:
+        return None
+
+
 def retro_provider(task: dict, cfg: dict) -> str:
     """A supervisor on OpenRouter runs its retrospective there too, unless another agent or model is configured for it."""
     sup = ((task.get("workflow") or {}).get("roles") or {}).get("supervisor") or {}
@@ -186,7 +194,7 @@ def retro_provider(task: dict, cfg: dict) -> str:
 
 
 def run_agent(agent: str, model: str, effort: str, text: str, cfg: dict, workdir: Path, timeout: float, provider: str = "",
-              task_id: str = "") -> dict:
+              task_id: str = "", project: str | None = None) -> dict:
     """One turn through the agent's adapter, the way the Agents page tests an agent (on OpenRouter when provider says so)."""
     ad = agents.adapter(agent)
     workdir.mkdir(parents=True, exist_ok=True)
@@ -196,8 +204,17 @@ def run_agent(agent: str, model: str, effort: str, text: str, cfg: dict, workdir
     orp = None
     if provider == "openrouter":
         from . import openrouter_launch as ORL
-        orp = ORL.begin_turn({"id": task_id}, "retro", agent, model, cfg, workdir, None, env_base=ad.env(cfg))
+        orp = ORL.begin_turn({"id": task_id}, "retro", agent, model, cfg, workdir, None, env_base=ad.env(cfg), project=project)
         cfg, model = orp.cfg, orp.model_arg
+    try:
+        return _run_turn(ad, text, workdir, cfg, model, effort, timeout, orp)
+    finally:
+        if orp is not None:
+            from . import openrouter_launch as ORL
+            ORL.abort(orp)  # a no-op after end_turn; after an error it closes the session and removes credential files
+
+
+def _run_turn(ad, text, workdir, cfg, model, effort, timeout, orp) -> dict:
     args, env, stdin, session = ad.build(text, workdir, cfg, model, None, workdir, "retro", effort=effort)
     if orp is not None:
         args = orp.apply(env, args)
@@ -246,7 +263,7 @@ def run(manager, tid: str) -> dict | None:
         existing = lessons.approved(card.get("repo") or "")
         text = prompt(digest(task, manager.store.messages(tid), card, existing), int(cfg.get("retro_max_lessons") or 3))
         res = run_agent(agent, model, effort, text, cfg, RUNTIME_DIR / tid / "retro", float(cfg.get("retro_timeout_seconds") or 300),
-                        provider=retro_provider(task, cfg), task_id=tid)
+                        provider=retro_provider(task, cfg), task_id=tid, project=_project_of(task))
         usage = res.get("usage") or {}
         cost, estimated = manager.estimate_cost(agent, usage)
         meta.update(seconds=res.get("seconds"), cost_usd=round(cost, 4), estimated=estimated, model=res.get("model") or model,

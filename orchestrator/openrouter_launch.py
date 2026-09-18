@@ -196,6 +196,7 @@ class TurnPlan:
         self.recipe = {}
         self.cfg = {}
         self.direct = False
+        self.task_id, self.project, self.role, self.agent = "", None, "", ""
 
     @property
     def model_arg(self):
@@ -245,6 +246,7 @@ def begin_turn(task: dict, role: str, agent: str, model: str, cfg: dict, run_dir
     if not key:
         raise RuntimeError("OpenRouter has no API key: an admin adds one under Settings → Model providers.")
     p = TurnPlan()
+    p.task_id, p.project, p.role, p.agent = task.get("id") or "", project, role, agent
     p.requested = (model or "").strip() or (s.get("default_model") or OR.AUTO_FREE)
     p.model, p.auto, p.pick, rotation = resolve_model(p.requested, session, tasks, s)
     p.direct = s.get("connection") == "direct"
@@ -263,6 +265,19 @@ def begin_turn(task: dict, role: str, agent: str, model: str, cfg: dict, run_dir
     p.recipe = plan(agent, p.model, conn, run_dir, role, cfg, env_base or {}, context=row.get("context"))
     p.cfg = {**cfg, **p.recipe["cfg"]}
     return p
+
+
+def abort(p: TurnPlan):
+    """A turn that never reached end_turn: remove its credential files and end its gateway session."""
+    for f in p.recipe.get("cleanup") or []:
+        try:
+            Path(f).unlink(missing_ok=True)
+        except OSError:
+            pass
+    if p.gateway is not None:
+        from . import openrouter_proxy as GW
+        if GW.get_turn(p.gateway.token):
+            GW.close_turn(p.gateway.token, wait=1, resolve_costs=False)
 
 
 def end_turn(p: TurnPlan, res: dict, usage: dict) -> dict:
@@ -292,14 +307,16 @@ def end_turn(p: TurnPlan, res: dict, usage: dict) -> dict:
             res["error"] = f"{err.get('message') or 'OpenRouter error'}" + (f"\n{res['error']}" if res.get("error") else "")
         info["error"] = err
     else:
-        # Direct: the CLI's own cost report, else the catalog price (an estimate), free models cost nothing.
+        # Direct: no gateway saw the requests. Free models cost nothing; otherwise the catalog price for the tokens the
+        # CLI reported (the CLI's own figure may come from its own price table, so it is only the last resort). Both
+        # are estimates, and they go on the spend ledger for the caps.
         reported = float(usage.get("cost_usd") or 0)
         if OR.is_free(p.model):
             usage["cost_usd"], usage["cost_exact"] = 0.0, True
-        elif not reported:
+        else:
             est = OR.estimate_cost(p.model, int(usage.get("input") or 0), int(usage.get("output") or 0), int(usage.get("cached") or 0))
-            if est is not None:
-                usage["cost_usd"], usage["cost_exact"] = est, False
+            usage["cost_usd"], usage["cost_exact"] = (est if est is not None else reported), False
+            OR.ledger_add(usage["cost_usd"], p.task_id, p.project, p.role, p.agent, p.model, estimated=True)
         info.update(models=[p.model], model_costs={p.model: float(usage.get("cost_usd") or 0)}, requests=0, rotations=[], final_model=p.model)
         text = f"{res.get('error') or ''}"
         m = re.search(r"\b(401|402|403|404|429|502|503)\b", text)

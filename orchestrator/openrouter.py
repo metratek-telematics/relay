@@ -100,21 +100,34 @@ def settings(raw: dict | None = None) -> dict:
     return out
 
 
-def env_key() -> tuple[str, str]:
-    """(key, source) from the deployment: RELAY_OPENROUTER_API_KEY or a file named by RELAY_OPENROUTER_API_KEY_FILE."""
-    k = (os.environ.get("RELAY_OPENROUTER_API_KEY") or "").strip()
+def _capture_env() -> dict:
+    """Read the deployment's OpenRouter variables once and remove them from Relay's environment.
+
+    Every agent CLI, check and git command starts from os.environ; a key left there would reach all of them, which is
+    exactly what the gateway exists to prevent. The file path goes too, so an agent does not learn where the key lives."""
+    out = {"key": "", "source": "", "base": ""}
+    k = (os.environ.pop("RELAY_OPENROUTER_API_KEY", "") or "").strip()
+    path = (os.environ.pop("RELAY_OPENROUTER_API_KEY_FILE", "") or "").strip()
     if k:
-        return k, "environment"
-    path = (os.environ.get("RELAY_OPENROUTER_API_KEY_FILE") or "").strip()
-    if path:
+        out.update(key=k, source="environment")
+    elif path:
         try:
             with open(path, encoding="utf-8") as f:
                 k = f.read().strip()
             if k:
-                return k, "file"
+                out.update(key=k, source="file")
         except OSError:
             pass
-    return "", ""
+    out["base"] = (os.environ.pop("RELAY_OPENROUTER_BASE_URL", "") or "").strip().rstrip("/")
+    return out
+
+
+_ENV = _capture_env()
+
+
+def env_key() -> tuple[str, str]:
+    """(key, source) the deployment provided (RELAY_OPENROUTER_API_KEY or RELAY_OPENROUTER_API_KEY_FILE)."""
+    return _ENV["key"], _ENV["source"]
 
 
 def api_key(s: dict | None = None) -> str:
@@ -124,7 +137,7 @@ def api_key(s: dict | None = None) -> str:
 
 def base_url() -> str:
     """Where OpenRouter is. Only the environment can change it (development against the mock server)."""
-    return (os.environ.get("RELAY_OPENROUTER_BASE_URL") or DEFAULT_BASE).rstrip("/")
+    return _ENV["base"] or DEFAULT_BASE
 
 
 def base_overridden() -> bool:
@@ -340,25 +353,44 @@ def _fetch_models() -> list[dict]:
     return [r for r in rows if r]
 
 
+_catalog_mem: dict = {"at": 0.0, "rows": None, "next_try": 0.0, "error": None, "loaded": False}
+_catalog_fetch = threading.Lock()
+
+
 def catalog(refresh: bool = False) -> dict:
-    """{"models": rows, "fetched": ts, "stale": bool}. Cached on disk for 6 hours; a failed refresh keeps the old copy."""
+    """{"models": rows, "fetched": ts, "stale": bool}. Kept in memory, saved to disk, refreshed every 6 hours.
+
+    The gateway and the scheduler ask this on every request, so it never waits on the network while another caller
+    is fetching, and a failed fetch waits 10 minutes before the next try (a forced refresh at most once a minute)."""
     path = CACHE_DIR / ("models.json" if not base_overridden() else "models-override.json")
-    with _lock:
+    mem = _catalog_mem
+    if not mem["loaded"]:
+        mem["loaded"] = True
         cached = read_json(path, None)
-        fresh = cached and time.time() - float(cached.get("at") or 0) < MODELS_TTL
-        if cached and fresh and not refresh:
-            return {"models": cached["models"], "fetched": cached["at"], "stale": False}
-        try:
-            rows = _fetch_models()
-            if rows:
-                CACHE_DIR.mkdir(parents=True, exist_ok=True)
-                write_json(path, {"at": time.time(), "models": rows})
-                return {"models": rows, "fetched": time.time(), "stale": False}
-        except Exception as e:
-            if cached:
-                return {"models": cached["models"], "fetched": cached["at"], "stale": True, "error": str(e)}
-            return {"models": [], "fetched": None, "stale": True, "error": f"Could not load the OpenRouter model list: {e}"}
-        return {"models": (cached or {}).get("models") or [], "fetched": (cached or {}).get("at"), "stale": True}
+        if cached and cached.get("models"):
+            mem.update(at=float(cached.get("at") or 0), rows=cached["models"])
+    now = time.time()
+    due = mem["rows"] is None or now - mem["at"] >= MODELS_TTL or (refresh and now - mem["at"] > 60)
+    if due and now >= mem["next_try"] or (refresh and mem["rows"] is None):
+        if _catalog_fetch.acquire(blocking=mem["rows"] is None):  # with a copy in hand, never queue behind a fetch
+            try:
+                rows = _fetch_models()
+                if rows:
+                    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                    write_json(path, {"at": time.time(), "models": rows})
+                    mem.update(at=time.time(), rows=rows, error=None, next_try=0.0)
+            except Exception as e:
+                mem.update(error=str(e), next_try=time.time() + 600)
+            finally:
+                _catalog_fetch.release()
+    if mem["rows"] is None:
+        return {"models": [], "fetched": None, "stale": True,
+                "error": f"Could not load the OpenRouter model list: {mem['error'] or 'no answer'}"}
+    stale = time.time() - mem["at"] >= MODELS_TTL or bool(mem["error"] and refresh)
+    out = {"models": mem["rows"], "fetched": mem["at"], "stale": stale}
+    if mem["error"] and stale:
+        out["error"] = mem["error"]
+    return out
 
 
 def model_row(mid: str, rows: list[dict] | None = None) -> dict | None:
@@ -675,6 +707,8 @@ def account(refresh: bool = False) -> dict:
     key = api_key()
     with _lock:
         hit = _account_cache
+        if refresh and hit["data"] is not None and hit["key"] == key and time.time() - hit["at"] < 30:
+            refresh = False  # anyone may press Refresh; OpenRouter is asked at most twice a minute
         if not refresh and hit["data"] is not None and hit["key"] == key and time.time() - hit["at"] < ACCOUNT_TTL:
             return dict(hit["data"])
     data = fetch_account(key)
@@ -802,7 +836,61 @@ def turns(tasks: list[dict] | None):
                 yield t, row
 
 
+LEDGER_DIR = DATA_DIR / "openrouter"
+_ledger_lock = threading.Lock()
+_ledger_cache: dict = {}
+
+
+def ledger_add(cost: float, task: str = "", project: str | None = None, role: str = "", agent: str = "", model: str = "",
+               estimated: bool = False, ts: float | None = None):
+    """Append one charge to this month's ledger. The spend caps read the ledger, not task records: a deleted task, a
+    trimmed turn log, an interrupted turn, a retrospective or an agent test still counts."""
+    if not cost:
+        return
+    ts = ts or time.time()
+    row = {"t": round(ts, 3), "cost": round(float(cost), 8), "task": task, "project": project or "", "role": role,
+           "agent": agent, "model": model, "est": bool(estimated)}
+    path = LEDGER_DIR / f"ledger-{datetime.fromtimestamp(ts):%Y-%m}.jsonl"
+    with _ledger_lock:
+        LEDGER_DIR.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(row) + "\n")
+
+
+def ledger_rows(month_ts: float | None = None) -> list[dict]:
+    path = LEDGER_DIR / f"ledger-{datetime.fromtimestamp(month_ts or time.time()):%Y-%m}.jsonl"
+    try:
+        st = path.stat()
+    except OSError:
+        return []
+    key = (str(path), st.st_mtime_ns, st.st_size)
+    hit = _ledger_cache.get(str(path))
+    if hit and hit[0] == key:
+        return hit[1]
+    rows = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            try:
+                rows.append(json.loads(line))
+            except ValueError:
+                continue
+    _ledger_cache[str(path)] = (key, rows)
+    return rows
+
+
+def ledger_spend(since: float, project: str | None = None) -> float:
+    return round(sum(float(r.get("cost") or 0) for r in ledger_rows(since)
+                     if float(r.get("t") or 0) >= since and (not project or r.get("project") == project)), 6)
+
+
 def spend(tasks, since: float, project: str | None = None) -> float:
+    """Spend since a moment this month: the ledger when it has entries, else the task records (older installs)."""
+    if since >= _month_start() and ledger_rows(since):
+        return ledger_spend(since, project)
+    return _task_spend(tasks, since, project)
+
+
+def _task_spend(tasks, since: float, project: str | None = None) -> float:
     total = 0.0
     ids = None
     for t, row in turns(tasks):

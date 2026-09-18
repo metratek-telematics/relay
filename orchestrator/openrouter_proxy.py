@@ -19,8 +19,8 @@ from __future__ import annotations
 
 import http.client
 import json
+import re
 import secrets
-import socket
 import threading
 import time
 from collections import deque
@@ -31,8 +31,13 @@ from . import openrouter as OR
 
 ALLOWED_POST = ("/api/v1/chat/completions", "/api/v1/completions", "/api/v1/responses", "/api/v1/messages",
                 "/api/v1/messages/count_tokens")
-HOP = {"host", "authorization", "x-api-key", "content-length", "connection", "transfer-encoding", "accept-encoding",
+HOP = {"host", "authorization", "x-api-key", "content-length", "content-type", "connection", "transfer-encoding", "accept-encoding",
        "keep-alive", "proxy-authorization", "te", "upgrade", "http-referer", "referer", "x-title", "x-openrouter-title"}
+# Request fields that choose models or paid add-ons: only Relay sets them, so a turn cannot spend on a model or a
+# plugin (web search) nobody picked, whatever an agent puts in its request.
+STRIP_FIELDS = ("models", "route", "plugins", "transforms", "preset", "web_search_options")
+MAX_BODY = 32 * 1024 * 1024
+TURN_MAX_SECONDS = 6 * 3600   # a token outlives no turn by more than this, even if Relay never closed it
 TASKS_FN = None          # set by the manager: () -> list of tasks, for the spend caps
 _turns: dict = {}
 _turns_lock = threading.Lock()
@@ -69,6 +74,22 @@ class Turn:
 LOG_FILE = OR.DATA_DIR / "logs" / "openrouter-gateway.log"
 
 
+def _charge(t: "Turn", rec: dict):
+    """Put a successful request's cost (OpenRouter's figure, else the catalog price) on the spend ledger right away,
+    so the caps see it even if the turn is interrupted, times out or its task is deleted later."""
+    if rec.get("status") != 200 or rec.get("charged"):
+        return
+    cost, est = rec.get("cost"), False
+    if cost is None:
+        cost = OR.estimate_cost(rec.get("model_sent") or t.model, rec.get("input") or 0, rec.get("output") or 0, rec.get("cached") or 0)
+        est = True
+    rec["charged"] = True
+    try:
+        OR.ledger_add(float(cost or 0), t.task_id, t.project, t.role, t.agent, rec.get("model_used") or rec.get("model_sent") or t.model, est)
+    except OSError:
+        pass
+
+
 def _log(t: "Turn", rec: dict):
     """One line per request (never a token or a key): when, which turn, which model, what came back, what it cost."""
     try:
@@ -95,7 +116,11 @@ def open_turn(task_id: str, project: str | None, role: str, agent: str, model: s
 
 def get_turn(token: str) -> Turn | None:
     with _turns_lock:
-        return _turns.get(token)
+        t = _turns.get(token)
+        if t and time.time() - t.started > TURN_MAX_SECONDS:
+            _turns.pop(token, None)  # a session nobody closed (a crash between begin and end) stops working
+            return None
+        return t
 
 
 def close_turn(token: str, wait: float = 10.0, resolve_costs: bool = True) -> dict:
@@ -114,32 +139,36 @@ def close_turn(token: str, wait: float = 10.0, resolve_costs: bool = True) -> di
     return summarize(t)
 
 
-def _resolve_costs(t: Turn):
-    """OpenRouter's generation stats for answers whose stream did not carry a cost (they appear after a moment)."""
+def _resolve_costs(t: Turn, budget: float = 8.0):
+    """OpenRouter's generation stats for answers whose stream carried no cost (they appear after a moment). At most 40
+    lookups, eight at a time, within `budget` seconds: the turn must not wait on them for long."""
+    from concurrent.futures import ThreadPoolExecutor
     key = OR.api_key()
-    todo = [r for r in t.records if r.get("status") == 200 and r.get("cost") is None and r.get("id")]
-    for attempt in range(3):
-        if not todo or not key:
-            return
-        if attempt:
-            time.sleep(1.5)
-        left = []
-        for r in todo:
-            try:
-                st, data = OR._request("GET", "/generation?" + urlencode({"id": r["id"]}), key, timeout=10)
-            except Exception:
-                st, data = 0, {}
-            d = (data or {}).get("data") or {}
-            if st == 200 and d.get("total_cost") is not None:
-                r["cost"] = float(d["total_cost"])
-                r["cost_source"] = "generation"
-                r["input"] = r.get("input") or int(d.get("native_tokens_prompt") or d.get("tokens_prompt") or 0)
-                r["output"] = r.get("output") or int(d.get("native_tokens_completion") or d.get("tokens_completion") or 0)
-                r["model_used"] = r.get("model_used") or d.get("model")
-                r["provider"] = r.get("provider") or d.get("provider_name")
-            else:
-                left.append(r)
-        todo = left
+    todo = [r for r in t.records if r.get("status") == 200 and r.get("cost") is None and r.get("id")][:40]
+    deadline = time.time() + budget
+
+    def look(r):
+        try:
+            st, data = OR._request("GET", "/generation?" + urlencode({"id": r["id"]}), key, timeout=max(1.0, min(5.0, deadline - time.time())))
+        except Exception:
+            return False
+        d = (data or {}).get("data") or {}
+        if st != 200 or d.get("total_cost") is None:
+            return False
+        r["cost"] = float(d["total_cost"])
+        r["cost_source"] = "generation"
+        r["input"] = r.get("input") or int(d.get("native_tokens_prompt") or d.get("tokens_prompt") or 0)
+        r["output"] = r.get("output") or int(d.get("native_tokens_completion") or d.get("tokens_completion") or 0)
+        r["model_used"] = r.get("model_used") or d.get("model")
+        r["provider"] = r.get("provider") or d.get("provider_name")
+        return True
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for attempt in range(3):
+            if not todo or not key or time.time() > deadline - 1:
+                return
+            if attempt:
+                time.sleep(1.5)
+            todo = [r for r, ok in zip(todo, pool.map(look, todo)) if not ok]
 
 
 def summarize(t: Turn | None) -> dict:
@@ -160,7 +189,9 @@ def summarize(t: Turn | None) -> dict:
         out["input"] += int(r.get("input") or 0)
         out["output"] += int(r.get("output") or 0)
         out["cached"] += int(r.get("cached") or 0)
-        mid = r.get("model_used") or r.get("model_sent") or t.model
+        # Keyed by the catalog id Relay sent (OpenRouter may answer with a dated slug), so history and costs line up
+        # with the model browser and the automatic pick.
+        mid = r.get("model_sent") or r.get("model_used") or t.model
         cost = r.get("cost")
         if cost is None:
             if rows is None:
@@ -345,9 +376,13 @@ class Handler(BaseHTTPRequestHandler):
                 if not size:
                     self.rfile.readline()
                     return out
+                if len(out) + size > MAX_BODY:
+                    raise ValueError("the request body is too large")
                 out += self.rfile.read(size)
                 self.rfile.readline()
         n = int(self.headers.get("Content-Length") or 0)
+        if n > MAX_BODY:
+            raise ValueError("the request body is too large")
         return self.rfile.read(n) if n else b""
 
     # ---- GET: the model list only (some CLIs ask for it)
@@ -356,16 +391,21 @@ class Handler(BaseHTTPRequestHandler):
         t = get_turn(self._token())
         if not t:
             return self._relay_error(401, "Relay: this OpenRouter session is not active (the agent turn ended)")
-        if not (path == "/api/v1/models" or path.startswith("/api/v1/models/")):
+        if not re.match(r"^/api/v1/models(/[\w.:~-]+){0,3}$", path) or ".." in path:
             return self._relay_error(404, f"Relay's OpenRouter gateway does not forward {path}")
         self._forward(t, "GET", path, None)
 
     def do_POST(self):
         path = urlparse(self.path).path
-        raw = self._read_body()
         t = get_turn(self._token())
         if not t:
+            self.close_connection = True  # the body was not read
             return self._relay_error(401, "Relay: this OpenRouter session is not active (the agent turn ended)")
+        try:
+            raw = self._read_body()
+        except ValueError as e:
+            self.close_connection = True
+            return self._relay_error(413, f"Relay: {e}")
         if path not in ALLOWED_POST:
             return self._relay_error(404, f"Relay's OpenRouter gateway does not forward {path}")
         try:
@@ -403,7 +443,7 @@ class Handler(BaseHTTPRequestHandler):
         cap = None
         if TASKS_FN and any(not OR.is_free(m) for m in candidates):
             try:
-                cap = OR.cap_state(TASKS_FN(), t.project, s, extra=t.spent())
+                cap = OR.cap_state(TASKS_FN(), t.project, s)  # the ledger already holds this turn's charges
             except Exception:
                 cap = None
         i = 0
@@ -417,7 +457,7 @@ class Handler(BaseHTTPRequestHandler):
                 i = nxt  # capped: only free fallbacks may run
                 continue
             waited += _pace_free(model, int(s.get("free_rate_per_minute") or 20))
-            out = dict(body)
+            out = {k: v for k, v in body.items() if k not in STRIP_FIELDS}
             out["model"] = model
             _merge_routing(out, OR.routing(s))  # the Anthropic skin validates and honours `provider` too (checked live)
             if path.endswith("/chat/completions") and not isinstance(out.get("usage"), dict):
@@ -463,13 +503,15 @@ class Handler(BaseHTTPRequestHandler):
             if status == 404:
                 t.dead.add(model)  # gone for this turn; a 429 or an outage may clear, so a lone model keeps being tried
             if status in (429, 404, 502, 503) and i + 1 < len(candidates) and len(t.rotations) < 6:
-                t.dead.add(model)
                 reason = d["message"]
                 if t.auto or status != 429:
                     OR.cooldown(model, reason, status)
                 nxt = candidates[i + 1]
-                t.rotations.append({"from": model, "to": nxt, "status": status, "at": time.time()})
-                t.model = nxt
+                with t.lock:  # CLIs send side calls in parallel
+                    t.dead.add(model)
+                    if t.model == model:
+                        t.rotations.append({"from": model, "to": nxt, "status": status, "at": time.time()})
+                        t.model = nxt
                 i += 1
                 waited = 0.0
                 continue
@@ -553,11 +595,13 @@ class Handler(BaseHTTPRequestHandler):
             return None
         if up_headers.get("x-generation-id"):
             rec["id"] = up_headers["x-generation-id"]
-        buf, whole, client_gone = b"", [], False
+        buf, whole, client_gone, cut = b"", [], False, False
         while True:
             try:
                 chunk = resp.read1(65536) if hasattr(resp, "read1") else resp.read(65536)
-            except (OSError, http.client.HTTPException):
+            except (OSError, http.client.HTTPException) as e:
+                rec["stream_error"] = f"the connection to OpenRouter broke: {e}"
+                cut = True
                 break
             if not chunk:
                 break
@@ -565,8 +609,12 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     self.wfile.write(f"{len(chunk):x}\r\n".encode() + chunk + b"\r\n")
                     self.wfile.flush()
-                except (BrokenPipeError, ConnectionResetError, socket.timeout):
-                    client_gone = True  # the CLI went away (stopped turn); keep reading for the usage
+                except OSError:
+                    # The CLI went away (a stopped or timed-out turn). Closing the upstream request cancels the
+                    # generation, which OpenRouter stops billing for; what was spent so far is charged below.
+                    client_gone = True
+                    rec["cancelled"] = True
+                    break
             if stream:
                 buf += chunk
                 *lines, buf = buf.split(b"\n")
@@ -582,11 +630,13 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 whole.append(chunk)
         conn.close()
-        if not client_gone:
+        if cut:
+            self.close_connection = True  # no terminating chunk: the client sees a cut stream, not a short answer
+        elif not client_gone:
             try:
                 self.wfile.write(b"0\r\n\r\n")
                 self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError):
+            except OSError:
                 pass
         if whole:
             try:
@@ -598,5 +648,6 @@ class Handler(BaseHTTPRequestHandler):
         if record and path != "/api/v1/models" and not path.startswith("/api/v1/models/"):
             t.records.append(rec)
             _log(t, rec)
+            _charge(t, rec)
         self._streamed = rec
         return None

@@ -362,13 +362,13 @@ def agent_test(name):
         cfg, model = orp.cfg, orp.model_arg
     else:
         model = body().get("model") or ((cfg.get("agent_defaults") or {}).get(name) or {}).get("model") or ""
-    args, env, stdin, session = ad.build("Reply with exactly the single word: pong", scratch, cfg, model, None, scratch, "test")
-    if orp is not None:
-        args = orp.apply(env, args)
     ctx = TurnContext()
     started = time.time()
     lines = []
     try:
+        args, env, stdin, session = ad.build("Reply with exactly the single word: pong", scratch, cfg, model, None, scratch, "test")
+        if orp is not None:
+            args = orp.apply(env, args)
         p = subprocess.run(args, cwd=str(scratch), input=stdin, stdin=None if stdin is not None else subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
                            errors="replace", timeout=180, env=env, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         out = (p.stdout or "") + "\n" + (p.stderr or "")
@@ -401,11 +401,10 @@ def agent_test(name):
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 200
     finally:
-        if orp is not None:  # the turn never finished: close its gateway session
+        if orp is not None:  # the turn never finished: close its gateway session, remove credential files
             try:
-                from orchestrator import openrouter_proxy as GW
-                if orp.gateway is not None:
-                    GW.close_turn(orp.gateway.token, wait=1, resolve_costs=False)
+                from orchestrator import openrouter_launch as ORL
+                ORL.abort(orp)
             except Exception:
                 pass
 

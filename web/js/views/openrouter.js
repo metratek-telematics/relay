@@ -216,7 +216,7 @@ export async function mountProviders(body) {
       <div class="field"><label for="orKey">API key</label>
         <div class="row" style="gap:8px"><input id="orKey" type="password" autocomplete="off" spellcheck="false" placeholder="${s.has_api_key ? (s.key_source === "settings" ? `saved (${esc(s.key_hint)}) · type a new key to replace it` : `from the ${esc(s.key_source)} (${esc(s.key_hint)})`) : "sk-or-v1-…"}" style="flex:1;min-width:0">
           <button class="btn" id="orTest">${icon("zap")}Test</button>${s.key_source === "settings" ? `<button class="btn ghost" id="orClear" title="Remove the saved key">${icon("trash")}</button>` : ""}</div>
-        <div class="help">Stored on this server only, never shown again and never given to an agent: agents talk to Relay's local gateway with a token that works for one turn. Create a key at openrouter.ai/settings/keys; a per-key credit limit there is a second safety net.</div>
+        <div class="help">Stored on this server only and never shown again. Agents never get it: they talk to Relay's local gateway with a token that works for one turn. (Like Relay's other secrets it sits in Relay's data folder.) Create a key at openrouter.ai/settings/keys; a per-key credit limit there is a second safety net.</div>
         <div id="orTestOut" class="acct" style="margin-top:8px"></div></div>
       <div class="grid2">
         <div class="field"><label for="orDefault">Default model</label><div class="row" style="gap:8px"><input id="orDefault" value="${esc(s.default_model || "")}" placeholder="${AUTO_FREE}" style="flex:1;min-width:0" spellcheck="false"><button class="btn" id="orPickDefault">${icon("layers")}Browse</button></div>
