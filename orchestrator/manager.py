@@ -34,6 +34,8 @@ class Manager:
     def __init__(self, emit):
         self._emit = emit
         self.store = TaskStore()
+        from . import openrouter_proxy
+        openrouter_proxy.TASKS_FN = self.store.list  # the gateway checks OpenRouter spend caps against recorded turns
         self.lock = threading.RLock()
         self.runners: dict[str, Runner] = {}
         self.process_state: dict[str, dict] = {}
@@ -155,10 +157,15 @@ class Manager:
                     roles[r]["model"] = (v.get("model") or "").strip()
                 if "effort" in v:
                     roles[r]["effort"] = (v.get("effort") or "").strip().lower()
+                if "provider" in v:
+                    roles[r]["provider"] = (v.get("provider") or "").strip().lower()
+                elif "agent" in v:
+                    roles[r]["provider"] = ""  # a new agent for the role starts on its own sign-in unless told otherwise
         for r in C.ROLES:
             roles.setdefault(r, {"agent": "", "model": "", "effort": ""})
             roles[r].setdefault("model", "")
             roles[r].setdefault("effort", "")
+            roles[r].setdefault("provider", "")
         if not roles["supervisor"]["agent"] or not roles["worker"]["agent"]:
             raise ValueError("Both a supervisor and a worker agent are required.")
         for r in C.ROLES:
@@ -169,7 +176,17 @@ class Manager:
                 if allowed:
                     raise ValueError(f"Effort '{roles[r]['effort']}' is not valid for {roles[r]['agent']} (choose {', '.join(allowed)}).")
                 roles[r]["effort"] = ""
-            if roles[r].get("model"):
+            if roles[r].get("provider") not in ("", "openrouter"):
+                raise ValueError(f"Unknown provider '{roles[r]['provider']}' for {r} (use openrouter or leave it empty).")
+            if roles[r].get("provider") == "openrouter":
+                from . import openrouter as OR
+                if roles[r]["agent"] and not OR.supports(roles[r]["agent"]):
+                    raise ValueError(f"{C.AGENTS[roles[r]['agent']]['label']} cannot run on OpenRouter: {OR.SUPPORT[roles[r]['agent']]['why']}")
+                if roles[r].get("model") and not (OR.is_auto(roles[r]["model"]) or OR.valid_model_id(roles[r]["model"])):
+                    raise ValueError(f"“{roles[r]['model']}” is not an OpenRouter model id (like anthropic/claude-sonnet-4.5) for {r}.")
+                if roles[r].get("model"):
+                    C.remember_model("openrouter", roles[r]["model"])
+            elif roles[r].get("model"):
                 C.remember_model(roles[r]["agent"], roles[r]["model"])
         wf = {
             "preset": preset_id if preset else "custom",
@@ -874,6 +891,9 @@ class Manager:
     def estimate_cost(self, agent, usage) -> tuple[float, bool]:
         """Return (cost_usd, estimated). Uses reported cost when present, else the pricing table."""
         reported = float(usage.get("cost_usd") or 0)
+        if "cost_exact" in usage:
+            # A provider's own figure (OpenRouter), a free model's zero included; or its catalog-price estimate.
+            return reported, not usage["cost_exact"]
         if reported > 0:
             return reported, False
         price = (self.cfg().get("pricing") or {}).get(agent) or {}

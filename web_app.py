@@ -217,7 +217,15 @@ def state():
         "notifications": manager.notifications[:30],
         "lessons_pending": lessons.pending_count(),
         "autopilot": manager.autopilot.status(),
+        "providers": {"openrouter": _openrouter_state()},
     })
+
+
+def _openrouter_state() -> dict:
+    from orchestrator import openrouter as OR
+    s = OR.settings()
+    return {"configured": OR.configured(s), "default_model": s.get("default_model") or OR.AUTO_FREE, "auto_id": OR.AUTO_FREE,
+            "connection": s.get("connection"), "dev_override": OR.base_overridden()}
 
 
 @app.get("/api/events")
@@ -257,7 +265,9 @@ def dashboard():
 # ----------------------------------------------------------------------------- agents
 @app.get("/api/agents")
 def agents_get():
-    return jsonify({"health": agents.agent_health(manager.cfg(), force=request.args.get("force") == "1"), "meta": C.AGENTS})
+    from orchestrator import openrouter as OR
+    return jsonify({"health": agents.agent_health(manager.cfg(), force=request.args.get("force") == "1"), "meta": C.AGENTS,
+                    "openrouter": {"support": OR.support_table(), "configured": OR.configured()}})
 
 
 @app.post("/api/agents/<name>/install")
@@ -289,6 +299,36 @@ def agent_account(name):
     if name not in C.AGENTS:
         return jsonify({"error": f"Unknown agent {name}"}), 404
     return jsonify(agent_info.account(name, manager.cfg(), tasks=manager.store.list(), refresh=request.args.get("refresh") == "1"))
+
+
+@app.get("/api/openrouter/models")
+def openrouter_models():
+    """The OpenRouter catalog for the model browser: every model, the coding shortlist and the automatic free picks."""
+    from orchestrator import openrouter as OR
+    cat = OR.catalog(refresh=request.args.get("refresh") == "1")
+    rows = cat["models"]
+    tasks = manager.store.list()
+    cfg = manager.cfg()
+    s = OR.settings()
+    hist = OR.model_history(tasks)
+    return jsonify({"models": rows, "fetched": cat.get("fetched"), "stale": cat.get("stale"), "error": cat.get("error"),
+                    "recommended": OR.recommended_for_coding(rows),
+                    "auto_free": OR.rank_free(rows, hist, int((s.get("auto_free") or {}).get("min_context") or 64000)),
+                    "history": hist, "starred": (cfg.get("models") or {}).get("openrouter") or [],
+                    "recent": (cfg.get("model_recent") or {}).get("openrouter") or [],
+                    "default_model": s.get("default_model") or OR.AUTO_FREE, "auto_id": OR.AUTO_FREE,
+                    "configured": OR.configured(s), "support": OR.support_table()})
+
+
+@app.get("/api/openrouter/account")
+def openrouter_account():
+    """Credits and limits from OpenRouter, and what Relay itself spent there (by model, role, agent, project, task)."""
+    from orchestrator import openrouter as OR
+    s = OR.settings()
+    acc = OR.account(refresh=request.args.get("refresh") == "1") if OR.configured(s) else {"ok": False, "error": "No OpenRouter API key is set."}
+    tasks = manager.store.list()
+    return jsonify({"account": acc, "relay": OR.usage_report(tasks), "meters": OR.budget_meters(tasks, s),
+                    "low_credit_usd": s.get("low_credit_usd"), "configured": OR.configured(s)})
 
 
 @app.get("/api/agents/jobs")
