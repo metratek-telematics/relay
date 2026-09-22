@@ -5,9 +5,10 @@ import { api } from "../api.js";
 
 const LAST = "relay.knowledge.doc";
 
+// The body without its front-matter and its "# title" line (the header above the doc shows both).
 function stripFront(text) {
   const m = String(text || "").match(/^---\n[\s\S]*?\n---\n?/);
-  return m ? text.slice(m[0].length) : text;
+  return (m ? text.slice(m[0].length) : text).replace(/^\s*# [^\n]*\n/, "");
 }
 // Relative links between docs ([EDGE](../EDGE.md)) open inside the page; md() only links http(s) URLs.
 function docLinks(html, cur) {

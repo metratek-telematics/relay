@@ -792,6 +792,7 @@ def refresh_repo(cfg: dict, repo: str, force: bool = False, run_agent=None, esti
                 reply["sections"].pop(h)
         if reply["summary"] and forbidden_hits(reply["summary"], cfg):
             reply["summary"] = ""
+        reply["changes"] = [c for c in reply["changes"] if not forbidden_hits(c, cfg)]
         with _lock:
             cur = read_text(p)            # a person may have saved while the agent worked
             meta, body = split_front(cur)

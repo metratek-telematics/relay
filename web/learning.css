@@ -156,11 +156,12 @@
 .kd-notes { display: grid; gap: 4px; font-size: var(--fs-sm); color: var(--text-2); background: var(--panel-2); border-radius: var(--r-sm); padding: 8px 12px; margin-bottom: 12px; overflow-wrap: anywhere; }
 .kd-err { color: var(--red); }
 .kd-body { font-size: 13.5px; line-height: 1.6; max-width: 110ch; overflow-wrap: anywhere; }
-.kd-body h2 { font-size: 17px; margin: 18px 0 8px; padding-top: 6px; border-top: 1px solid var(--border); }
-.kd-body h2:first-child { border-top: 0; margin-top: 0; }
-.kd-body h3 { font-size: 15px; margin-top: 16px; }
+/* md() renders "## Section" as h3 and "### Sub" as h4 */
+.kd-body h3 { font-size: 16px; margin: 20px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); }
+.kd-body > h3:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
+.kd-body h4 { font-size: 14px; margin-top: 14px; }
 .kd-body .md-table table { border-collapse: collapse; font-size: 12.5px; }
-.kd-body .md-table th, .kd-body .md-table td { border: 1px solid var(--border); padding: 4px 8px; vertical-align: top; text-align: left; }
+.kd-body .md-table th, .kd-body .md-table td { border: 1px solid var(--border); padding: 4px 8px; vertical-align: top; text-align: left; overflow-wrap: normal; word-break: normal; min-width: 10ch; }
 .kd-body .md-table th { background: var(--panel-2); }
 .kd-flash { background: var(--amber-soft); border-radius: 4px; transition: background 2s; }
 .kd-edit-label { display: block; font-size: var(--fs-xs); margin-bottom: 6px; }
