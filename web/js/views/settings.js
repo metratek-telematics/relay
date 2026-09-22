@@ -101,7 +101,10 @@ export function mountSettings(main, section) {
             <div class="field"><label>Envelope retries</label><input type="number" min="0" max="5" data-cfg="envelope_retries" value="${esc(c.envelope_retries)}"><div class="help">How many times to ask an agent to restate a missing JSON envelope.</div></div>
             <div class="field"><label>Unanswered judge questions</label><input type="number" min="0" max="1440" data-cfg="judge_escalation_timeout_minutes" value="${esc(c.judge_escalation_timeout_minutes ?? 120)}"><div class="help">Minutes before Relay takes the safe automatic choice when nobody answers (extend the budget once, then deliver with follow-ups). 0 waits for you.</div></div>
           </div>
-          <div class="field"><label>Parallel tasks</label><input type="number" min="1" max="8" data-cfg="max_parallel" value="${esc(c.max_parallel)}" style="width:100px"></div>
+          <div class="grid2">
+            <div class="field"><label>Parallel tasks</label><input type="number" min="1" max="8" data-cfg="max_parallel" value="${esc(c.max_parallel)}" style="width:100px"></div>
+            <div class="field"><label>Express lane</label><input type="number" min="0" max="4" data-cfg="express_lane" value="${esc(c.express_lane ?? 1)}" style="width:100px"><div class="help">Extra slots for tasks triaged solo, so a small task starts beside a long one instead of waiting behind it. 0 turns it off.</div></div>
+          </div>
         </div></div>
         <div class="card"><div class="card-head"><h3>Design step</h3></div><div class="card-body">
           <div class="grid2">
@@ -111,8 +114,8 @@ export function mountSettings(main, section) {
         </div></div>
         ${explorationCard(c)}
         ${learningCard(c)}`;
-      const wf = { preset: c.workflow_preset, roles: JSON.parse(JSON.stringify(c.roles || {})), max_turns: c.max_turns, max_review_rounds: c.max_review_rounds, verify_mode: c.verify_mode, approval_before_delivery: c.approval_before_delivery, allow_agent_questions: c.allow_agent_questions, verification_commands: c.verification_commands || [], auto_detect_verification: c.auto_detect_verification, design_mode: c.design_mode, design_approval: c.design_approval };
-      const persist = debounce((w) => save({ workflow_preset: w.preset, roles: JSON.parse(JSON.stringify(w.roles)), max_turns: w.max_turns, max_review_rounds: w.max_review_rounds, verify_mode: w.verify_mode, approval_before_delivery: w.approval_before_delivery, allow_agent_questions: w.allow_agent_questions, verification_commands: w.verification_commands, auto_detect_verification: w.auto_detect_verification, design_mode: w.design_mode, design_approval: w.design_approval }), 400);
+      const wf = { preset: c.workflow_preset, roles: JSON.parse(JSON.stringify(c.roles || {})), max_turns: c.max_turns, max_review_rounds: c.max_review_rounds, verify_mode: c.verify_mode, approval_before_delivery: c.approval_before_delivery, allow_agent_questions: c.allow_agent_questions, verification_commands: c.verification_commands || [], auto_detect_verification: c.auto_detect_verification, design_mode: c.design_mode, design_approval: c.design_approval, team_mode: c.team_mode || "auto" };
+      const persist = debounce((w) => save({ workflow_preset: w.preset, roles: JSON.parse(JSON.stringify(w.roles)), max_turns: w.max_turns, max_review_rounds: w.max_review_rounds, verify_mode: w.verify_mode, approval_before_delivery: w.approval_before_delivery, allow_agent_questions: w.allow_agent_questions, verification_commands: w.verification_commands, auto_detect_verification: w.auto_detect_verification, design_mode: w.design_mode, design_approval: w.design_approval, team_mode: w.team_mode || "auto" }), 400);
       workflowEditor($("#wfEd", body), wf, { agents: S.agentMeta, presets: S.presets, onChange: persist });
       bindAuto();
       // The model catalogue and efforts depend on the agent, so redraw once the new agent is saved.

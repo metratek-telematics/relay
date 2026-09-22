@@ -127,9 +127,9 @@ export function mountInspector(container, getTask, opts = {}) {
         ${workCard(t)}
         ${changeSetCard(t)}
         ${reposCard(t)}
-        <div class="card"><div class="card-head"><h3>Team</h3><span class="badge outline">${esc(wf.preset || "custom")}</span></div><div class="card-body stack">
+        <div class="card"><div class="card-head"><h3>Team</h3><span class="row" style="gap:6px">${(t.triage || t.triage_hint) ? `<span class="badge ${(t.triage || t.triage_hint).mode === "solo" ? "green" : "purple"}" title="${esc((t.triage || t.triage_hint).why || "")}">${(t.triage || t.triage_hint).mode === "solo" ? "Solo" : "Team"}${t.triage ? "" : " (expected)"}</span>` : ""}<span class="badge outline">${esc(wf.preset || "custom")}</span></span></div><div class="card-body stack">
           ${roles.map((role) => `<div class="row between"><span class="row"><span class="av sm ${esc(roleAgent(t, role))}">${esc(agentInitial(roleAgent(t, role)))}</span><strong>${esc(agentLabel(roleAgent(t, role)))}</strong><span class="muted">${esc(ROLE_LABEL[role])}</span></span><span class="mono muted">${esc(roleModelLabel(t, role))}${roleEffort(t, role) ? ` · ${esc(roleEffort(t, role))} effort` : ""}</span></div>`).join("")}
-          <div class="kv" style="margin-top:6px"><dt>Verification</dt><dd>${esc(wf.verify_mode || "each_report")}${(t.verify_commands || []).length ? ` · ${t.verify_commands.length} command(s)` : ""}</dd><dt>Approval gate</dt><dd>${wf.approval_before_delivery ? "before delivery" : "off"}</dd><dt>Agent questions</dt><dd>${wf.allow_agent_questions === false ? "disabled" : "allowed"}</dd><dt>Review rounds</dt><dd>${wf.max_review_rounds || "—"}</dd></div>
+          <div class="kv" style="margin-top:6px"><dt>Verification</dt><dd>${esc(wf.verify_mode || "each_report")}${(t.verify_commands || []).length ? ` · ${t.verify_commands.length} command(s)` : ""}</dd><dt>Approval gate</dt><dd>${wf.approval_before_delivery ? "before delivery" : "off"}</dd><dt>Agent questions</dt><dd>${wf.allow_agent_questions === false ? "disabled" : "allowed"}</dd><dt>Review rounds</dt><dd>${wf.max_review_rounds || "—"}</dd><dt>Team mode</dt><dd>${esc(wf.team_mode || "auto")}${t.triage ? ` → ${esc(t.triage.mode)} (${esc(t.triage.level)})` : ""}</dd></div>
         </div></div>
         ${autopilotCard(t)}
         ${plan.plan ? `<div class="card"><div class="card-head"><h3>Plan</h3>${plan.summary ? `<span class="muted truncate" style="max-width:220px">${esc(plan.summary)}</span>` : ""}</div><div class="card-body md">${md(plan.plan)}${packetHtml((t.acceptance || []).length ? { ...plan, acceptance: [] } : plan, { done: t.status === "done" })}</div></div>` : ""}
@@ -165,14 +165,50 @@ export function mountInspector(container, getTask, opts = {}) {
   function workCard(t) {
     if (!t.started_at && !t.message_count) return "";
     const w = state.work.id === t.id ? state.work.data : null;
-    return `<div class="card" id="workCard"><div class="card-head"><h3>Where the time went</h3><span class="muted" style="font-size:11px">${w ? `${fmtDur(w.total_seconds)} wall time` : ""}</span></div><div class="card-body">${w ? workChart(w) : workSkeleton(t)}</div></div>`;
+    const b = w && w.breakdown && !w.breakdown.error ? w.breakdown : null;
+    const head = b ? `${fmtDur(b.active_seconds)} active${b.queue_seconds >= 30 ? ` · ${fmtDur(b.queue_seconds)} queued` : ""}` : (w ? `${fmtDur(w.total_seconds)} wall time` : "");
+    return `<div class="card" id="workCard"><div class="card-head"><h3>Where the time went</h3><span class="muted" style="font-size:11px">${head}</span></div><div class="card-body">${w ? (b ? breakdownHtml(b, t) : "") + workChart(w, !!b) : workSkeleton(t)}</div></div>`;
+  }
+  // Phases (queue, setup, planning, design, build, checks, review, delivery), what filled them, and why each heavy phase ran.
+  const KIND_COLOUR = { checks: "var(--green)", setup: "var(--text-3)", git: "var(--text-3)", human: "var(--amber)", backoff: "var(--red)", overhead: "var(--panel-3)", queue: "var(--border-strong)" };
+  function kindColour(k, t) {
+    if (["worker", "supervisor", "reviewer"].includes(k)) {
+      const a = roleAgent(t, k) || (k === "reviewer" ? roleAgent(t, "supervisor") : "");
+      return a ? `var(--${esc(a)}, ${esc((S.agentMeta[a] || {}).color || "var(--accent)")})` : "var(--accent)";
+    }
+    return KIND_COLOUR[k] || "var(--text-3)";
+  }
+  function breakdownHtml(b, t) {
+    const kinds = [...(b.kinds || [])];
+    if (b.queue_seconds >= 1) kinds.push({ key: "queue", label: "Waiting in the queue", seconds: b.queue_seconds });
+    const total = kinds.reduce((a, k) => a + k.seconds, 0) || 1;
+    const who = (k) => ["worker", "supervisor", "reviewer"].includes(k.key) && roleAgent(t, k.key) ? `${k.label} (${agentLabel(roleAgent(t, k.key))})` : k.label;
+    const pct = (s) => Math.round((s / total) * 100);
+    const stack = `<div class="tstack" role="img" aria-label="${esc(kinds.map((k) => `${who(k)} ${fmtDur(k.seconds)}`).join(", "))}">${kinds.map((k) => `<span style="flex:${k.seconds.toFixed(1)};--c:${kindColour(k.key, t)}" title="${esc(`${who(k)} · ${fmtDur(k.seconds)} · ${pct(k.seconds)}%`)}"></span>`).join("")}</div>
+      <div class="wfoot tkeys">${kinds.filter((k) => k.seconds >= 5).map((k) => `<span class="wkey"><i style="--c:${kindColour(k.key, t)}"></i>${esc(who(k))} <b>${fmtDur(k.seconds)}</b></span>`).join("")}</div>`;
+    const phases = (b.phases || []).filter((p) => p.seconds >= 1);
+    const max = Math.max(...phases.map((p) => p.seconds), 1);
+    const rows = phases.map((p) => {
+      const parts = Object.entries(p.kinds || {}).sort((a, c) => c[1] - a[1]);
+      const tip = `${p.label} · ${fmtDur(p.seconds)}${p.visits > 1 ? ` · ${p.visits} visits` : ""}\n` + parts.map(([k, v]) => `${k}: ${fmtDur(v)}`).join("\n");
+      const fill = parts.map(([k, v]) => `<span style="flex:${v.toFixed(1)};--c:${kindColour(k, t)}"></span>`).join("");
+      return `<div class="wrow" title="${esc(tip)}" aria-label="${esc(tip)}" tabindex="0"><span class="wlabel truncate">${esc(p.label)}</span><span class="wtrack"><span class="tseg" style="width:${Math.max(1.5, (p.seconds / max) * 100).toFixed(1)}%">${fill}</span></span><span class="wval">${fmtDur(p.seconds)}</span></div>`;
+    }).join("");
+    const cer = b.ceremony || {};
+    const names = { mode: ["Team", "Solo"], design: ["Design step"], research: ["Design research"], exploration: ["Exploration"], review: ["Independent review"] };
+    const why = Object.keys(names).filter((k) => cer[k]).map((k) => {
+      const c = cer[k];
+      const label = k === "mode" ? `${c.run ? "Team mode" : "Solo mode"}` : names[k][0];
+      return `<li class="${c.run ? "ran" : "skipped"}"><b>${esc(label)}</b>${k === "mode" ? "" : c.run ? " ran" : " skipped"}<span>${esc(c.why || "")}</span></li>`;
+    }).join("");
+    return `<div class="tbreak">${stack}<div class="wchart" style="margin-top:10px">${rows}</div>${why ? `<ul class="twhy" aria-label="Why each phase ran">${why}</ul>` : ""}</div><h4 class="tsub">By work package</h4>`;
   }
   function workSkeleton(t) {
     const cp = t.checkpoint || {};
     const n = Math.max(2, 1 + (cp.turn || 0) + (cp.review_round || 0) + (t.status === "done" ? 1 : 0));
     return `<div class="wchart" aria-busy="true">${Array.from({ length: n }, () => '<div class="wrow skel"><span class="wlabel"></span><span class="wtrack"></span><span class="wval"></span></div>').join("")}</div><div class="wfoot"><span class="wkey">&nbsp;</span></div>`;
   }
-  function workChart(w) {
+  function workChart(w, compact) {
     const segs = w.segments || [];
     if (!segs.length) return '<div class="empty small">No agent turns yet.</div>';
     const max = Math.max(...segs.map((s) => s.seconds), 1);

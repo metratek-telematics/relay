@@ -136,6 +136,15 @@ def in_windows(dt: datetime, windows: list) -> bool:
     return False
 
 
+def expressable(t: dict, cfg: dict) -> bool:
+    """A queued task small enough for the express lane: triaged solo at intake and not forced to a full team."""
+    from . import triage
+    if triage.team_mode(t, cfg) == "team":
+        return False
+    hint = t.get("triage_hint") or {}
+    return hint.get("mode") == "solo" or triage.team_mode(t, cfg) == "solo"
+
+
 def schedule_open(dt: datetime, settings: dict) -> bool:
     if (settings.get("schedule") or "always") != "windows":
         return True
@@ -831,9 +840,12 @@ class Autopilot:
         by_id = {t["id"]: t for t in rows}
         gate = self.gate(rows)
         self._gate = gate
-        active = sum(1 for t in rows if self.occupies_slot(t))
+        express_active = sum(1 for t in rows if self.occupies_slot(t) and t.get("express"))
+        active = sum(1 for t in rows if self.occupies_slot(t)) - express_active
         queued = m.queue_order(rows)
         room = max(0, m.max_parallel - active)
+        # Express lane: a task triaged solo (small, one agent) starts beside a long run instead of waiting behind it.
+        express_room = max(0, int(m.cfg().get("express_lane") or 0) - express_active)
         limit_waits = []
         for t in queued:
             blockers = dependency_blockers(t, by_id)
@@ -847,9 +859,13 @@ class Autopilot:
             if not gate["ok"]:
                 self.set_waiting(t, {"kind": gate["state"], "text": gate["label"], "until": gate.get("until")})
                 continue
+            express = False
             if room <= 0:
-                self.set_waiting(t, None)
-                continue
+                if express_room > 0 and expressable(t, m.cfg()):
+                    express = True
+                else:
+                    self.set_waiting(t, None)
+                    continue
             try:
                 # Learning: pick the team from past outcomes when that is switched on (learning_engine.auto_pick).
                 if m.learning.engine.auto_pick(t["id"]):
@@ -872,8 +888,14 @@ class Autopilot:
             if cap.get("switches"):
                 self.apply_fallbacks(t["id"], cap)
             self.set_waiting(t, None)
+            m.store.update(t["id"], touch=False, express=express)
+            if express:
+                m.timeline(t["id"], "system", "Express lane", "a small solo task starts beside the running one instead of waiting")
             m.launch(t["id"])
-            room -= 1
+            if express:
+                express_room -= 1
+            else:
+                room -= 1
             rows = m.store.list()
             by_id = {x["id"]: x for x in rows}
         self.limit_wait = min(limit_waits, key=lambda w: w["until"] or 9e12) if limit_waits else None

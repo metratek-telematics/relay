@@ -634,7 +634,15 @@ def task_commit_diff(tid, sha):
 
 @app.get("/api/tasks/<tid>/work")
 def task_work(tid):
-    return jsonify(history.work_segments(task_or_404(tid), manager.store.messages(tid)))
+    t = task_or_404(tid)
+    msgs = manager.store.messages(tid)
+    out = history.work_segments(t, msgs)
+    try:
+        from orchestrator import timing
+        out["breakdown"] = timing.breakdown(t, msgs)   # phases, kinds of work and why each heavy phase ran
+    except Exception as e:  # the chart above still renders
+        out["breakdown"] = {"error": str(e)}
+    return jsonify(out)
 
 
 @app.get("/api/tasks/<tid>/pr")

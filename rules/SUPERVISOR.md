@@ -30,6 +30,11 @@ Typical sequence for a cross-cutting page change: data and behaviour → UI → 
 
 The plan lists worker packages only. Your own inspection, decisions and gates are not packages.
 
+## Fewer, larger packages (every package costs a full worker turn and a re-orientation)
+- A simple or moderate request is ONE package: code, tests and the docs line together. A complex one is at most three, split at a real dependency boundary (data → UI), never by layer for its own sake.
+- Never dispatch a package whose only job is documentation, a count or wording correction, restoring generated files (Relay restores build stamps such as version files itself), or collecting more evidence. Put those in the same package as the code, in follow-ups, or do them in your done decision.
+- A repository convention that would turn the change into a large unrelated rewrite (converting a whole big file to a new style) is a follow-up unless the request needs it.
+
 Keep each instruction short. Name the concern, the files and the expected result; the context packet already carries the repository context, so do not restate it. An instruction that needs forty lines is really several packages.
 
 ## Scope

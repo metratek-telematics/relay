@@ -19,7 +19,7 @@ from pathlib import Path
 
 from . import config as C
 from . import commitguard, connectors, design, designcheck, environment, exploration, gitops, github, judge, lessons, multirepo, protocol, repo_env, stacks
-from . import tokens, toolbox
+from . import solo, timing, tokens, toolbox, triage, verifyfast
 from .runner import Interrupted, Stopped, TurnTimeout
 from .util import APP_DIR, new_id, now, quiet, read_text, truncate, write_text
 
@@ -37,6 +37,14 @@ _CONFIG_ERRORS = re.compile(
 
 def _config_error(text: str) -> bool:
     return bool(_CONFIG_ERRORS.search(text or ""))
+
+
+# A daily quota or an empty balance does not clear in minutes: retrying it six times with back-off only burns the wait.
+_HARD_QUOTA = re.compile(r"free-model requests are used up|out of credits|spend(?:ing)? limit|cap reached|insufficient (?:credits|balance)", re.I)
+
+
+def _hard_quota(text: str) -> bool:
+    return bool(_HARD_QUOTA.search(text or ""))
 
 
 def suite_not_run_reason(cmd: str, res: dict) -> str:
@@ -94,7 +102,7 @@ def context_refs(refs):
 
 
 # ----------------------------------------------------------------------------- pipeline
-class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRepo):
+class Pipeline(solo.SoloFlow, exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRepo):
     def __init__(self, task, runner, manager):
         self.task = task
         self.r = runner
@@ -260,7 +268,7 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
             if not res.get("ok"):
                 failures += 1
                 self.r.msg(role=role, agent=agent, kind="error", content=truncate(res.get("error") or "Agent turn failed", 3000), turn=turn)
-                if failures >= 2 and _config_error(res.get("error") or ""):
+                if (failures >= 2 or _hard_quota(res.get("error") or "")) and _config_error(res.get("error") or ""):
                     # Retrying cannot fix a wrong model name or a missing sign-in; say what to change instead.
                     raise RuntimeError(f"{_label(agent)} ({role}) cannot run with this setup: {truncate(res.get('error') or '', 400)}\n"
                                        f"Fix the model or sign-in for {_label(agent)} (Agents page, or the task's team), then send a message or Resume.")
@@ -269,10 +277,15 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
                 self.r.timeline(role, f"Agent turn failed · retrying ({failures}/{max_failures})", truncate(res.get("error") or "", 200))
                 # Back off so rate limits and provider hiccups can clear: 10 s, 20 s, 40 s … capped at 3 minutes.
                 wait = min(180, 10 * 2 ** (failures - 1))
-                deadline = time.time() + wait
+                t0 = time.time()
+                deadline = t0 + wait
                 while time.time() < deadline:
                     self.r.check_stop()
                     time.sleep(1)
+                try:
+                    timing.span(self.m, self.tid, "backoff", t0, time.time())
+                except Exception:
+                    pass
                 if failures % 2 == 0:
                     prompt = fresh_session(res.get("error") or "the turn failed")
                 elif sess.get("id"):
@@ -356,6 +369,13 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
         cfg = self.cfg
         if not cfg.get("design_research", True):
             return False
+        tri = self.state.get("triage") or {}
+        if tri:
+            # Only an explicit redesign or new look: a bare "layout" or "visual" in a performance request is not design work.
+            want, why = triage.research_wanted(tri)
+            if (self.state.get("ceremony") or {}).get("research", {}).get("why") != why:
+                self.ceremony("research", want, why)
+            return want
         text = " ".join(str(self.task.get(k) or "") for k in ("name", "requirements", "template"))
         return "DESIGN_RESEARCH" in protocol.rule_names_for("supervisor", {**cfg, "lean_prompts": True}, text)
 
@@ -386,6 +406,7 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
         self.r.msg(role="user", agent=None, kind="user", content=ans.get("text") or "(no text)", to=asker_role,
                    reply_to=qid, turn=self.state.get("turn"))
         self.r.timeline("user", "Question answered", truncate(ans.get("text") or "", 200))
+        self.apply_human_text(ans.get("text") or "")
         return protocol.human_answer(question, ans.get("text"))
 
     def supervisor_turn(self, prompt, label, turn=None):
@@ -433,10 +454,20 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
         info["system_packages"] = self.ensure_system_packages()
         if self.wt and environment.is_python(self.wt):
             environment.exclude_python_artifacts(self.wt)  # also when a saved or custom setup replaces detection
+        restored = None
+        if cmd and self.cfg.get("deps_cache", True) and not (t.get("workflow") or {}).get("setup_command"):
+            try:
+                restored = verifyfast.deps_restore(t.get("repo") or "", self.wt)
+            except Exception:
+                restored = None
+            if restored:
+                self.r.timeline("system", "Dependencies reused", f"node_modules from an earlier task with the same lockfile · {restored['seconds']}s")
+                info["deps_cache"] = restored
         if not cmd:
             info["skipped"] = True
         elif environment.already_prepared(self.wt) and not (t.get("workflow") or {}).get("setup_command"):
-            info.update(skipped=True, note="dependencies already present in the worktree")
+            info.update(skipped=True, note="dependencies reused from an earlier task (same lockfile)" if restored
+                        else "dependencies already present in the worktree")
         else:
             self.r.status("preparing", f"Preparing the environment · {cmd}")
             self.r.timeline("system", "Preparing environment", cmd)
@@ -446,6 +477,11 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
                         output=truncate(res.get("output") or "", 1500, tail=True) if not res["ok"] else "")
             if res["ok"]:
                 self.r.timeline("system", "Environment ready", f"{cmd} · {round(res.get('duration') or 0)}s")
+                if self.cfg.get("deps_cache", True):
+                    try:
+                        verifyfast.deps_save(t.get("repo") or "", self.wt, int(self.cfg.get("deps_cache_keep") or 3))
+                    except Exception:
+                        pass
             else:
                 # Not fatal: the team implements without dependencies and the gap is visible to everyone.
                 self.record_blocked([{"check": f"Environment setup ({cmd})", "action_required": False,
@@ -574,6 +610,12 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
         if not base or not wt:
             return None
         repo = repo or self.task.get("repo")
+        known = verifyfast.baseline_get(str(repo), base, cmd)
+        if known:
+            # Another task already ran this command on this exact commit.
+            cache[key] = {"ok": known.get("ok"), "rc": known.get("rc"), "cached": True}
+            self.save()
+            return cache[key]
         path = Path(str(wt) + "-baseline")
         gitops.remove_worktree(repo, path)
         add = quiet(["git", "worktree", "add", "--detach", str(path), base], cwd=repo, timeout=300)
@@ -587,64 +629,113 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
             self.r.timeline("verify", "Checking the failure on the starting commit", cmd)
             res = self.r.run_shell(cmd, path, "verify", timeout=timeout, title=f"Baseline · {cmd}")
             cache[key] = {"ok": res["ok"], "rc": res.get("rc")}
+            if res.get("rc") not in (-1, 126, 127):
+                verifyfast.baseline_put(str(repo), base, cmd, cache[key])
         finally:
             gitops.remove_worktree(repo, path)
         self.save()
         return cache[key]
 
-    def run_verification(self):
+    def run_verification(self, quick=False):
+        """Relay's own checks. `quick` (after each work package) defers builds to the final run."""
         n_stack = len((self.stack or {}).get("checks") or [])
         if not self.verify_cmds and not self.design_gate and not n_stack and not any(r.get("verify_commands") for r in self.related):
             return ""
-        self.r.status("verifying", f"Running {len(self.verify_cmds) + (1 if self.design_gate else 0) + n_stack} verification check(s)")
+        prev = getattr(self, "_phase", None)
+        self.phase_mark("verify")
+        try:
+            return self._run_verification(quick)
+        finally:
+            if prev and prev != "verify":
+                self.phase_mark(prev)
+
+    def _verify_command(self, c, res, timeout, quiet_pass, fail_chars):
+        """(item, text) for one finished command: baseline check, blocked records and the verdict line."""
+        # pytest exit 5 means no tests were collected: nothing failed, so do not send the team chasing it.
+        skipped = res.get("rc") == 5 and "pytest" in c
+        if skipped:
+            res["ok"] = True
+        pre_existing = False
+        # 126/127: the command itself could not run (not installed, not executable). That proves nothing
+        # either way, so it is never excused as a pre-existing failure and is recorded for a human to fix.
+        cannot_run = res.get("rc") in (126, 127)
+        if cannot_run:
+            self.record_blocked([{"check": c, "action_required": True,
+                                  "reason": truncate((res.get("output") or "").strip().splitlines()[-1] if (res.get("output") or "").strip() else f"exit {res.get('rc')}", 300),
+                                  "impact": "this check could not run, so it proves nothing; fix the environment (Repositories → Environment)"}])
+        elif not res["ok"]:
+            base = self.baseline_result(c, timeout)
+            pre_existing = bool(base and not base["ok"])
+        not_run = "" if res["ok"] or cannot_run else suite_not_run_reason(c, res)
+        if not_run:
+            # Excused or not, a suite that stopped while collecting proved nothing: say so where people look.
+            from . import syspkgs
+            hint = syspkgs.missing_library_hint(res.get("output") or "")
+            self.record_blocked([{"check": c, "action_required": bool(hint),
+                                  "reason": truncate(not_run + (f"; {hint}" if hint else ""), 400),
+                                  "impact": "the test suite did not run, so this check proves nothing about the change"}])
+        optional = c in getattr(self, "optional_checks", set())
+        item = {"command": c, "ok": res["ok"] or pre_existing or optional, "rc": res.get("rc"), "skipped": skipped,
+                "pre_existing": pre_existing, "optional": optional, "passed": res["ok"],
+                "duration": round(res.get("duration") or 0, 1)}
+        verdict = ("SKIPPED (no tests collected)" if skipped else "PASS" if res["ok"]
+                   else "PRE-EXISTING FAILURE, THE SUITE DID NOT RUN (also fails on the starting commit; proves nothing)" if pre_existing and not_run
+                   else "PRE-EXISTING FAILURE (also fails on the starting commit; does not block)" if pre_existing
+                   else "FAIL (optional check; reported, does not block)" if optional else "FAIL")
+        head = f"$ {c}\n{verdict} (exit {res.get('rc')}, {round(res.get('duration') or 0)}s)"
+        # A passing command only needs its verdict; a failure needs output the agents can act on.
+        body = "" if (res["ok"] and quiet_pass) else "\n" + (
+            tokens.failure_excerpt(res["output"], fail_chars) if self.cfg.get("token_failure_excerpts", True)
+            else truncate(res["output"], fail_chars, tail=True))
+        return item, head + body
+
+    def _run_verification(self, quick=False):
+        n_stack = len((self.stack or {}).get("checks") or [])
+        cmds = list(self.verify_cmds)
+        # The same tree and the same checks were already verified: reuse the results instead of paying for them again.
+        fp = ""
+        if self.cfg.get("verify_reuse_results", True):
+            fp = tokens.digest(self.fingerprint() + "|" + "\n".join(cmds) + f"|{bool(self.design_gate)}|{n_stack}")
+            cached = self.state.get("verify_cache") or {}
+            if cached.get("fp") == fp and cached.get("vt") and (quick or not cached.get("quick")):
+                self.r.timeline("verify", "Verification reused", "nothing changed since these checks last ran")
+                self.m.set_meta(self.tid, verification={**(cached.get("meta") or {}), "reused": True, "time": now()})
+                return cached["vt"]
+        deferred, unaffected = [], []
+        builds = [c for c in cmds if verifyfast.is_build(c)]
+        if builds and quick:
+            deferred = builds
+        elif builds and self.cfg.get("verify_skip_unaffected_build", True):
+            need, _ = verifyfast.build_needed([c["path"] for c in gitops.changed_files(self.wt, self.base)])
+            if not need:
+                unaffected = builds
+        run_cmds = [c for c in cmds if c not in deferred and c not in unaffected]
+        self.r.status("verifying", f"Running {len(run_cmds) + (1 if self.design_gate else 0) + n_stack} verification check(s)")
         # Checks such as a production build may rewrite tracked files (version stamps, generated maps).
         # Remember what was already changed so anything the checks alone touched is put back afterwards.
         before = {line[3:] for line in quiet(["git", "status", "--porcelain"], cwd=self.wt).stdout.splitlines() if line.strip()}
-        self.r.timeline("verify", "Verification", ", ".join(self.verify_cmds + (["design gate"] if self.design_gate else [])))
+        self.r.timeline("verify", "Verification", ", ".join(run_cmds + (["design gate"] if self.design_gate else []))
+                        + (f" · build skipped: {', '.join(unaffected)} (only tests, docs or specs changed)" if unaffected else "")
+                        + (f" · deferred to the final check: {', '.join(deferred)}" if deferred else ""))
         items = []
         parts = []
         timeout = float(self.cfg.get("verification_timeout_minutes") or 20) * 60
         quiet_pass = bool(self.cfg.get("budget_verify_pass_quiet", True))
         fail_chars = int(self.cfg.get("budget_verify_chars") or 3500)
-        for c in self.verify_cmds:
-            res = self.r.run_shell(c, self.wt, "verify", timeout=timeout)
-            # pytest exit 5 means no tests were collected: nothing failed, so do not send the team chasing it.
-            skipped = res.get("rc") == 5 and "pytest" in c
-            if skipped:
-                res["ok"] = True
-            pre_existing = False
-            # 126/127: the command itself could not run (not installed, not executable). That proves nothing
-            # either way, so it is never excused as a pre-existing failure and is recorded for a human to fix.
-            cannot_run = res.get("rc") in (126, 127)
-            if cannot_run:
-                self.record_blocked([{"check": c, "action_required": True,
-                                      "reason": truncate((res.get("output") or "").strip().splitlines()[-1] if (res.get("output") or "").strip() else f"exit {res.get('rc')}", 300),
-                                      "impact": "this check could not run, so it proves nothing; fix the environment (Repositories → Environment)"}])
-            elif not res["ok"]:
-                base = self.baseline_result(c, timeout)
-                pre_existing = bool(base and not base["ok"])
-            not_run = "" if res["ok"] or cannot_run else suite_not_run_reason(c, res)
-            if not_run:
-                # Excused or not, a suite that stopped while collecting proved nothing: say so where people look.
-                from . import syspkgs
-                hint = syspkgs.missing_library_hint(res.get("output") or "")
-                self.record_blocked([{"check": c, "action_required": bool(hint),
-                                      "reason": truncate(not_run + (f"; {hint}" if hint else ""), 400),
-                                      "impact": "the test suite did not run, so this check proves nothing about the change"}])
-            optional = c in getattr(self, "optional_checks", set())
-            items.append({"command": c, "ok": res["ok"] or pre_existing or optional, "rc": res.get("rc"), "skipped": skipped,
-                          "pre_existing": pre_existing, "optional": optional, "passed": res["ok"],
-                          "duration": round(res.get("duration") or 0, 1)})
-            verdict = ("SKIPPED (no tests collected)" if skipped else "PASS" if res["ok"]
-                       else "PRE-EXISTING FAILURE, THE SUITE DID NOT RUN (also fails on the starting commit; proves nothing)" if pre_existing and not_run
-                       else "PRE-EXISTING FAILURE (also fails on the starting commit; does not block)" if pre_existing
-                       else "FAIL (optional check; reported, does not block)" if optional else "FAIL")
-            head = f"$ {c}\n{verdict} (exit {res.get('rc')}, {round(res.get('duration') or 0)}s)"
-            # A passing command only needs its verdict; a failure needs output the agents can act on.
-            body = "" if (res["ok"] and quiet_pass) else "\n" + (
-                tokens.failure_excerpt(res["output"], fail_chars) if self.cfg.get("token_failure_excerpts", True)
-                else truncate(res["output"], fail_chars, tail=True))
-            parts.append(head + body)
+        results = {}
+        for group in verifyfast.plan_groups(run_cmds, bool(self.cfg.get("verify_parallel", True))):
+            results.update(verifyfast.run_group(group, lambda c: self.r.run_shell(c, self.wt, "verify", timeout=timeout)))
+        for c in cmds:
+            if c in deferred or c in unaffected:
+                why = ("DEFERRED (the build runs once in the final verification)" if c in deferred
+                       else "SKIPPED (only tests, docs or specs changed; nothing the build reads)")
+                items.append({"command": c, "ok": True, "rc": 0, "skipped": True, "duration": 0.0,
+                              "note": "deferred" if c in deferred else "no build input changed"})
+                parts.append(f"$ {c}\n{why}")
+                continue
+            item, text = self._verify_command(c, results[c], timeout, quiet_pass, fail_chars)
+            items.append(item)
+            parts.append(text)
         if self.stack:
             # End-to-end checks against the task's integration stack; no baseline: the stack is built from this branch.
             stack_items, stack_parts = stacks.pipeline_verify(self)
@@ -660,6 +751,7 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
         if touched:
             quiet(["git", "checkout", "--", *touched], cwd=self.wt)
             self.r.timeline("verify", "Restored files the checks rewrote", ", ".join(touched[:10]))
+            verifyfast.generated_add(self.task.get("repo") or "", touched)
         if self.related:
             # Each other repository of a multi-repository task runs its own checks in its own worktree.
             more_items, more_parts = self.verify_related(timeout, quiet_pass, fail_chars)
@@ -668,11 +760,26 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
         vt = "\n\n".join(parts)
         all_ok = all(i["ok"] for i in items)
         self.artifact("verification", "VERIFICATION.md", vt)
-        self.m.set_meta(self.tid, verification={"ok": all_ok, "items": items, "time": now()})
+        meta = {"ok": all_ok, "items": items, "time": now(), **({"quick": True} if quick else {})}
+        self.m.set_meta(self.tid, verification=meta)
         self.r.msg(role="verify", agent=None, kind="verification", ok=all_ok, items=items, turn=self.state.get("turn"))
         self.r.timeline("verify", "Verification passed" if all_ok else "Verification failed",
                         f"{sum(1 for i in items if i['ok'])}/{len(items)} commands passed")
+        if fp:
+            self.state["verify_cache"] = {"fp": fp, "vt": vt, "meta": meta, "quick": bool(quick)}
+            self.save()
         return vt
+
+    def restore_generated(self):
+        """Files Relay's checks are known to rewrite (build stamps): an agent's own build leaves them changed; put them back."""
+        known = verifyfast.generated_get(self.task.get("repo") or "")
+        if not known or not self.wt:
+            return
+        status = {line[3:].strip('"'): line[:2] for line in quiet(["git", "status", "--porcelain"], cwd=self.wt).stdout.splitlines() if line.strip()}
+        dirty = [p for p in known if status.get(p, "").strip() in ("M",)]
+        if dirty:
+            quiet(["git", "checkout", "--", *dirty], cwd=self.wt)
+            self.r.timeline("git", "Restored generated files", ", ".join(dirty[:6]) + " (build output an agent's own build rewrote)")
 
     # ------------------------------------------------------------ phases
     def prepare(self):
@@ -702,6 +809,7 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
                 self.r.msg(role="orchestrator", agent=None, kind="notice", turn=0,
                            content=f"Run {t['runs']} · retried from scratch. Everything above belongs to earlier runs.")
             self.r.timeline("system", "Task started", t["name"])
+            self.phase_mark("setup")
             self.wt, self.branch = gitops.create_worktree(self.r, t, self.cfg, self.run_dir)
             self.r.timeline("git", "Worktree ready", f"{self.branch} → {self.wt}")
             # Recorded before any agent works, so changes still count once Relay commits them.
@@ -768,6 +876,7 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
             self.playbook_text = ""
 
     def kickoff(self):
+        self.phase_mark("plan")
         sup_agent, _ = self.role_agent("supervisor")
         self.handoff("orchestrator", "supervisor", "Task briefing", self.task.get("requirements", ""),
                      subtype="briefing", issue=self.issue_text[:400] if self.issue_text else "")
@@ -778,6 +887,7 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
         prompt = protocol.with_block(prompt, self.playbook_text)
         prompt = protocol.with_block(prompt, self.context_text("supervisor"))
         prompt = protocol.with_block(prompt, self.kickoff_design_note())
+        prompt = protocol.with_block(prompt, self.solo_handoff_note())
         res, env = self.supervisor_turn(prompt, f"{_label(sup_agent)} is inspecting the repository and planning", turn=0)
         if env.get("type") != "plan":
             if env.get("type") in ("instruction", "decision") and env.get("instruction"):
@@ -858,7 +968,17 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
         while self.state.get("phase") == "dialogue":
             self.r.check_stop()
             turn = int(self.state.get("turn") or 1)
+            if self.state.get("awaiting") == "worker" and self.state.get("deliver_now"):
+                # The owner said to deliver: no more packages; Relay's checks still run before the pull request.
+                self.r.timeline("judge", "Delivering now", "the owner asked for the pull request; remaining work becomes follow-ups")
+                self.add_followups([{"severity": "should_fix", "problem": f"Not done when the owner asked to deliver: {self.state.get('instruction_summary') or truncate(self.state.get('instruction') or '', 200)}"}],
+                                   "delivered on request")
+                self.state["last_verification"] = self.run_verification()
+                self.state["phase"] = "deliver"
+                self.save()
+                return
             if self.state.get("awaiting") == "worker":
+                self.phase_mark("build")
                 if turn > self.turn_limit():
                     if not self.budget_escalation(turn):
                         continue
@@ -881,6 +1001,7 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
                     prompt = tokens.prepend(prompt, protocol.resume_note({k: v for k, v in self.state.items() if k in ("phase", "turn", "awaiting", "instruction_summary")}))
                     self.state["resumed"] = False
                 res, env = self.worker_turn(prompt, f"Work package #{turn}", turn)
+                self.restore_generated()
                 self.note_package_report(env)
                 self.note_amendments(env, "worker")
                 report = {"status": env.get("status", "complete"), "summary": env.get("summary", ""),
@@ -900,7 +1021,7 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
                              subtype="report", status=report["status"], summary=report["summary"], files=report["files"][:60],
                              blocked_checks=report["blocked_checks"] + [{"check": "Implementation", **b} for b in report["blockers"]])
                 self.r.timeline("worker", f"Work package #{turn} reported {report['status']}", report["summary"])
-                self.state["last_verification"] = self.run_verification() if self.verify_mode == "each_report" else ""
+                self.state["last_verification"] = self.run_verification(quick=True) if self.verify_mode == "each_report" else ""
                 self.state["awaiting"] = "supervisor"
                 self.save()
                 if kind == "revise" and self.state.get("fp_before"):
@@ -940,7 +1061,8 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
                        content=self.state["pr_summary"], criteria=self.criteria(), turn=turn)
             self.r.timeline("supervisor", "Supervisor declared the task complete", env.get("summary", ""))
             # The design gate is enforced at done even when command verification is off.
-            if (self.verify_mode == "before_review" and self.verify_cmds) or (self.design_gate and self.verify_mode != "each_report"):
+            if ((self.verify_mode == "before_review" and self.verify_cmds) or (self.design_gate and self.verify_mode != "each_report")
+                    or (self.verify_mode == "each_report" and (self.task_meta().get("verification") or {}).get("quick"))):
                 vt = self.run_verification()
                 self.state["last_verification"] = vt
                 if not (self.task_meta().get("verification") or {}).get("ok", True):
@@ -1108,6 +1230,7 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
         text = (ans.get("text") or "").strip()
         self.r.msg_update(qmsg["id"], answered=True, answer=text)
         self.r.msg(role="user", agent=None, kind="user", content=text or "(no text)", to="orchestrator", reply_to=qid, turn=turn)
+        self.apply_human_text(text)
         key, rest = judge.classify_choice(text, choices)
         self.r.timeline("user", f"Decided: {choices.get(key, 'guidance')}", truncate(rest, 200))
         if key == "stop":
@@ -1125,6 +1248,12 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
         self.set_criteria(gate["criteria"])
         if gate["ok"]:
             self.state["gate_nudges"] = 0
+            return None
+        if self.state.get("deliver_now"):
+            self.add_followups([{"severity": "should_fix", "problem": f"{m['id']} not proven at delivery: {m['criterion']} ({m['reason']})"}
+                                for m in gate["missing"]], "delivered on request")
+            self.state["gate_nudges"] = 0
+            self.save()
             return None
         sup_agent, _ = self.role_agent("supervisor")
         n = int(self.state.get("gate_nudges") or 0) + 1
@@ -1358,6 +1487,15 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
 
     def finish_done(self):
         rev_agent, _ = self.role_agent("reviewer")
+        if rev_agent and self.state.get("deliver_now"):
+            self.ceremony("review", False, "the owner asked to deliver now")
+            rev_agent = ""
+        elif rev_agent and self.triage_info() and not self.state.get("review_round") and self.auto_ceremony():
+            want, why = triage.review_wanted(self.triage_info(), self.all_diffstat(), self.all_changed_files())
+            self.ceremony("review", want, why)
+            if not want:
+                self.r.timeline("judge", "Independent review skipped", why)
+                rev_agent = ""
         if rev_agent:
             self.state["phase"] = "review"
             self.state["review_round"] = int(self.state.get("review_round") or 0) + 1
@@ -1372,6 +1510,11 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
         while self.state.get("phase") == "review":
             self.r.check_stop()
             rnd = int(self.state.get("review_round") or 1)
+            self.phase_mark("review")
+            if self.state.get("deliver_now"):
+                self.state["phase"] = "deliver"
+                self.save()
+                break
             self.r.status("reviewing", f"{_label(rev_agent)} is reviewing independently · round {rnd}/{self.max_review_rounds}")
             vt = self.state.get("last_verification") or ""
             if ((self.verify_cmds and self.verify_mode != "off") or self.design_gate) and not vt:
@@ -1467,6 +1610,7 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
                 # dialogue ends with phase review (round already incremented) or deliver
 
     def deliver(self):
+        self.phase_mark("deliver")
         t = self.task_meta()
         ds = gitops.diff_stat(self.wt, self.base)
         changed = gitops.changed_files(self.wt, self.base)
@@ -1773,9 +1917,16 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
 
     def run(self):
         self.validate_team()
+        self.start_triage()   # a borderline request is rated while the environment installs
         self.prepare()
         try:
             self.connect_start()
+            tri = self.finish_triage()
+            if self.state.get("phase") == "kickoff" and tri.get("mode") == "solo" and not self.state.get("solo_handoff"):
+                self.state["phase"] = "solo"
+                self.save()
+            if self.state.get("phase") == "solo":
+                self.solo_phase()
             if self.state.get("phase") == "kickoff":
                 self.kickoff()
             if self.state.get("phase") == "design":

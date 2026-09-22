@@ -206,6 +206,8 @@ class Manager:
             "design_approval": _choice(wf_in.get("design_approval"), ("auto", "on", "off"), cfg.get("design_approval") or "auto"),
             # Design exploration (orchestrator/exploration.py): pause with the mockups before building, whatever the panel decides.
             "show_mockups": bool(wf_in.get("show_mockups", False)),
+            # Team mode (orchestrator/triage.py): auto lets triage choose solo or team; solo = one agent; team = the full team.
+            "team_mode": _choice(wf_in.get("team_mode"), ("auto", "solo", "team"), cfg.get("team_mode") or "auto"),
         }
         return wf
 
@@ -247,6 +249,14 @@ class Manager:
             "queue_pos": time.time(),
             "number": self.next_number(),
         }
+        try:
+            # Intake triage (instant, heuristic only): the express lane and the new-task preview use it; the run re-decides.
+            from . import triage
+            h = triage.heuristic(t)
+            d = triage.decide({**t, "repos": repos or []}, self.cfg(), h)
+            t["triage_hint"] = {"mode": d["mode"], "level": d["level"], "why": d["why"], "confident": h["confident"]}
+        except Exception:
+            pass
         if depends_on:
             t["depends_on"] = depends_on
         if isinstance(payload.get("retry_policy"), dict):

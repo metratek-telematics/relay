@@ -446,6 +446,78 @@ def worker_followup(sup_label, turn, instruction, guidance, kind="instruction"):
                          ("instruction", "Do the work, verify it locally, and end with a report or question envelope.")])
 
 
+SOLO_SESSION = _session_block([
+    "- You work alone on this task: you plan it, build it and prove it. There is no supervisor. Relay prepared the worktree and "
+    "dependencies, runs the full verification (lint, tests, build) after you report, and commits and opens the pull request.",
+    "- Plan first, briefly: before editing code, write your plan and 2 to 5 acceptance criteria to {plan_file} "
+    "(markdown: a few plan lines, then each criterion with how you will verify it). Criteria restate what the owner asked, nothing added.",
+    "- Then implement the whole request in this turn in cohesive batches. Inspect only what the change needs.",
+    "- Verify proportionately: run the tests closest to what you changed (the related spec file, not the whole suite) and, for a visible "
+    "UI change, look at it once when the app can run here. If a check cannot run for an environment reason, record it in blocked_checks and move on. "
+    "Do not run the production build or the full suite: Relay does that once, after your report.",
+    "- Do not commit; leave changes in the working tree. Never push, merge or deploy.",
+    '- End with exactly one fenced ```json envelope: a "report" (below) or, only when truly blocked (credentials, access, a destructive '
+    'step, contradictory requirements), a "question" to the user.',
+])
+
+SOLO_REPORT = """REPORT ENVELOPE (solo)
+{"type":"report","status":"complete|partial|blocked","summary":"one sentence",
+ "plan":"the 3 to 8 line plan you followed (markdown)",
+ "acceptance":[{"id":"A1","criterion":"observable outcome from the request","how_to_verify":"test: npx vitest run path | command: … | screenshot: … | inspection: file:line","required":true,
+               "status":"met|unmet","evidence":"the command and its one-line result, a file:line, or a screenshot path"}],
+ "complexity":{"level":"simple|moderate|complex","reason":"one line"},
+ "report":"markdown, at most about 12 bullets: what changed, decisions, checks run with results, limitations",
+ "files":["path/one"],"pr_summary":"2 to 5 lines for the pull request","follow_ups":[{"severity":"should_fix","problem":"…"}],
+ "blocked_checks":[{"check":"…","reason":"…","impact":"…","action_required":false}],
+ "needs_team":false}
+Set "needs_team": true (with status partial) only when the request turns out to need a planned, multi-step effort across components
+that you cannot finish well alone; Relay then brings in a supervisor who continues from your working tree."""
+
+
+def solo_kickoff(task, wt, branch, issue_text, refs_text, guidance, cfg=None, gate_cmd="", env_text="", tools_text="", verify_cmds=None,
+                 plan_file=""):
+    cfg = cfg or {}
+    rules_text = rules_block(rule_names_for("worker", cfg, task.get("requirements", "") + " " + (issue_text or "")))
+    gate = ("DESIGN GATE\nThe design gate is enforced, not advisory: hard-coded colours outside token files, non-design-system fonts, gradient text "
+            "and forbidden terms fail verification and block delivery. Run it before you report and fix every error it lists:\n  " + gate_cmd) if gate_cmd else ""
+    verify = ("CHECKS RELAY RUNS AFTER YOUR REPORT\n" + "\n".join("- " + c for c in verify_cmds)) if verify_cmds else ""
+    intro = "\n".join([
+        "SETUP",
+        "- You are the only engineer on this task (solo mode). Relay verifies, commits and opens the pull request.",
+        "- Human operator: can send guidance at any time through the Relay UI.",
+        "",
+        f"REPOSITORY: {wt}",
+        f"BRANCH: {branch} (isolated git worktree; the user's main checkout is untouched)",
+        f"TASK ID: {task['id']}",
+    ])
+    return tokens.build([
+        ("rules", "You are the ENGINEER working alone on a task run by Relay. Where the rules below mention a supervisor or work "
+                  "packages, you play both parts: the whole request is your one package.\n\n" + rules_text),
+        ("protocol", SOLO_SESSION.replace("{plan_file}", str(plan_file or "the run folder's SOLO_PLAN.md"))),
+        ("tools", tools_text),
+        ("task", intro + "\n\n" + task_block(task, issue_text, refs_text)),
+        ("environment", ("ENVIRONMENT PREPARED BY RELAY\n" + env_text + "\n\n" if env_text else "") + verify),
+        ("environment", gate),
+        ("guidance", ("USER GUIDANCE\n" + guidance) if guidance else ""),
+        ("instruction", SOLO_REPORT + "\n\nStart now: write the plan file, implement, verify what you changed, report."),
+    ], insert_before="environment")
+
+
+def solo_followup(kind: str, body: str, guidance: str = "") -> str:
+    head = {"verify": "RELAY VERIFICATION FAILED AFTER YOUR REPORT",
+            "gate": "ACCEPTANCE NOT PROVEN",
+            "check": "INDEPENDENT CHECK FOUND BLOCKING PROBLEMS",
+            "guidance": "USER GUIDANCE"}.get(kind, "ORCHESTRATOR")
+    tail = {"verify": "Fix the cause (not the check), rerun the failing check locally, and report again with the same envelope.",
+            "gate": "For each criterion: implement what is missing, or give concrete evidence (the command and its result, file:line, a screenshot path). "
+                    "Report again with the full acceptance list.",
+            "check": "Fix each blocking finding exactly as described (add a test where it fits) and report again with the same envelope.",
+            }.get(kind, "Act on it and report again with the same envelope.")
+    return tokens.build([("instruction", head + "\n" + str(body or "").strip()),
+                         ("guidance", ("USER GUIDANCE (new)\n" + guidance) if guidance else ""),
+                         ("instruction", tail)])
+
+
 REVIEWER_SESSION = _session_block([
     "- This session is persistent; on later rounds you receive the new state and can check whether earlier findings were fixed.",
     "- Compare the implementation against the requirements and acceptance criteria. Inspect the diff and the code around it, the verification results and the checks that could not run. Do not modify files.",

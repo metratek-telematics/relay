@@ -71,4 +71,11 @@ the repository. If the owner switches direction mid-task, rework what differs fr
 ## Before reporting an interactive feature done
 Run the real flow with `relay-browse` against the running app (dev server or integration stack) and paste the
 relevant part of its report (steps ok, values, postMessage payloads, console errors) as evidence. If the app cannot
-run here, say so as a blocked check; do not substitute a mock and call it verified.
+run here (no backend, missing runtime config, no data), say so as a blocked check after one attempt and move on; do
+not build mocks, stub servers or fake pages to get a screenshot, and do not call a mock verified.
+
+## Time is part of the result
+- Run the tests closest to your change (`npx vitest run path/to/spec`, `pytest tests/test_x.py`), not the whole suite.
+- Do not run the production build: Relay runs lint, the full tests and the build once, after your report. Run it only
+  when the change is to the build itself.
+- A build you run may rewrite tracked files (version stamps, generated maps); leave them, Relay restores them.
