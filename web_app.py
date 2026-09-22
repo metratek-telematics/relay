@@ -691,6 +691,30 @@ def task_artifact(tid, kind):
     return jsonify({"text": "", "path": None, "size": 0})
 
 
+# Performance measurements of a task (orchestrator/perfcheck.py): reports, comparison, Lighthouse page, trace downloads.
+PERF_TYPES = {".md": "text/plain; charset=utf-8", ".json": "application/json", ".png": "image/png", ".html": "text/html; charset=utf-8",
+              ".gz": "application/gzip", ".cpuprofile": "application/json"}
+
+
+@app.get("/api/tasks/<tid>/perf/<label>/<name>")
+def task_perf_file(tid, label, name):
+    t = task_or_404(tid)
+    root = (Path(t.get("run_dir") or manager.store.task_dir(tid)) / "perf").resolve()
+    p = (root / label / name).resolve()
+    suffix = ".cpuprofile" if name.endswith(".cpuprofile") else p.suffix.lower()
+    if root not in p.parents or not p.is_file() or suffix not in PERF_TYPES:
+        return jsonify({"error": "Not found"}), 404
+    ctype = PERF_TYPES[suffix]
+    resp = Response(p.read_bytes(), mimetype=ctype.split(";")[0], headers={"Content-Type": ctype})
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    if suffix in (".gz", ".cpuprofile"):
+        resp.headers["Content-Disposition"] = f"attachment; filename={tid}-{label}-{name}"
+    if suffix == ".html":
+        # Lighthouse's report page: scripts allowed for its own viewer, but in an opaque origin with no access to Relay.
+        resp.headers["Content-Security-Policy"] = "sandbox allow-scripts allow-popups; default-src 'none'; img-src data: blob: https:; style-src 'unsafe-inline' https:; script-src 'unsafe-inline' https:; font-src data: https:"
+    return resp
+
+
 # ----------------------------------------------------------------------------- design exploration (mockups)
 from orchestrator import exploration  # noqa: E402
 

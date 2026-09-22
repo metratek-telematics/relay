@@ -8,6 +8,7 @@ import { acceptanceCardHtml, bindAcceptance } from "../acceptance.js";
 import { openTaskFolder } from "../ide.js";
 import { scorecardCard, bindScorecard } from "./success.js";
 import { stackCardHtml, bindStackCard } from "./stacks.js";
+import { perfCardHtml } from "./perf.js";
 import { attributionHtml } from "./org/attribution.js";
 
 export const TABS = [
@@ -122,6 +123,7 @@ export function mountInspector(container, getTask, opts = {}) {
         ${t.error ? `<div class="ecard"><strong>Failure</strong>${esc(t.error)}</div>` : ""}
         ${t.summary ? `<div class="card"><div class="card-head"><h3>Summary</h3></div><div class="card-body md">${md(t.summary)}</div></div>` : ""}
         ${acceptanceCardHtml(t, { editing: bindAcceptance.editing })}
+        ${perfCardHtml(t)}
         ${scorecardCard(t)}
         ${stackCardHtml(t)}
         ${workCard(t)}
@@ -345,7 +347,8 @@ export function mountInspector(container, getTask, opts = {}) {
     const v = t.verification;
     const head = checks && v ? `<div class="vcard ${v.ok ? "" : "fail"}" style="margin-bottom:10px"><div class="vh">${icon(v.ok ? "shield" : "alert")}Last verification ${v.ok ? "passed" : "failed"} <span class="muted" style="font-weight:400">· ${timeAgo(v.time)}</span></div><ul>${(v.items || []).map((i) => `<li class="${i.ok ? "ok" : "fail"}">${icon(i.ok ? "check" : "x")}<span class="truncate">${esc(i.command)}</span><small>${i.ok ? "pass" : `exit ${i.rc}`} · ${fmtDur(i.duration)}</small></li>`).join("")}</ul></div>` : "";
     const cmds = checks && (t.verify_commands || []).length ? `<div class="hint" style="margin-bottom:10px">Commands: ${t.verify_commands.map((c) => `<code>${esc(c)}</code>`).join(" · ")}</div>` : (checks ? '<div class="hint" style="margin-bottom:10px">No verification commands detected for this repository. Add some in the task workflow or Settings → Verification.</div>' : "");
-    body.innerHTML = head + cmds + (r.text ? `<pre class="pre">${esc(r.text)}</pre>` : `<div class="empty small">${esc(emptyText)}</div>`);
+    const perf = checks ? perfCardHtml(t) : "";
+    body.innerHTML = head + (perf ? `<div style="margin-bottom:10px">${perf}</div>` : "") + cmds + (r.text ? `<pre class="pre">${esc(r.text)}</pre>` : `<div class="empty small">${esc(emptyText)}</div>`);
   }
   async function renderReview(t) {
     const r = t.review;

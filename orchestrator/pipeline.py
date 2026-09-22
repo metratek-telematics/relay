@@ -19,7 +19,7 @@ from pathlib import Path
 
 from . import config as C
 from . import commitguard, connectors, design, designcheck, environment, exploration, gitops, github, judge, lessons, multirepo, protocol, repo_env, stacks
-from . import tokens, toolbox
+from . import perfcheck, tokens, toolbox
 from .runner import Interrupted, Stopped, TurnTimeout
 from .util import APP_DIR, new_id, now, quiet, read_text, truncate, write_text
 
@@ -535,6 +535,8 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
                          '{"expect":{"js":"…state changed…"}},{"screenshot":"after"}]. '
                          "The report lists each step, recorded values, the real postMessage payloads between frames/components, "
                          "and console errors. Paste the relevant part as evidence.")
+        if perfcheck.applies(self):
+            lines.append(perfcheck.env_line(self.run_dir))
         return "\n".join(lines)
 
     def forbidden_terms_file(self):
@@ -594,7 +596,8 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
 
     def run_verification(self):
         n_stack = len((self.stack or {}).get("checks") or [])
-        if not self.verify_cmds and not self.design_gate and not n_stack and not any(r.get("verify_commands") for r in self.related):
+        perf = perfcheck.applies(self)
+        if not self.verify_cmds and not self.design_gate and not n_stack and not perf and not any(r.get("verify_commands") for r in self.related):
             return ""
         self.r.status("verifying", f"Running {len(self.verify_cmds) + (1 if self.design_gate else 0) + n_stack} verification check(s)")
         # Checks such as a production build may rewrite tracked files (version stamps, generated maps).
@@ -650,6 +653,11 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
             stack_items, stack_parts = stacks.pipeline_verify(self)
             items += stack_items
             parts += stack_parts
+        if perf:
+            # Performance tasks: re-measure the worktree against the baseline (orchestrator/perfcheck.py).
+            perf_items, perf_parts = perfcheck.pipeline_verify(self)
+            items += perf_items
+            parts += perf_parts
         if self.design_gate and self.base:
             item, text = self.run_design_gate()
             items.append(item)
@@ -778,6 +786,7 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
         prompt = protocol.with_block(prompt, self.playbook_text)
         prompt = protocol.with_block(prompt, self.context_text("supervisor"))
         prompt = protocol.with_block(prompt, self.kickoff_design_note())
+        prompt = protocol.with_block(prompt, perfcheck.kickoff_note(self))
         res, env = self.supervisor_turn(prompt, f"{_label(sup_agent)} is inspecting the repository and planning", turn=0)
         if env.get("type") != "plan":
             if env.get("type") in ("instruction", "decision") and env.get("instruction"):
@@ -850,6 +859,7 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
                            "instruction": self.package_prefix(env) + (env.get("instruction") or "Implement the plan."), "instruction_kind": "instruction",
                            "instruction_summary": env.get("summary", "")})
         self.save()
+        perfcheck.after_plan(self, env)  # performance tasks: baseline measurement of the starting commit
         self.maybe_enter_design(env)   # complex or multi-repository tasks design first (orchestrator/design.py)
 
     def dialogue(self):
@@ -929,6 +939,7 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
         sup_agent, _ = self.role_agent("supervisor")
         typ = env.get("type")
         self.note_amendments(env, "supervisor")
+        perfcheck.update_spec(self, env)
         if typ == "decision" and env.get("decision") == "done":
             self.add_followups(env.get("follow_ups") or env.get("followups"), "supervisor")
             gated = self.done_gate(env, turn)
@@ -940,7 +951,7 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
                        content=self.state["pr_summary"], criteria=self.criteria(), turn=turn)
             self.r.timeline("supervisor", "Supervisor declared the task complete", env.get("summary", ""))
             # The design gate is enforced at done even when command verification is off.
-            if (self.verify_mode == "before_review" and self.verify_cmds) or (self.design_gate and self.verify_mode != "each_report"):
+            if (self.verify_mode == "before_review" and (self.verify_cmds or perfcheck.applies(self))) or (self.design_gate and self.verify_mode != "each_report"):
                 vt = self.run_verification()
                 self.state["last_verification"] = vt
                 if not (self.task_meta().get("verification") or {}).get("ok", True):
@@ -1374,7 +1385,7 @@ class Pipeline(exploration.ExplorationFlow, design.DesignFlow, multirepo.MultiRe
             rnd = int(self.state.get("review_round") or 1)
             self.r.status("reviewing", f"{_label(rev_agent)} is reviewing independently · round {rnd}/{self.max_review_rounds}")
             vt = self.state.get("last_verification") or ""
-            if ((self.verify_cmds and self.verify_mode != "off") or self.design_gate) and not vt:
+            if (((self.verify_cmds or perfcheck.applies(self)) and self.verify_mode != "off") or self.design_gate) and not vt:
                 vt = self.run_verification()
                 self.state["last_verification"] = vt
             sess = self.sessions.get("reviewer") or {}
