@@ -218,6 +218,7 @@ class SoloFlow:
                                            self.cfg, self.gate_command(), self.env_text(), self.tools_text("worker"), self.verify_cmds,
                                            plan_file=self.solo_plan_file())
             prompt = protocol.with_lessons(prompt, self.lessons_text)
+            prompt = protocol.with_block(prompt, self.knowledge_text, "knowledge")
             prompt = protocol.with_block(prompt, self.playbook_text)
             prompt = protocol.with_block(prompt, self.context_text("worker"))
         else:

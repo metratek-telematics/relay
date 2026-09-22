@@ -106,6 +106,8 @@ from orchestrator.org import web as org_web  # noqa: E402
 org_web.install(app, manager, broadcast)
 import web_learning  # noqa: E402  learning engine API (recommendations, risk, proposals, playbooks)
 app.register_blueprint(web_learning.init(manager, broadcast))
+import web_knowledge  # noqa: E402  knowledge docs: list, read, search, edit (audited), staleness refresh
+app.register_blueprint(web_knowledge.init(manager, broadcast))
 
 
 @app.after_request
