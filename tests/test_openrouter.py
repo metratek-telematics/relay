@@ -35,6 +35,13 @@ os.environ["RELAY_OPENROUTER_API_KEY"] = KEY
 from orchestrator import autopilot, openrouter as OR, openrouter_launch as ORL, openrouter_proxy as GW  # noqa: E402
 from orchestrator import outcomes, scorecard  # noqa: E402
 
+# Another test file may have imported openrouter first, when it captured (and cleared) an environment without the
+# mock server; capture again so this file always talks to its own mock.
+if not OR.base_overridden():
+    os.environ["RELAY_OPENROUTER_BASE_URL"] = f"http://127.0.0.1:{PORT}/api/v1"
+    os.environ["RELAY_OPENROUTER_API_KEY"] = KEY
+    OR._ENV = OR._capture_env()
+
 NOW = 1_790_000_000.0
 
 
