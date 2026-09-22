@@ -85,16 +85,26 @@ function defaultSteps(w, h) {
 // ---------------------------------------------------------------- in-page probes
 // Runs in the page and in every iframe before their scripts: frame times and web-vitals style entries.
 function initProbe() {
-  const st = (window.__relayPerf = { raf: [], lcp: 0, cls: 0, events: [], longtasks: 0 });
-  const origin = performance.timeOrigin;
-  const tick = (t) => { if (st.raf.length < 200000) st.raf.push(origin + t); requestAnimationFrame(tick); };
-  requestAnimationFrame(tick);
+  const st = (window.__relayPerf = window.__relayPerf || { raf: [], lcp: 0, cls: 0, events: [], longtasks: 0 });
+  const origin = () => performance.timeOrigin;
+  // An iframe's initial about:blank window is reused by its first navigation and loses pending rAF callbacks,
+  // so the loop restarts on DOMContentLoaded/load and whenever it has gone quiet (one loop at a time).
+  let gen = 0, last = 0;
+  const start = () => {
+    const g = ++gen;
+    const tick = (t) => { if (g !== gen) return; last = Date.now(); if (st.raf.length < 200000) st.raf.push(origin() + t); requestAnimationFrame(tick); };
+    requestAnimationFrame(tick);
+  };
+  start();
+  addEventListener("DOMContentLoaded", start);
+  addEventListener("load", start);
+  setInterval(() => { if (Date.now() - last > 1500 && document.visibilityState === "visible") start(); }, 1000);
   const observe = (type, fn, extra) => {
     try { new PerformanceObserver((l) => l.getEntries().forEach(fn)).observe({ type, buffered: true, ...(extra || {}) }); } catch {}
   };
   observe("largest-contentful-paint", (e) => { st.lcp = Math.max(st.lcp, e.startTime); });
   observe("layout-shift", (e) => { if (!e.hadRecentInput) st.cls += e.value; });
-  observe("event", (e) => { if (st.events.length < 5000) st.events.push({ n: e.name, d: e.duration, id: e.interactionId || 0, t: origin + e.startTime }); }, { durationThreshold: 16 });
+  observe("event", (e) => { if (st.events.length < 5000) st.events.push({ n: e.name, d: e.duration, id: e.interactionId || 0, t: origin() + e.startTime }); }, { durationThreshold: 16 });
   observe("longtask", () => { st.longtasks++; });
 }
 
