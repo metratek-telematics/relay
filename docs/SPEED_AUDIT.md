@@ -125,4 +125,35 @@ re-appended the same "Autopsy" event every 30 minutes (300+ duplicate timeline e
 See the table below (re-runs on scratch copies of the repository at the same starting commit, same agents, push and
 pull requests off).
 
-MEASUREMENT_TABLE
+Re-runs of real tasks from the history on a scratch clone of the repository at the same starting commit
+(`f5e66121`), in a throwaway container built from this branch, same team (Claude supervisor, Codex worker), Team mode
+Auto, push and pull requests off, run one at a time. **Single agent** is Codex alone (`codex exec`, same CLI and login,
+same container) in a fresh clone with `node_modules` already installed, given the owner's request verbatim; it runs no
+lint, test suite or build of its own unless it chooses to.
+
+| task | before: active (wall incl. queue) | after: Relay | single agent | after ÷ single | outcome after |
+|---|---|---|---|---|---|
+| fender average line (simple) | 11:30 (86:47) | 6:56 ¹ | 3:42 | 1.87 | solo; lint, tests, build pass; 2 files |
+| metrics date picker (simple) | 12:01 (78:22) | **5:47** | 4:32 | **1.27** | solo; checks pass; 2 files |
+| playback UTC toggle + picker (moderate) | 68:27 (68:27) | **7:16** | 7:21 | **0.99** | solo (rated moderate by the cheap rating); checks pass |
+| playback wind widget (moderate) | 26:09 (91:01) | **13:08** ² | 12:54 | **1.02** | solo + independent check, which found a real bug (range playback never loaded weather); fixed in one round |
+| new: rename a chart title (trivial) | – | 5:07 | 2:38 | 1.94 | solo; checks pass; 1 line |
+| metrics date picker, Team mode forced | 12:01 | 10:08 | – | – | team path on the new build: 1 package, generated files restored automatically, no review (simple) |
+
+¹ First run on a cold package cache: `npm ci` took 52 s. Every later run reused `node_modules` in about 2 s.
+² Before the evidence gate moved ahead of verification: the proof nudge changed files and forced a second full
+verification (100 s); the current build runs the checks once on the final tree.
+
+Where the remaining time goes (from the task page breakdown of the re-runs): the worker's own turn is 60 to 70% and
+Relay's full verification (`npm run lint`, `npm run test`, `npm run build`, 98 to 116 s, of which the production build
+is 83 to 93 s) is most of the rest; setup is 2 s, triage 0 to 13 s (the cheap rating finishes after a cached setup),
+orchestration overhead 3 s. For moderate work Relay now matches a single agent while still running the full checks and
+the gate. For a trivial change the fixed ~100 s of full verification is the whole difference: the agent part is 1.3x
+of a single agent (205 s vs 158 s, the plan file and one browser attempt); a single agent that also ran the same
+checks would take 4:16, making Relay 1.2x of that.
+
+The queue share (25% of all historical wall time) is removed for small work by the express lane, tested live: with
+one slot busy on a Team task, a queued simple task started at once ("Express lane" event) instead of waiting.
+
+Against the history: the same four requests took 118 minutes of active time before (259 minutes from request to pull
+request, queue included) and 33 minutes after, each still verified by the full lint, test and build.
