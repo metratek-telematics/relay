@@ -8,6 +8,26 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Speed: triage and a solo fast path** (`orchestrator/triage.py`, `orchestrator/solo.py`, docs/SPEED_AUDIT.md).
+  Team mode per task (Auto, Solo, Team). Auto triages every task with a heuristic and, for borderline requests, a cheap
+  one-shot rating that runs while dependencies install. Small and moderate single-repository work runs one agent that
+  plans, builds and proves the change; Relay still verifies, gates acceptance on evidence and runs a light independent
+  check only when the change is risky. The design step, design research, exploration and the final review scale with
+  the task and record why they ran. An express lane starts solo tasks beside a long run instead of behind it.
+- **Faster verification and setup** (`orchestrator/verifyfast.py`): results reused for an unchanged tree, builds
+  skipped when only tests or docs changed and deferred per package, lint and tests side by side, baseline results
+  shared across tasks, generated files restored automatically, `node_modules` reused across tasks by hard links while
+  the lockfile is unchanged.
+- **Where the time went** on the task page: active and queued time, kinds of work, each phase split by kind, and why
+  each heavy phase ran (`orchestrator/timing.py`).
+
+### Fixed
+
+- An owner's "waive D1" in an answer or guidance now waives the criterion, and "just make a PR" delivers; before, the
+  judge kept refusing done. Exploration no longer triggers on performance work that keeps the look. OpenRouter daily
+  quota errors fail fast instead of six back-offs. The scorecard refresh no longer re-appends the same autopsy event
+  every 30 minutes.
+
 - **OpenRouter as a provider** (`orchestrator/openrouter.py`, `openrouter_proxy.py`, `openrouter_launch.py`,
   `web/js/views/openrouter.js`, docs/OPENROUTER.md). Any role can run its agent on OpenRouter ("Runs on · OpenRouter"
   in the team): Claude Code, Codex, OpenCode, Kilo, Cline, Goose, Aider, Crush, Qwen Code, Continue and GitHub Copilot,

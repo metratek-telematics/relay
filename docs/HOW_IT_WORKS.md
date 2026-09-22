@@ -3,6 +3,13 @@
 ## A task from start to finish
 1. You pick a repository, describe the change once, and choose a team preset (for example *Codex supervises Claude*).
 2. The orchestrator creates an isolated git worktree and branch. Uncommitted changes in your checkout are carried over so the team builds on your work.
+3. **Triage.** Relay decides how much process the task needs (Team mode per task: Auto, Solo, Team). In Auto, small and
+   moderate single-repository work without risk signals runs **solo**: one agent (the worker) writes its plan and
+   acceptance criteria first, implements, and reports once; Relay verifies, gates the criteria on evidence and asks a
+   second agent for a light check only when the change looks risky. Complex, multi-repository, risky or redesign work
+   gets the team below. The design step, design research, exploration and the final review each run only when the
+   task warrants them, and the task page (Details → Where the time went) says why each ran or was skipped.
+   See docs/SPEED_AUDIT.md.
 3. **Supervisor kickoff.** The supervisor inspects the repository with its own tools and replies with a plan, objective acceptance criteria and the first work package.
 4. **Worker turn.** The worker receives the work package, implements it with full tool access, runs local checks, and replies with a report (`complete`, `partial` or `blocked`). It may ask the supervisor or you a question instead.
 5. **Verification.** The orchestrator runs detected or configured commands (pytest, npm test, gradle, …) and records the results.
