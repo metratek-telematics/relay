@@ -624,17 +624,21 @@ function compare(before, after) {
     const pct = b[key] ? (d / Math.abs(b[key])) * 100 : null;
     const big = Math.abs(d) >= abs && (b[key] === 0 || Math.abs(d) / Math.abs(b[key] || 1) >= rel);
     const verdict = !big ? "unchanged" : d * dir > 0 ? "improved" : "regressed";
-    rows.push({ metric: key, before: b[key], after: a[key], delta: A.round(d, 2), pct: pct === null ? null : A.round(pct), verdict, key: KEY.has(base) && !key.split(".").slice(1, -1).length || KEY.has(base) });
+    rows.push({ metric: key, before: b[key], after: a[key], delta: A.round(d, 2), pct: pct === null ? null : A.round(pct), verdict, key: KEY.has(base) });
   }
   const keyRows = rows.filter((r) => r.key);
   const regressed = keyRows.filter((r) => r.verdict === "regressed");
   const improved = keyRows.filter((r) => r.verdict === "improved");
   const verdict = regressed.length ? "regressed" : improved.length ? "improved" : "unchanged";
-  return { verdict, improved: improved.map((r) => r.metric), regressed: regressed.map((r) => r.metric), rows,
+  const warnings = [];
+  if (before.scenario_hash && after.scenario_hash && before.scenario_hash !== after.scenario_hash)
+    warnings.push("the two runs used different scenarios (URL, steps, viewport or throttling differ): totals are not comparable");
+  return { verdict, comparable: !warnings.length, warnings, improved: improved.map((r) => r.metric), regressed: regressed.map((r) => r.metric), rows,
            before: { url: before.url, time: before.time, label: before.label }, after: { url: after.url, time: after.time, label: after.label } };
 }
 function compareMarkdown(c) {
   const L = [`# Performance comparison: **${c.verdict}**`, "", `before: ${c.before.label || c.before.url} (${c.before.time})  →  after: ${c.after.label || c.after.url} (${c.after.time})`, ""];
+  for (const w of c.warnings || []) L.push(`**Warning:** ${w}`);
   if (c.improved.length) L.push(`Improved: ${c.improved.join(", ")}`);
   if (c.regressed.length) L.push(`Regressed: ${c.regressed.join(", ")}`);
   L.push("", "| metric | before | after | Δ | Δ% | verdict |", "|---|---:|---:|---:|---:|---|");
@@ -720,7 +724,8 @@ async function cmdRun() {
   const browser = await chromium.launch({ args: [...BROWSER_ARGS, "--enable-precise-memory-info"] });
   const out = { tool: "relay-perf", version: 1, url, label: arg("label", ""), time: new Date().toISOString(),
                 scenario_source: stepsFile ? path.basename(stepsFile) : "default map scenario (pan ×8, zoom in/out, idle)",
-                viewport: { width, height }, profiles: [], summary: {} };
+                viewport: { width, height }, profiles: [], summary: {},
+                scenario_hash: require("crypto").createHash("sha1").update(JSON.stringify({ url: url.replace(/:\/\/(127\.0\.0\.1|localhost):\d+/, "://local"), steps, width, height, rates })).digest("hex").slice(0, 12) };
   try {
     for (const rate of rates) {
       const runs = [];

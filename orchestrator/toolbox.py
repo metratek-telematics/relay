@@ -124,6 +124,7 @@ BUILTINS = [
     ("relay-connect", "Connectors: call the real API, database, logs and running app behind the code through Relay"),
     ("relay-stack", "Integration stack: start, check and read logs of the task's services"),
     ("relay-screenshot", "Headless browser screenshots with console errors"),
+    ("relay-perf", "Browser performance: trace + CPU profile + FPS while driving the page at 1x/4x CPU, Lighthouse, compare/assert"),
     ("relay-tools", "List the task's tools and request new ones"),
     ("rg", "ripgrep: fast code search"), ("jq", "JSON processor"), ("git", "Git"), ("gh", "GitHub CLI"),
     ("docker", "Docker client (integration stacks)"), ("node", "Node.js"), ("python3", "Python"), ("curl", "HTTP client"),

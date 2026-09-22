@@ -44,6 +44,15 @@ RUN npm install -g "playwright-core@${PLAYWRIGHT_VERSION}" \
  && npm cache clean --force \
  && rm -rf /var/lib/apt/lists/*
 
+# Lighthouse for relay-perf (tools/perf.cjs): performance score, LCP/TBT/CLS and its diagnostics, run against the
+# same bundled Chromium. Pinned; in its own prefix so it never shadows the agent CLIs.
+ARG LIGHTHOUSE_VERSION=13.5.0
+RUN mkdir -p /opt/lighthouse \
+ && npm install --prefix /opt/lighthouse --omit=dev --no-audit --no-fund "lighthouse@${LIGHTHOUSE_VERSION}" \
+ && ln -sf /opt/lighthouse/node_modules/.bin/lighthouse /usr/local/bin/lighthouse \
+ && chmod -R a+rX /opt/lighthouse \
+ && npm cache clean --force
+
 # Docker client (static binary) and buildx, for per-task integration stacks (orchestrator/stacks.py).
 # Only the client: stacks run on the host's daemon when you mount its socket (see docker-compose.yml).
 # Without the socket Relay works as before and says plainly that stacks are unavailable.
@@ -82,6 +91,8 @@ RUN chmod +x /app/docker/entrypoint.sh /app/run.sh \
  && chmod 755 /usr/local/bin/relay-screenshot \
  && printf '#!/bin/sh\nexec node /app/tools/browse.cjs "$@"\n' > /usr/local/bin/relay-browse \
  && chmod 755 /usr/local/bin/relay-browse \
+ && printf '#!/bin/sh\nexec node /app/tools/perf.cjs "$@"\n' > /usr/local/bin/relay-perf \
+ && chmod 755 /usr/local/bin/relay-perf \
  && printf '#!/bin/sh\nexec /opt/venv/bin/python /app/tools/relay_stack.py "$@"\n' > /usr/local/bin/relay-stack \
  && chmod 755 /usr/local/bin/relay-stack \
  && chmod 755 /app/tools/bin/relay-connect /app/tools/bin/relay-tools \
