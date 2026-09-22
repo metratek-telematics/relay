@@ -367,6 +367,8 @@ class MultiRepo:
 
     def take_guidance(self, role):
         text = self.m.take_guidance(self.tid, role)
+        if text and hasattr(self, "apply_human_text"):
+            self.apply_human_text(text)   # "waive D1", "just make a PR" (orchestrator/solo.py)
         notes = self.state.pop(f"repo_notes_{role}", "")
         if notes:
             self.save()

@@ -13,7 +13,11 @@ export function workflowEditor(host, wf, { agents, presets, showAdvanced = true,
   const orReady = (cur, a) => cur.provider === "openrouter" && orSupported(a) && !!health[a]?.installed;
   const roles = ["supervisor", "worker", "reviewer"];
   const draw = () => {
+    const TEAM_MODES = [["auto", "Auto", "Relay triages: small and moderate tasks run one agent; complex, risky or redesign work gets the team"], ["solo", "Solo", "One agent (the worker) plans, builds and proves it; Relay verifies"], ["team", "Team", "Supervisor plans and judges, worker builds, reviewer gates"]];
     host.innerHTML = `
+      <div class="field team-mode"><label id="tmLabel">Team mode</label>
+        <div class="seg" role="radiogroup" aria-labelledby="tmLabel">${TEAM_MODES.map(([v, l, h]) => `<button type="button" role="radio" data-team-mode="${v}" aria-checked="${(wf.team_mode || "auto") === v}" class="${(wf.team_mode || "auto") === v ? "active" : ""}" title="${esc(h)}">${esc(l)}</button>`).join("")}</div>
+        <div class="help">${esc((TEAM_MODES.find(([v]) => v === (wf.team_mode || "auto")) || TEAM_MODES[0])[2])}. Solo runs need only the worker below.</div></div>
       <div class="presets">${presets.map((p) => `<button type="button" class="preset ${wf.preset === p.id ? "active" : ""}" data-preset="${esc(p.id)}">
         <div class="flow">${["supervisor", "worker", "reviewer"].filter((r) => p.roles[r]?.agent).map((r) => `<span class="av sm ${esc(p.roles[r].agent)}" title="${r}">${esc(agentInitial(p.roles[r].agent))}</span>`).join(icon("arrowRight"))}</div>
         <strong>${esc(p.name)}</strong><p>${esc(p.description)}</p></button>`).join("")}
@@ -66,6 +70,7 @@ export function workflowEditor(host, wf, { agents, presets, showAdvanced = true,
       </div>
       ${perTask ? `<div class="field inline"><label>Show me mockups before building<span class="help" style="display:block;margin:2px 0 0">The team explores design directions, then waits for your pick (the focus group's pick after the answer timeout).</span></label><span class="switch ${wf.show_mockups ? "on" : ""}" data-sw="show_mockups" role="switch" tabindex="0" aria-checked="${!!wf.show_mockups}" aria-label="Show me mockups before building"></span></div>` : ""}
       <div class="field"><label>Verification commands (one per line, optional)</label><textarea data-wf="verification_commands" rows="2" placeholder="npm test&#10;python -m pytest -q">${esc((wf.verification_commands || []).join("\n"))}</textarea><div class="help">Auto-detected commands (npm scripts, pytest, gradle, …) are added too unless disabled. <label style="display:inline-flex;gap:4px;align-items:center"><input type="checkbox" data-cb="auto_detect_verification" ${wf.auto_detect_verification !== false ? "checked" : ""}> auto-detect</label></div></div>` : ""}`;
+    $$("[data-team-mode]", host).forEach((b) => (b.onclick = () => { wf.team_mode = b.dataset.teamMode; draw(); onChange && onChange(wf); }));
     $$("[data-preset]", host).forEach((b) => (b.onclick = () => {
       wf.preset = b.dataset.preset;
       const p = presets.find((x) => x.id === wf.preset);
@@ -120,7 +125,7 @@ export function defaultWorkflow() {
     roles[r] = { agent, model: cfg.roles?.[r]?.model || "", effort: cfg.roles?.[r]?.effort || "", provider: same ? (cfg.roles?.[r]?.provider || "") : "" };
   }
   return { preset: cfg.workflow_preset || "custom", roles, max_turns: cfg.max_turns || 12, max_review_rounds: cfg.max_review_rounds || 3, verify_mode: cfg.verify_mode || "each_report",
-    approval_before_delivery: !!cfg.approval_before_delivery, allow_agent_questions: cfg.allow_agent_questions !== false, design_mode: cfg.design_mode || "auto", design_approval: cfg.design_approval || "auto", show_mockups: false, verification_commands: [], auto_detect_verification: cfg.auto_detect_verification !== false };
+    approval_before_delivery: !!cfg.approval_before_delivery, allow_agent_questions: cfg.allow_agent_questions !== false, design_mode: cfg.design_mode || "auto", design_approval: cfg.design_approval || "auto", show_mockups: false, verification_commands: [], auto_detect_verification: cfg.auto_detect_verification !== false, team_mode: cfg.team_mode || "auto" };
 }
 
 // A follow-up is a new task on a delivered task's branch, with the same repository and team.
@@ -368,6 +373,7 @@ export function openNewTask(prefill = {}) {
           <div><b>Request</b>${esc((data.requirements || `Issue #${data.issue}`).slice(0, 400))}${data.requirements.length > 400 ? "…" : ""}</div>
           <div><b>Team</b>${["supervisor", "worker", "reviewer"].filter((x) => r[x].agent).map((x) => `${esc(agentLabel(r[x].agent))}${onOR(x) ? " via OpenRouter" : ""} (${x}${onOR(x) ? `, ${esc(orLabel(r[x].model || ((S.providers || {}).openrouter || {}).default_model || AUTO_FREE))}` : r[x].model ? `, ${esc(r[x].model)}` : ", CLI default model"}${r[x].effort ? `, ${esc(r[x].effort)} effort` : ""})`).join(" · ")}</div>
           <div><b>Budget</b>${data.workflow.max_turns} work packages · ${data.workflow.max_review_rounds} review rounds · verification ${esc(data.workflow.verify_mode)}${data.workflow.approval_before_delivery ? " · approval gate on" : ""}</div>
+          <div><b>Team mode</b>${esc({ auto: "auto (triage decides solo or team)", solo: "solo: one agent", team: "team: supervisor, worker, reviewer" }[data.workflow.team_mode || "auto"])}</div>
           <div><b>Design first</b>${esc({ auto: "auto", always: "always", never: "never" }[data.workflow.design_mode || "auto"])}${checkedRelated().length && (data.workflow.design_mode || "auto") === "auto" ? " · this multi-repository task gets a reviewed design before implementation" : ""} · design approval ${esc(data.workflow.design_approval || "auto")}</div>
           <div><b>Delivery</b>isolated branch → ${S.config.github_auto_create_pr ? "draft PR" : "branch only"} (never merges)</div>
         </div>

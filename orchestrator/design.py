@@ -846,7 +846,17 @@ class DesignFlow:
         """Called at the end of kickoff: switch to the design phase when the task needs one."""
         cx = normalize_complexity(env.get("complexity"))
         multi = bool(getattr(self, "related", None))
-        wanted, reason = needs_design(self.task, self.cfg, cx, multi)
+        tri = self.state.get("triage") or {}
+        if tri and tri.get("mode_setting") != "team":
+            # Proportional: the reviewed design costs 5 to 50 minutes, so it runs for complex or contract-changing work only.
+            from . import triage as T
+            if cx.get("level"):
+                tri = {**tri, "level": cx["level"]}
+            wanted, reason = T.design_wanted(tri, design_mode(self.task, self.cfg), cx, multi)
+        else:
+            wanted, reason = needs_design(self.task, self.cfg, cx, multi)
+        if hasattr(self, "ceremony"):
+            self.ceremony("design", wanted, reason)
         self.m.set_meta(self.tid, complexity=cx or None)
         self.state["complexity"] = cx
         if not wanted:
@@ -857,6 +867,8 @@ class DesignFlow:
             self.save()
             return
         self.r.timeline("system", "Design first", reason)
+        if hasattr(self, "phase_mark"):
+            self.phase_mark("design")
         self.state.update({"phase": "design", "design_stage": "draft", "design_reason": reason, "design_revisions": 0})
         self.save_design({"status": "drafting", "version": 0, "complexity": cx, "trigger": reason}, render=False)
         self.save()
@@ -991,6 +1003,12 @@ class DesignFlow:
     def design_phase(self):
         sup_label = self.role_agent("supervisor")[0]
         max_rev = max(0, int(self.cfg.get("design_max_revisions", 2)))
+        level = ((self.design().get("complexity") or {}).get("level") or (self.state.get("complexity") or {}).get("level") or "")
+        explicit_team = (self.state.get("triage") or {}).get("mode_setting") == "team"
+        proportional = level != "complex" and not explicit_team
+        if proportional:
+            # Below complex, one revision settles the real findings; later rounds were polishing (5 rounds, 12 minutes).
+            max_rev = min(max_rev, 1)
         while self.state.get("phase") == "design":
             self.r.check_stop()
             stage = self.state.get("design_stage") or "draft"
@@ -1033,8 +1051,8 @@ class DesignFlow:
                     key, text = self.escalate("Design review still blocking", question,
                                               {"accept": "Proceed with the design, list the findings as follow-ups", "guidance": "Give guidance", "stop": "Stop the task"},
                                               auto="accept",
-                                              work=("guidance", "Revise the design to resolve each blocking finding above; where you disagree, "
-                                                                "say why in one line and keep the rest."))
+                                              work=None if proportional else ("guidance", "Revise the design to resolve each blocking finding above; where you disagree, "
+                                                                                          "say why in one line and keep the rest."))
                     if key != "accept":
                         self.state.update({"design_stage": "draft", "design_revisions": max(0, max_rev - 1),
                                            "design_prompt": design_revision_request(findings_text, text, "the human")})
@@ -1104,6 +1122,8 @@ class DesignFlow:
              f"Implement the packages in this order: {order}. Name the package in every instruction (\"package\":\"W2\"); Relay attaches its contracts."
              + (f"\nHuman note: {note}" if note else ""))
         self.r.timeline("system", "Implementation starts from the design", order)
+        if hasattr(self, "phase_mark"):
+            self.phase_mark("build")
         self.save()
 
     # ------------------------------------------------------------ during implementation

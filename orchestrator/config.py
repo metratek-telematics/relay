@@ -211,6 +211,17 @@ DEFAULTS = {
     "judge_budget_extension": 3,             # work packages granted when the budget runs out and the team continues
     "judge_escalation_timeout_minutes": 120,  # unanswered judge questions take the safe automatic choice after this (0 = wait)
     "max_parallel": 1,
+    # Speed (docs/SPEED_AUDIT.md). Team mode per task: auto (triage decides) | solo (one agent) | team (supervisor + worker).
+    "team_mode": "auto",
+    "triage_rating": True,               # borderline requests get a cheap one-shot rating from the supervisor's agent
+    "triage_agent": "",                  # blank = the task's supervisor agent on its cheapest model
+    "triage_model": "",
+    "triage_timeout_seconds": 90,
+    "solo_fix_rounds": 2,                # a solo run's verification failures go back to the same session this many times
+    "solo_gate_nudges": 1,               # a solo run's unproven criteria: one nudge, then follow-ups
+    "solo_independent_check": True,      # a light second look when the triage or the result is risky
+    "express_lane": 1,                   # extra slots for solo tasks, so a small task never waits behind a long one
+    "speed_migrated": False,
     "queue_running": False,          # remembered across restarts so the queue resumes itself
     "auto_resume_interrupted": True,  # re-queue tasks that a restart interrupted mid-run
     # codex
@@ -260,13 +271,18 @@ DEFAULTS = {
     "token_prompt_deltas": True,        # do not re-send what a live session already has (contract, verification, reply help)
     "token_failure_excerpts": True,     # failing checks: the lines that explain the failure, deduplicated
     "token_diff_mode": "targeted",      # targeted: diffstat + hunks that fit + git command for the rest · full: truncated diff
-    "token_compact_threshold": 120000,  # fresh session with a Relay handoff once a session's context passes this (0 = off)
+    "token_compact_threshold": 180000,  # fresh session with a Relay handoff once a session's context passes this (0 = off)
     "token_codex_verbosity": "low",     # Codex model_verbosity for GPT-5 family models ("" = the CLI's default)
     "token_claude_max_output_tokens": 0,  # CLAUDE_CODE_MAX_OUTPUT_TOKENS per response (0 = Claude Code's default)
     # verification
     "verification_commands": [],
     "auto_detect_verification": True,
     "verification_timeout_minutes": 20,
+    "verify_parallel": True,             # independent checks run side by side (a build stays alone with the others)
+    "verify_skip_unaffected_build": True, # no build when only tests, docs or specs changed
+    "verify_reuse_results": True,        # the same tree and the same command are never verified twice
+    "deps_cache": True,                  # reuse node_modules across tasks of a repository while the lockfile is unchanged
+    "deps_cache_keep": 3,                # cached dependency trees kept per repository
     # integration stacks (orchestrator/stacks.py): per-task containers built from the task's branches
     "stack_start": "prepare",            # prepare: before agents work (they get URLs) · verify: only at verification
     "stack_max_concurrent": 2,           # stacks running at once across all tasks
@@ -427,6 +443,11 @@ def _migrate(cfg: dict) -> dict:
         out["models"]["openrouter"] = []
     out["model_recent"].setdefault("openrouter", [])
     out["saved_prompts"] = _clean_prompts(out.get("saved_prompts"))
+    if not cfg.get("speed_migrated"):
+        # The old compaction default restarted sessions every few turns (a fresh session re-reads the repository).
+        if cfg.get("token_compact_threshold") == 120000:
+            out["token_compact_threshold"] = DEFAULTS["token_compact_threshold"]
+        out["speed_migrated"] = True
     out["build"] = BUILD
     return out
 

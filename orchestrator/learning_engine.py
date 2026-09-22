@@ -199,8 +199,14 @@ class LearningEngine:
         res.update(time=now(), finished_at=card.get("finished_at"), proposals=[p["id"] for p in stored])
         if not persist:
             return res
+        prev = task.get("autopsy") or {}
+        # The scorecard refresh re-reads finished runs every half hour and files the proposals again under new ids;
+        # only a different diagnosis is news on the timeline (the same one was appended 300+ times to a single task).
+        res["signature"] = "|".join([str(res.get("cause")), str(res.get("finished_at"))]
+                                    + sorted(str(p.get("text") or p.get("kind") or "") for p in stored))
         self.m.store.update(tid, touch=False, autopsy=res)
-        if stored:
+        if stored and prev.get("signature") != res["signature"] and not (not prev.get("signature") and prev.get("cause") == res.get("cause")
+                                                                           and prev.get("finished_at") == res.get("finished_at")):
             self.m.timeline(tid, "system", f"Autopsy · {res['label'].lower()}", f"{len(stored)} improvement proposal(s) in Learning")
             self.m.emit("learning", {"proposals": self.open_proposals_count()})
         return res

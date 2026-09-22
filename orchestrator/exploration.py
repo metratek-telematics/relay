@@ -708,9 +708,19 @@ class ExplorationFlow:
             return False
         if int(self.state.get("turn") or 1) != 1 or self.state.get("awaiting") != "worker" or int((self.sessions.get("worker") or {}).get("turns") or 0):
             return False
-        want, why = wanted(self.exploration_settings(), self.needs_design_research())
+        st = self.exploration_settings()
+        tri = self.state.get("triage") or {}
+        if tri:
+            from . import triage as T
+            want, why = T.exploration_wanted(tri, st.get("show_mockups"), st.get("mode"))
+        else:
+            want, why = wanted(st, self.needs_design_research())
+        if hasattr(self, "ceremony") and (self.state.get("ceremony") or {}).get("exploration", {}).get("why") != why:
+            self.ceremony("exploration", want, why)
         if not want:
             return False
+        if hasattr(self, "phase_mark"):
+            self.phase_mark("explore")
         self.state["exploration_reason"] = why
         return True
 
@@ -896,6 +906,9 @@ class ExplorationFlow:
                 if isinstance(e, (Stopped, Interrupted)):
                     raise
                 self.r.timeline(role, f"{label} failed", truncate(str(e), 200))
+                if "cannot run with this setup" in str(e):
+                    # A sign-in, model or quota problem fails every persona the same way: stop the panel now.
+                    break
                 continue
             got = reviews_from_envelope(env, letters, group)
             for r in got:
