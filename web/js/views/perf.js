@@ -22,7 +22,8 @@ function verdictOf(p) {
   if (!p.baseline && !p.latest) return { text: p.reason ? "not measured" : "measuring", tone: p.reason ? "red" : "" };
   if (!p.latest) return { text: p.baseline?.ok ? "baseline recorded" : "baseline failed", tone: p.baseline?.ok ? "" : "red" };
   if (p.ok) return { text: p.verdict === "improved" ? "improved · targets met" : `targets met · ${p.verdict || "compared"}`, tone: "green" };
-  return { text: p.verdict === "regressed" ? "regressed" : "targets missed", tone: "red" };
+  const met = (p.asserts || []).filter((r) => r.ok).length, n = (p.asserts || []).length;
+  return { text: `${p.verdict === "regressed" ? "regressed" : "targets missed"}${n ? ` · ${met}/${n} targets` : ""}`, tone: "red" };
 }
 
 export function perfCardHtml(t) {
