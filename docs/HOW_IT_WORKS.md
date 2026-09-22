@@ -23,6 +23,15 @@ Agents run unattended with their native tools (file edits, shell, search, web, c
 Codex in a `workspace-write` sandbox, Claude with permissions bypassed, Gemini in YOLO / auto-edit mode.
 Change these under **Settings → Agents**, including per-agent environment variables (for example `GOOGLE_CLOUD_PROJECT` for Gemini).
 
+## Performance tasks
+When a task is about speed or smoothness (slow, lag, smooth, fps, jank, freezes, cpu, memory, optimise…) on a web
+repository, the plan must carry a `perf` spec: the page, how to serve it, a scenario (for a map: pan and zoom phases) and
+numeric targets such as `4x.pan.fps_p5>=45` or `4x.tbt_ms<=-50%`. Relay measures the starting commit with `relay-perf`
+right after the plan, re-measures the worktree at every verification with the same recorded data, compares and checks the
+targets. No measurement, a missed target or a regression fails verification, so the task cannot be delivered on a
+screenshot. The task page's **Performance** card shows before/after, the targets and links to the reports, the comparison
+and the Chrome trace (open it in DevTools › Performance › Load profile).
+
 ## Costs and observability
 Token usage per role and agent is read from the CLI streams; Claude also reports dollar cost. The Sessions tab shows session ids you can resume in your own terminal, the Logs tab shows the raw stream with per-agent filters, and every artifact is a plain file under `runtime/<task>/`.
 

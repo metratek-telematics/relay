@@ -5,6 +5,9 @@
 //   relay-perf run <url> [steps.json] [--out dir] [--throttle 1,4] [--network slow4g|fast3g] [--width 1440] [--height 900]
 //                  [--settle 3000] [--repeat 1] [--no-lighthouse] [--lighthouse-preset desktop|mobile] [--label name]
 //                  [--serve "npx vite --host 127.0.0.1 --port {port} --strictPort"]   start the app first; <url> may then be a path
+//                  [--har data.har [--har-url "**/rpc/**"]]   record the scenario's responses once (file missing), then replay them
+//                                                            in every run, so before/after compare the same live data (default:
+//                                                            only requests to other origins; the app's own code is never replayed)
 //   relay-perf compare <before/perf.json> <after/perf.json> [--out compare.json] [--md compare.md]
 //   relay-perf assert <perf.json> "4x.fps_p5>=45" "4x.pan.long_task_max_ms<=100" [--baseline before/perf.json "4x.tbt_ms<=-50%"]
 //
@@ -53,7 +56,7 @@ const NETWORK = {
 // ---------------------------------------------------------------- args
 const argv = process.argv.slice(2);
 const VALUED = new Set(["--out", "--throttle", "--network", "--width", "--height", "--settle", "--repeat", "--lighthouse-preset",
-  "--label", "--md", "--baseline", "--theme", "--timeout", "--serve", "--serve-timeout"]);
+  "--label", "--md", "--baseline", "--theme", "--timeout", "--serve", "--serve-timeout", "--har", "--har-url"]);
 function arg(name, fallback) { const i = argv.indexOf(`--${name}`); return i > -1 && argv[i + 1] !== undefined ? argv[i + 1] : fallback; }
 const flag = (name) => argv.includes(`--${name}`);
 const positional = argv.filter((a, i) => !a.startsWith("--") && !VALUED.has(argv[i - 1]));
@@ -190,6 +193,8 @@ async function runProfile(browser, url, steps, opts) {
   const context = await browser.newContext({ viewport: { width: opts.width, height: opts.height }, ignoreHTTPSErrors: true,
                                              colorScheme: opts.theme === "dark" ? "dark" : "light" });
   await context.addInitScript(initProbe);
+  // Same data for every run: replay recorded responses (anything not recorded still goes to the network).
+  if (opts.har) await context.routeFromHAR(opts.har, { notFound: "fallback", url: opts.harUrl || undefined });
   const page = await context.newPage();
   const cdp = await context.newCDPSession(page);
   await cdp.send("Performance.enable", { timeDomain: "timeTicks" }).catch(() => cdp.send("Performance.enable"));
@@ -588,17 +593,19 @@ function markdown(out) {
 // ---------------------------------------------------------------- compare / assert
 // direction: -1 lower is better, +1 higher is better. rel = relative change that counts, abs = minimum absolute change.
 const METRICS = {
-  fps_avg: [1, 0.05, 2], fps_p5: [1, 0.1, 3], jank_pct: [-1, 0.2, 3], jank33_pct: [-1, 0.2, 2], janky_time_pct: [-1, 0.2, 5], frame_max_ms: [-1, 0.25, 30],
-  long_tasks: [-1, 0.2, 2], long_tasks_over_100ms: [-1, 0.2, 1], long_task_p95_ms: [-1, 0.2, 20], long_task_max_ms: [-1, 0.2, 25],
-  tbt_ms: [-1, 0.2, 50], main_busy_pct: [-1, 0.1, 5], cores_used: [-1, 0.15, 0.2], scripting_ms: [-1, 0.15, 100], rendering_ms: [-1, 0.2, 50],
-  painting_ms: [-1, 0.2, 50], gc_ms: [-1, 0.25, 30], forced_layouts: [-1, 0.25, 5], inp_ms: [-1, 0.2, 30], heap_growth_mb: [-1, 0.5, 5],
-  heap_end_mb: [-1, 0.15, 10], dom_nodes: [-1, 0.1, 200], listeners: [-1, 0.1, 50], requests: [-1, 0.2, 5], transfer_kb: [-1, 0.2, 200],
-  ws_msgs_per_s: [-1, 0.2, 5], load_ms: [-1, 0.15, 300], lcp_ms: [-1, 0.15, 300], cls: [-1, 0.25, 0.05], load_tbt_ms: [-1, 0.2, 100],
-  "lighthouse.score": [1, 0.05, 5], "lighthouse.tbt_ms": [-1, 0.2, 50], "lighthouse.lcp_ms": [-1, 0.15, 300], "lighthouse.cls": [-1, 0.25, 0.05],
-  "lighthouse.bootup_ms": [-1, 0.15, 200], "lighthouse.mainthread_ms": [-1, 0.15, 300],
+  fps_avg: [1, 0.1, 3], fps_p5: [1, 0.2, 3], jank_pct: [-1, 0.25, 4], jank33_pct: [-1, 0.25, 3], janky_time_pct: [-1, 0.25, 8], frame_max_ms: [-1, 0.3, 50],
+  long_tasks: [-1, 0.25, 3], long_tasks_over_100ms: [-1, 0.25, 2], long_task_p95_ms: [-1, 0.25, 40], long_task_max_ms: [-1, 0.3, 50],
+  tbt_ms: [-1, 0.25, 200], main_busy_pct: [-1, 0.15, 8], cores_used: [-1, 0.2, 0.3], scripting_ms: [-1, 0.2, 300], rendering_ms: [-1, 0.25, 80],
+  painting_ms: [-1, 0.25, 100], gc_ms: [-1, 0.3, 50], forced_layouts: [-1, 0.3, 5], inp_ms: [-1, 0.3, 50], heap_growth_mb: [-1, 0.5, 15],
+  heap_end_mb: [-1, 0.2, 20], dom_nodes: [-1, 0.1, 200], listeners: [-1, 0.2, 50], requests: [-1, 0.25, 10], transfer_kb: [-1, 0.25, 300],
+  ws_msgs_per_s: [-1, 0.25, 5], load_ms: [-1, 0.2, 300], lcp_ms: [-1, 0.2, 300], cls: [-1, 0.25, 0.05], load_tbt_ms: [-1, 0.25, 150],
+  "lighthouse.score": [1, 0.08, 8], "lighthouse.tbt_ms": [-1, 0.25, 100], "lighthouse.lcp_ms": [-1, 0.2, 300], "lighthouse.cls": [-1, 0.25, 0.05],
+  "lighthouse.bootup_ms": [-1, 0.2, 200], "lighthouse.mainthread_ms": [-1, 0.2, 300],
 };
-// The metrics a change is judged by; the rest are reported but do not decide the verdict alone.
-const KEY = new Set(["fps_avg", "fps_p5", "jank_pct", "long_task_max_ms", "tbt_ms", "main_busy_pct", "scripting_ms", "heap_growth_mb", "inp_ms", "lighthouse.score", "lighthouse.tbt_ms"]);
+// The metrics a change is judged by, over the whole interaction (phase windows are short and noisy: they are
+// reported and can be targets, but do not decide the verdict alone). Heap and request counts depend on live data;
+// make them targets when the task is about memory or requests.
+const KEY = new Set(["fps_avg", "fps_p5", "long_task_max_ms", "tbt_ms", "main_busy_pct", "scripting_ms", "inp_ms", "lighthouse.score", "lighthouse.tbt_ms"]);
 
 function flatten(perf) {
   const out = {};
@@ -624,7 +631,7 @@ function compare(before, after) {
     const pct = b[key] ? (d / Math.abs(b[key])) * 100 : null;
     const big = Math.abs(d) >= abs && (b[key] === 0 || Math.abs(d) / Math.abs(b[key] || 1) >= rel);
     const verdict = !big ? "unchanged" : d * dir > 0 ? "improved" : "regressed";
-    rows.push({ metric: key, before: b[key], after: a[key], delta: A.round(d, 2), pct: pct === null ? null : A.round(pct), verdict, key: KEY.has(base) });
+    rows.push({ metric: key, before: b[key], after: a[key], delta: A.round(d, 2), pct: pct === null ? null : A.round(pct), verdict, key: KEY.has(base) && (key.startsWith("lighthouse.") || key.split(".").length === 2) });
   }
   const keyRows = rows.filter((r) => r.key);
   const regressed = keyRows.filter((r) => r.verdict === "regressed");
@@ -726,14 +733,35 @@ async function cmdRun() {
                 scenario_source: stepsFile ? path.basename(stepsFile) : "default map scenario (pan ×8, zoom in/out, idle)",
                 viewport: { width, height }, profiles: [], summary: {},
                 scenario_hash: require("crypto").createHash("sha1").update(JSON.stringify({ url: url.replace(/:\/\/(127\.0\.0\.1|localhost):\d+/, "://local"), steps, width, height, rates })).digest("hex").slice(0, 12) };
+  const harFile = arg("har", "") ? path.resolve(arg("har")) : "";
+  // Only data from other origins is recorded/replayed by default: the app's own code must always be the code under test.
+  let harUrl = arg("har-url", "") || undefined;
+  if (harFile && !harUrl) {
+    try { harUrl = new RegExp("^(?!" + new URL(url).origin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")https?://"); } catch { harUrl = undefined; }
+  }
   try {
+    if (harFile && !fs.existsSync(harFile)) {
+      // Record the data once (a pass that is not measured), so every profile and every later run sees the same data.
+      process.stderr.write(`relay-perf: recording the scenario's network data to ${harFile}…\n`);
+      const ctx = await browser.newContext({ viewport: { width, height }, ignoreHTTPSErrors: true });
+      await ctx.routeFromHAR(harFile, { update: true, updateContent: "embed", url: harUrl });
+      const pg = await ctx.newPage();
+      try {
+        await pg.goto(url, { waitUntil: "load", timeout: Number(arg("timeout", 120000)) });
+        await pg.waitForTimeout(Number(arg("settle", 3000)));
+        await runSteps(pg, steps, { outDir, profile: "record", phase: async () => {} });
+      } catch (e) { process.stderr.write(`relay-perf: recording: ${e.message.split("\n")[0]}\n`); }
+      await ctx.close();
+      out.har = { file: harFile, recorded: true };
+    } else if (harFile) out.har = { file: harFile, recorded: false };
     for (const rate of rates) {
       const runs = [];
       for (let k = 0; k < repeat; k++) {
         const label = `${rate}x${repeat > 1 ? "-" + (k + 1) : ""}`;
         process.stderr.write(`relay-perf: profiling ${label} (CPU ×${rate})…\n`);
         runs.push(await runProfile(browser, url, steps, { rate, outDir, label, width, height, settle: arg("settle", 3000),
-                                                         network: arg("network", ""), timeout: arg("timeout", 120000), theme: arg("theme", "light") }));
+                                                         network: arg("network", ""), timeout: arg("timeout", 120000), theme: arg("theme", "light"),
+                                                         har: harFile && fs.existsSync(harFile) ? harFile : "", harUrl }));
       }
       // Several runs: keep the median run (by p5 FPS, then TBT) so one noisy run does not decide.
       runs.sort((x, y) => (x.summary.fps_p5 ?? 0) - (y.summary.fps_p5 ?? 0) || (y.summary.tbt_ms ?? 0) - (x.summary.tbt_ms ?? 0));
@@ -757,7 +785,7 @@ async function cmdRun() {
   fs.writeFileSync(path.join(outDir, "perf.json"), JSON.stringify(out, null, 1));
   fs.writeFileSync(path.join(outDir, "PERF_REPORT.md"), markdown(out));
   // Console: the short version; the details are in the files.
-  console.log(JSON.stringify({ out: outDir, report: path.join(outDir, "PERF_REPORT.md"), summary: Object.fromEntries(Object.entries(out.summary).map(([k, v]) => [k, (() => { const { phases, ...rest } = v; return phases ? { ...rest, phases } : rest; })()])),
+  print(JSON.stringify({ out: outDir, report: path.join(outDir, "PERF_REPORT.md"), summary: Object.fromEntries(Object.entries(out.summary).map(([k, v]) => [k, (() => { const { phases, ...rest } = v; return phases ? { ...rest, phases } : rest; })()])),
                                findings: out.findings, steps_ok: out.profiles.every((p) => p.steps_ok),
                                top_functions: (out.profiles[out.profiles.length - 1]?.detail?.scenario?.hot_functions || []).slice(0, 8).map((f) => `${f.self_pct}% ${f.function} ${f.where}`) }, null, 2));
   if (server) server.stop();
@@ -765,6 +793,8 @@ async function cmdRun() {
 }
 
 function readJson(f) { return JSON.parse(fs.readFileSync(f, "utf8")); }
+// Synchronous: console.log to a pipe is asynchronous and process.exit() would cut a large report short.
+function print(text) { fs.writeSync(1, text.endsWith("\n") ? text : text + "\n"); }
 
 (async () => {
   const cmd = positional[0];
@@ -775,13 +805,13 @@ function readJson(f) { return JSON.parse(fs.readFileSync(f, "utf8")); }
     if (arg("out", "")) fs.writeFileSync(arg("out"), JSON.stringify(c, null, 1));
     const md = compareMarkdown(c);
     if (arg("md", "")) fs.writeFileSync(arg("md"), md);
-    console.log(flag("json") ? JSON.stringify(c, null, 1) : md);
+    print(flag("json") ? JSON.stringify(c, null, 1) : md);
     process.exit(c.verdict === "regressed" ? 1 : 0);
   } else if (cmd === "assert") {
     const file = positional[1];
     if (!file) usage();
     const r = assertAll(readJson(file), positional.slice(2), arg("baseline", "") ? readJson(arg("baseline")) : null);
-    console.log(JSON.stringify(r, null, 1));
+    print(JSON.stringify(r, null, 1));
     process.exit(r.ok ? 0 : 1);
   } else if (cmd === "run") {
     await cmdRun();

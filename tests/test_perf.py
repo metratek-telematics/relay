@@ -85,7 +85,8 @@ class CompareAssert(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(c["verdict"], "improved")
         self.assertIn("4x.fps_p5", c["improved"])
-        self.assertIn("4x.pan.fps_p5", c["improved"])
+        self.assertNotIn("4x.pan.fps_p5", c["improved"])      # phases are reported, targets can use them, the verdict does not
+        self.assertEqual(next(r for r in c["rows"] if r["metric"] == "4x.pan.fps_p5")["verdict"], "improved")
         rc, out = self.run_tool("assert", a, "4x.pan.fps_p5>=45", "4x.long_task_max_ms<=100", "4x.tbt_ms<=-50%", "--baseline", b)
         r = json.loads(out)
         self.assertTrue(r["ok"], r)
@@ -93,11 +94,13 @@ class CompareAssert(unittest.TestCase):
 
     def test_regressed_and_noise(self):
         b = self.write("b.json", perf_json())
-        a = self.write("a.json", perf_json(fps_p5=19.5, tbt=4100, heap=30))  # small noise, one real regression (heap)
+        noisy = self.write("n.json", perf_json(fps_p5=19, tbt=4300, long_max=320, heap=30))  # run-to-run noise, live-data heap
+        c = json.loads(self.run_tool("compare", b, noisy, "--json")[1])
+        self.assertEqual(c["verdict"], "unchanged", c["regressed"])
+        a = self.write("a.json", perf_json(fps_p5=10, tbt=6500))
         c = json.loads(self.run_tool("compare", b, a, "--json")[1])
         self.assertEqual(c["verdict"], "regressed")
-        self.assertEqual(c["regressed"], ["1x.heap_growth_mb", "4x.heap_growth_mb"])
-        self.assertNotIn("4x.fps_p5", c["improved"] + c["regressed"])
+        self.assertEqual(sorted(c["regressed"]), ["1x.fps_p5", "1x.tbt_ms", "4x.fps_p5", "4x.tbt_ms"])
 
     def test_assert_misses_and_errors(self):
         a = self.write("a.json", perf_json())
@@ -226,7 +229,8 @@ class Gate(unittest.TestCase):
         self.assertEqual(self.p.m.meta["perf"]["verdict"], "improved")
         # A new change that regresses: the worktree fingerprint changes, the measurement is re-taken and blocks.
         (self.wt / "x.js").write_text("changed")
-        self.results["after"] = perf_json(fps_p5=50, tbt=800, long_max=90, scripting=3000, pan_fps_p5=48, heap=40)
+        self.results["after"] = perf_json(fps_p5=50, tbt=800, long_max=90, scripting=9000, pan_fps_p5=48)
+        self.results["after"]["summary"]["1x"]["scripting_ms"] = 20000   # 1x got much worse while 4x targets still hold
         items, parts = perfcheck.pipeline_verify(self.p)
         self.assertFalse(items[0]["ok"])
         self.assertIn("regressed", parts[0])

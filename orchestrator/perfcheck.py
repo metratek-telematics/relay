@@ -78,6 +78,9 @@ def normalize_spec(raw) -> dict | None:
     targets = [str(t).strip() for t in (raw.get("targets") or []) if str(t).strip()]
     return {"url": url, "serve": str(raw.get("serve") or "").strip(), "steps": steps, "throttle": throttle,
             "targets": targets[:10], "lighthouse": bool(raw.get("lighthouse")),
+            # Live data changes between runs; by default the baseline records other origins' responses and every later
+            # run replays them, so before and after see the same vessels. live_data: true measures against the network.
+            "live_data": bool(raw.get("live_data")), "har_url": str(raw.get("har_url") or "").strip(),
             "settle": int(raw.get("settle") or 3000)}
 
 
@@ -137,6 +140,8 @@ def _measure(p, wt, label: str, spec: dict) -> dict:
     cmd = (f"{tool_command()} run {shlex.quote(spec['url'])} {steps_arg} --out {shlex.quote(str(out))} "
            f"--throttle {spec['throttle']} --settle {int(spec.get('settle') or 3000)} --label {shlex.quote(label)}"
            + ("" if spec.get("lighthouse") else " --no-lighthouse")
+           + ("" if spec.get("live_data") else f" --har {shlex.quote(str(Path(p.run_dir) / 'perf' / 'data.har'))}")
+           + (f" --har-url {shlex.quote(spec['har_url'])}" if spec.get("har_url") else "")
            + (f" --serve {shlex.quote(spec['serve'])}" if spec.get("serve") else ""))
     timeout = float(p.cfg.get("perf_timeout_minutes") or 15) * 60
     res = p.r.run_shell(cmd, wt, "verify", timeout=timeout, title=f"Performance · {label}")
@@ -190,6 +195,9 @@ def take_baseline(p, pristine: bool) -> dict | None:
     if not spec:
         return None
     p.r.timeline("verify", "Measuring performance on the starting commit", spec["url"])
+    har = Path(p.run_dir) / "perf" / "data.har"
+    if har.exists():
+        har.unlink()  # a new baseline records the data again
     if pristine:
         base = _measure(p, p.wt, "baseline", spec)
     else:
