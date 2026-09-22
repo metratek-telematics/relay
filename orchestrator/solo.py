@@ -233,6 +233,23 @@ class SoloFlow:
                 what = b.get("check") or "Work"
                 self.ask_human("worker", {"question": f"{what} is blocked: {b['reason']}" + (f"\nImpact: {b['impact']}" if b.get("impact") else "")
                                           + "\nHow should the team proceed?", "options": ["Continue without it", "I have fixed it, retry", "Stop the task"]})
+            # Evidence first: a nudge for proof can change files, so it comes before the (slow) checks, not after them.
+            criteria = self.criteria()
+            if criteria and used_gate < gate_nudges:
+                pre = judge.done_gate(criteria, None, check_verification=False)
+                unproven = [m for m in pre["missing"] if m["id"] != "verification"]
+                if unproven:
+                    used_gate += 1
+                    turn += 1
+                    self.state["turn"] = turn
+                    ids = ", ".join(m["id"] for m in unproven)
+                    self.r.msg(role="orchestrator", agent=None, kind="gate", ok=False, missing=unproven, turn=turn, content=f"Done refused: {ids} not proven")
+                    self.r.timeline("judge", "Done refused · criteria not proven", ids)
+                    rows = "\n".join(f"- {m['id']}: {m['criterion']} · {m['reason']}" for m in unproven)
+                    _, env = self.solo_turn(protocol.solo_followup("gate", rows + "\n\nCURRENT CONTRACT\n" + judge.acceptance_block(self.criteria()),
+                                                                   self.take_guidance("worker")), "Proving the acceptance criteria", turn)
+                    report = self.solo_record_report(env, turn)
+                    continue
             vt = self.run_verification()
             self.state["last_verification"] = vt
             failing = judge.failed_checks(self.task_meta().get("verification"))
@@ -250,24 +267,11 @@ class SoloFlow:
                                       "impact": "delivered with this check failing; fix before merging"} for f in failing])
                 self.add_followups([{"severity": "should_fix", "problem": f"Verification failing at delivery: {f.get('command')} (exit {f.get('rc')})"}
                                     for f in failing], "verification")
-            criteria = self.criteria()
             missing = []
-            if criteria:
-                gate = judge.done_gate(criteria, self.task_meta().get("verification"), check_verification=True)
+            if self.criteria():
+                gate = judge.done_gate(self.criteria(), self.task_meta().get("verification"), check_verification=True)
                 self.set_criteria(gate["criteria"])
                 missing = [m for m in gate["missing"] if m["id"] != "verification"]
-                if missing and used_gate < gate_nudges:
-                    used_gate += 1
-                    turn += 1
-                    self.state["turn"] = turn
-                    ids = ", ".join(m["id"] for m in missing)
-                    self.r.msg(role="orchestrator", agent=None, kind="gate", ok=False, missing=missing, turn=turn, content=f"Done refused: {ids} not proven")
-                    self.r.timeline("judge", "Done refused · criteria not proven", ids)
-                    rows = "\n".join(f"- {m['id']}: {m['criterion']} · {m['reason']}" for m in missing)
-                    _, env = self.solo_turn(protocol.solo_followup("gate", rows + "\n\nCURRENT CONTRACT\n" + judge.acceptance_block(self.criteria()),
-                                                                   self.take_guidance("worker")), "Proving the acceptance criteria", turn)
-                    report = self.solo_record_report(env, turn)
-                    continue   # verification reuses its results when the tree did not change (run_verification)
                 if missing:
                     self.add_followups([{"severity": "should_fix", "problem": f"{m['id']} not proven at delivery: {m['criterion']} ({m['reason']})"}
                                         for m in missing], "acceptance gate")

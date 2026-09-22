@@ -470,6 +470,9 @@ SOLO_REPORT = """REPORT ENVELOPE (solo)
  "files":["path/one"],"pr_summary":"2 to 5 lines for the pull request","follow_ups":[{"severity":"should_fix","problem":"…"}],
  "blocked_checks":[{"check":"…","reason":"…","impact":"…","action_required":false}],
  "needs_team":false}
+Every criterion needs "evidence" that points at something checkable: the command you ran and its one-line result
+(`npx vitest run tests/x.spec.js` → 12 passed), a file:line you read, or a screenshot path. Relay refuses "met" without
+it and sends the report back, which costs a turn.
 Set "needs_team": true (with status partial) only when the request turns out to need a planned, multi-step effort across components
 that you cannot finish well alone; Relay then brings in a supervisor who continues from your working tree."""
 
