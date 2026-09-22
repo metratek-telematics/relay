@@ -21,13 +21,18 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Where the time went** on the task page: active and queued time, kinds of work, each phase split by kind, and why
   each heavy phase ran (`orchestrator/timing.py`).
 
-### Fixed
-
-- An owner's "waive D1" in an answer or guidance now waives the criterion, and "just make a PR" delivers; before, the
-  judge kept refusing done. Exploration no longer triggers on performance work that keeps the look. OpenRouter daily
-  quota errors fail fast instead of six back-offs. The scorecard refresh no longer re-appends the same autopsy event
-  every 30 minutes.
-
+- **relay-perf: performance measured like DevTools and Lighthouse, not judged from screenshots** (`tools/perf.cjs`,
+  `tools/perf_analyze.cjs`, `orchestrator/perfcheck.py`, `web/js/views/perf.js`). Agents drive a page with a scripted
+  scenario (relay-browse steps plus drag, wheel and named phases) at normal and 4x/6x-throttled CPU while a Chrome trace
+  and the page's CPU profile are recorded, and get FPS avg/p5 and late frames (page and iframes), long tasks and TBT with
+  the functions inside them, the top 15 functions by self and total time with source-mapped file:line, scripting /
+  rendering / painting / GC time, forced layouts, heap after GC, DOM nodes and listeners, busy time of every thread,
+  request bursts, polling and websocket rates, and Lighthouse (pinned 13.5.0 in the image). `relay-perf compare` and
+  `relay-perf assert` turn two runs into a verdict and check numeric targets; `--har` replays the same live data in every
+  run and `--serve` starts the app. Performance tasks on web repositories must plan a measurement: Relay records the
+  baseline on the starting commit, re-measures at verification, and a missing measurement, a missed target or a
+  regression fails verification. The task page shows a performance card with before/after, targets and links to the
+  reports and the DevTools trace. rules/PERFORMANCE_RELIABILITY.md: profile first, typical map/browser causes and fixes.
 - **OpenRouter as a provider** (`orchestrator/openrouter.py`, `openrouter_proxy.py`, `openrouter_launch.py`,
   `web/js/views/openrouter.js`, docs/OPENROUTER.md). Any role can run its agent on OpenRouter ("Runs on · OpenRouter"
   in the team): Claude Code, Codex, OpenCode, Kilo, Cline, Goose, Aider, Crush, Qwen Code, Continue and GitHub Copilot,
@@ -70,6 +75,13 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   GitHub repositories. Settings are grouped and searchable.
 - Design system: `web/tokens.css` (house palette in light and dark, state colours reserved for status), self-hosted
   Hanken Grotesk and JetBrains Mono (`web/fonts`, SIL Open Font License), motion that stops under reduced motion.
+
+### Fixed
+
+- An owner's "waive D1" in an answer or guidance now waives the criterion, and "just make a PR" delivers; before, the
+  judge kept refusing done. Exploration no longer triggers on performance work that keeps the look. OpenRouter daily
+  quota errors fail fast instead of six back-offs. The scorecard refresh no longer re-appends the same autopsy event
+  every 30 minutes.
 
 ### Changed
 

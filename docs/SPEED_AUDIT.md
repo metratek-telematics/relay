@@ -77,10 +77,10 @@ Worker time split by what the package was for (349 minutes of worker turns after
 5. **Exploration and focus group triggered by accident (34 min + the worst failure).** Both map-performance runs
    explored three *visual* directions with a four-persona panel, because the request contained the word "visually"
    ("*visually it look identically the same*"). The chosen direction became a required criterion D1 (a new
-   "command deck" home screen) that the owner never asked for; see failure F1.
+   "command deck" home screen) that the owner never asked for; see section 4 (map stutter, 2nd run).
 6. **Reviewer turns on a free OpenRouter model (55 min on one run).** Idle timeouts and "free-model requests are used
    up (429)" were retried with back-off six times per role; one design-review turn took 22 minutes.
-7. **Owner answers that did not take effect (22 min of the owner's time, 6 refused "done"s).** See F1.
+7. **Owner answers that did not take effect (22 min of the owner's time, 6 refused "done"s).** See section 4.
 8. **Verification: 1:46 per run, every run.** `npm run build` is 84 s of it; lint 14 s; the test script fails in 4 s
    on the starting commit (pre-existing), and the baseline re-check runs it again in a separate worktree every task.
    Small in the total (2%), but it is on every run and it repeats identical work.
@@ -108,12 +108,12 @@ re-appended the same "Autopsy" event every 30 minutes (300+ duplicate timeline e
 | queue (1) | **Express lane**: a task triaged solo at intake starts beside a running task instead of waiting (default 1 extra slot; Settings → Workflow) | `autopilot.schedule`, `manager.create_task` |
 | ceremony on small work (2, 3, 4) | **Triage + solo fast path.** Team mode per task: Auto (default), Solo, Team. Auto: a keyword/shape heuristic, and for borderline requests a cheap one-shot rating by the supervisor's agent on its cheapest model, run in parallel with `npm ci`. Simple/moderate single-repository work without risk signals runs **one agent** (the worker) that writes its plan and acceptance criteria first (`SOLO_PLAN.md`), implements, runs the tests nearest its change and reports once. Relay still verifies, still gates acceptance on evidence (one nudge), and runs a **light independent check only when risk warrants** (risky area, large change, sensitive files, unproven criteria). A solo worker can hand over to a supervisor (`needs_team`), keeping its session and tree. | `orchestrator/triage.py`, `orchestrator/solo.py` |
 | design step (4) | Runs for complex, multi-repository, or moderate contract-changing work (API, schema, integration) only; below complex, one design revision, then the findings become follow-ups | `triage.design_wanted`, `design.py` |
-| exploration mis-trigger (5, F1) | Design research and exploration only for an explicit redesign or new look; never when the request keeps the look ("visually the same", "identical"), never for a small tweak, never in solo | `triage.research_wanted`, `triage.exploration_wanted` |
+| exploration mis-trigger (5) | Design research and exploration only for an explicit redesign or new look; never when the request keeps the look ("visually the same", "identical"), never for a small tweak, never in solo | `triage.research_wanted`, `triage.exploration_wanted` |
 | final review | In Auto, the independent reviewer runs for complex, risky or large changes; the reason is recorded either way | `triage.review_wanted`, `pipeline.finish_done` |
 | revisions over generated files (2) | Relay learns which tracked files its checks rewrite and restores them after every worker turn; worker rules: no production build, one browser attempt, no mocks | `pipeline.restore_generated`, `rules/WORKER.md` |
 | too many packages (3) | Supervisor rules: one package for simple/moderate, at most three for complex; no docs-only, count-fix, generated-file or evidence-only packages; large convention rewrites become follow-ups | `rules/SUPERVISOR.md` |
 | compactions (3) | Compaction threshold 120k → 180k tokens (migrated for installs still on the old default) | `config.py` |
-| owner decisions ignored (7, F1) | "waive D1" in any answer or guidance waives it as the owner; "just make a PR" / "deliver now" delivers at the next boundary (checks still run; open items become follow-ups) | `solo.apply_human_text`, `pipeline.done_gate`, `dialogue`, `review` |
+| owner decisions ignored (7) | "waive D1" in any answer or guidance waives it as the owner; "just make a PR" / "deliver now" delivers at the next boundary (checks still run; open items become follow-ups) | `solo.apply_human_text`, `pipeline.done_gate`, `dialogue`, `review` |
 | retry storm (6) | A daily quota or an empty balance fails the turn at once instead of six back-offs; a setup-level failure stops the focus group instead of trying each persona | `pipeline.run_role`, `exploration._explore_panel` |
 | verification (8) | Same tree + same commands → results reused; build skipped when only tests, docs or specs changed; per-package verification defers the build to the final run; lint and tests run side by side (a build stays alone); "fails on the starting commit too" answered once per repository, commit and command across tasks | `orchestrator/verifyfast.py`, `pipeline.run_verification` |
 | setup (9) | `node_modules` restored from a warm hard-linked copy when the lockfile and Node version match (about a second, no extra disk), saved after each successful install; newest 3 per repository kept | `verifyfast.deps_*`, `pipeline.prepare_environment` |

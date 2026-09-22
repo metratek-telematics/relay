@@ -52,7 +52,8 @@ CONTEXTUAL = {
     "DATA_API": ("api", "endpoint", "schema", "database", "migration", "sql", "query", "rest", "graphql"),
     "GIT_GITHUB": ("commit", "branch", "pull request", "merge", "rebase"),
     "DOCUMENTATION": ("doc", "readme", "changelog", "guide"),
-    "PERFORMANCE_RELIABILITY": ("performance", "slow", "latency", "memory", "leak", "cache", "concurren", "race"),
+    "PERFORMANCE_RELIABILITY": ("performance", "slow", "latency", "memory", "leak", "cache", "concurren", "race", "lag", "smooth",
+                                "fps", "frame rate", "jank", "stutter", "freez", "cpu", "optimi", "sluggish", "lighthouse"),
 }
 
 

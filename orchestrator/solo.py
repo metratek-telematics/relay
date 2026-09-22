@@ -122,6 +122,13 @@ class SoloFlow:
             th.join(timeout=max(5.0, float(self.cfg.get("triage_timeout_seconds") or 90) + 10 - (time.time() - getattr(self, "_rating_started", time.time()))))
         rating = getattr(self, "_rating", None)
         tri = triage.decide({**self.task, "repos": [r["name"] for r in self.related]}, self.cfg, h, rating)
+        try:
+            from . import perfcheck
+            if tri["mode"] == "solo" and tri["mode_setting"] == "auto" and perfcheck.applies(self):
+                # Measured performance work: the supervisor's plan names what to measure and the starting commit is measured first.
+                tri.update(mode="team", why="a measured performance task: the plan says what to measure and the starting commit is measured first")
+        except Exception:
+            pass
         self.state["triage"] = tri
         self.m.set_meta(self.tid, triage=tri)
         self.ceremony("mode", tri["mode"] == "team", tri["why"])
