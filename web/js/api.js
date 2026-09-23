@@ -52,6 +52,11 @@ export const api = {
   testOpenrouter: (apiKey) => post("/api/org/providers/openrouter/test", apiKey ? { api_key: apiKey } : {}),
   settings: () => get("/api/settings"),
   saveSettings: (partial) => post("/api/settings", partial),
+  // Personal settings: what this person overrides, what the organisation would give them, and what
+  // is in effect. The server resolves the precedence (orchestrator/personal.py); nothing here does.
+  mySettings: () => get("/api/org/me/settings"),
+  saveMySettings: (settings) => patch("/api/org/me/settings", { settings }),
+  clearMySettings: (keys) => del(`/api/org/me/settings${keys && keys.length ? `?key=${encodeURIComponent(keys.join(","))}` : ""}`),
   presets: () => get("/api/presets"),
   rules: () => get("/api/rules"),
   rule: (name) => get(`/api/rules/${encodeURIComponent(name)}`),

@@ -9,7 +9,7 @@ import time
 import traceback
 from pathlib import Path
 
-from . import agents, config as C, github, gitops, judge, multirepo, redeploy, stacks
+from . import agents, config as C, github, gitops, judge, multirepo, personal, redeploy, stacks
 from .autopilot import Autopilot
 from .learning import Learning
 from .pipeline import TurnBudget, orchestrate
@@ -141,8 +141,16 @@ class Manager:
         t = self.store.get(tid)
         return self.task_view(t) if t else None
 
-    def build_workflow(self, payload: dict) -> dict:
-        cfg = self.cfg()
+    def build_workflow(self, payload: dict, user=None) -> dict:
+        """Precedence: what the task itself says, then the person's own settings, then the organisation's.
+
+        `user` is who the task is for. It is never read from the payload: identity comes from the
+        request's trusted forward-auth header (orchestrator/org/web.py), which registers the provider
+        orchestrator/personal.py asks. The middle step of the precedence lives there and nowhere else.
+        """
+        me = personal.resolve_user(user)
+        cfg = personal.effective(self.cfg(), me or {})
+        mine = personal.overrides(me or {})
         wf_in = payload.get("workflow") or {}
         preset_id = wf_in.get("preset") or payload.get("preset") or cfg.get("workflow_preset")
         preset = C.preset(preset_id)
@@ -215,6 +223,9 @@ class Manager:
             # Team mode (orchestrator/triage.py): auto lets triage choose solo or team; solo = one agent; team = the full team.
             "team_mode": _choice(wf_in.get("team_mode"), ("auto", "solo", "team"), cfg.get("team_mode") or "auto"),
         }
+        # What this task started from, so its meaning does not change when someone else looks at it
+        # or when anybody later edits their own or the organisation's defaults.
+        wf["defaults_from"] = {"user": (me or {}).get("username", ""), "personal": sorted(mine)}
         return wf
 
     def create_task(self, payload: dict) -> dict:
@@ -340,7 +351,10 @@ class Manager:
                 if k in patch["workflow"]:
                     wf[k] = patch["workflow"][k]
             if t["status"] in ("queued", "draft") and "roles" in patch["workflow"]:
+                started_from = (t.get("workflow") or {}).get("defaults_from")
                 wf = self.build_workflow({"workflow": {**wf, **patch["workflow"]}})
+                if started_from:  # editing a task never rewrites whose defaults it started from
+                    wf["defaults_from"] = started_from
             allowed["workflow"] = wf
         if "status" in patch and patch["status"] == "queued" and t["status"] == "draft":
             allowed["status"] = "queued"
