@@ -17,6 +17,14 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Report an issue** (`web/js/views/report.js`, `POST /api/github/report-issue`). A flag button in the left rail and a
+  command-palette entry open a dialog that files a bug report or a feature request on the Relay repository without
+  leaving the workspace. The fields follow the repository's own issue templates, the environment block (Relay version,
+  agent CLI versions) is read from the running session and stays editable, and screenshots can be pasted, dropped or
+  browsed for. Relay calls `gh issue create`, retrying without the label if the repository has never created it, and
+  links straight to the new issue. GitHub accepts issue images only through its web interface, so pasted screenshots are
+  held briefly under `DATA_DIR/issue-attachments/` and offered for one-click copying instead. The target repository is
+  the new `github_issue_repo` setting under Settings → Git and GitHub.
 - **The model and effort a task runs on are shown, and come from the orchestrator** (`orchestrator/pipeline.py`
   `publish_role_plan`, `orchestrator/runner.py`, `web/js/state.js`). Relay resolves each role's model and effort
   once, with the same code that launches the agent, and records what every finished turn actually used; the task

@@ -88,6 +88,7 @@ export const api = {
   ghStatus: () => get("/api/github/status"),
   ghRepos: (force) => get(`/api/github/repos${force ? "?force=1" : ""}`),
   ghClone: (repo, name) => post("/api/github/clone", { repo, name }),
+  reportIssue: (payload) => post("/api/github/report-issue", payload),
   ghSources: () => get("/api/github/sources"),
   ghAddSource: (body) => post("/api/github/sources", body),
   ghDeleteSource: (id) => del(`/api/github/sources/${encodeURIComponent(id)}`),
