@@ -9,7 +9,7 @@ import time
 import traceback
 from pathlib import Path
 
-from . import agents, config as C, github, gitops, judge, multirepo, stacks
+from . import agents, config as C, github, gitops, judge, multirepo, redeploy, stacks
 from .autopilot import Autopilot
 from .learning import Learning
 from .pipeline import TurnBudget, orchestrate
@@ -43,6 +43,9 @@ class Manager:
         self.scheduler = False
         self.github_watcher = False
         self.github_status = {"last_poll": None, "error": None, "login": None}
+        self.redeploy_watcher = False
+        self.redeploy_status = {"last_poll": None, "error": None}
+        self.redeploy_lock = threading.Lock()  # one deployment at a time
         self._cfg = None
         self._cfg_at = 0
         self.notifications: list[dict] = []
@@ -196,6 +199,9 @@ class Manager:
             "verify_mode": wf_in.get("verify_mode") or cfg.get("verify_mode") or "each_report",
             "approval_before_delivery": bool(wf_in.get("approval_before_delivery", cfg.get("approval_before_delivery", False))),
             "allow_agent_questions": bool(wf_in.get("allow_agent_questions", cfg.get("allow_agent_questions", True))),
+            # Per-task opt-in for the redeploy watcher. Its default is its own setting, so changing
+            # what new tasks start with never touches the master switch (redeploy_enabled).
+            "redeploy_on_merge": bool(wf_in.get("redeploy_on_merge", cfg.get("redeploy_default_on", False))),
             "verification_commands": [c for c in (wf_in.get("verification_commands") or []) if str(c).strip()],
             "auto_detect_verification": bool(wf_in.get("auto_detect_verification", cfg.get("auto_detect_verification", True))),
             "setup_command": str(wf_in.get("setup_command") or "").strip(),
@@ -330,7 +336,7 @@ class Manager:
             allowed["tools"] = patch["tools"]
         if "workflow" in patch and isinstance(patch["workflow"], dict):
             wf = dict(t.get("workflow") or {})
-            for k in ("max_turns", "max_review_rounds", "verify_mode", "approval_before_delivery", "allow_agent_questions"):
+            for k in ("max_turns", "max_review_rounds", "verify_mode", "approval_before_delivery", "allow_agent_questions", "redeploy_on_merge"):
                 if k in patch["workflow"]:
                     wf[k] = patch["workflow"][k]
             if t["status"] in ("queued", "draft") and "roles" in patch["workflow"]:
@@ -450,6 +456,7 @@ class Manager:
             C.update({"queue_running": True})
             self.config_changed()
         if self.scheduler:
+            self.start_redeploy_watcher()
             self.emit("queue", {"running": True, "max_parallel": self.max_parallel})
             return
         self.scheduler = True
@@ -457,9 +464,11 @@ class Manager:
         self.emit("queue", {"running": True, "max_parallel": self.max_parallel})
         if self.cfg().get("github_intake_enabled", True):
             self.start_github_watcher()
+        self.start_redeploy_watcher()
 
     def stop_queue(self):
         self.scheduler = False
+        self.stop_redeploy_watcher()
         C.update({"queue_running": False})
         self.config_changed()
         self.emit("queue", {"running": False, "max_parallel": self.max_parallel})
@@ -970,6 +979,89 @@ class Manager:
         self.emit_task(tid)
         t = self.store.get(tid) or {}
         self.notify("success", "Task delivered", t.get("name", ""), tid, kind="delivered")
+
+    # ------------------------------------------------------------ redeploy
+    def start_redeploy_watcher(self):
+        if self.redeploy_watcher:
+            return
+        self.redeploy_watcher = True
+        threading.Thread(target=self._redeploy_loop, daemon=True).start()
+
+    def stop_redeploy_watcher(self):
+        self.redeploy_watcher = False
+
+    def _redeploy_candidate(self, task, cfg):
+        """(trigger, pr_state) for a task that should redeploy now, else None.
+
+        A task that already has a redeploy record is never picked up again, so a failing
+        deploy script cannot loop: recovery is the explicit Redeploy now button.
+        """
+        if task.get("redeploy") is not None:
+            return None
+        trigger = cfg.get("redeploy_trigger") or "pr_merged"
+        state = redeploy.merged_state(task) if trigger == "pr_merged" else None
+        if not redeploy.should_run(task, cfg, state):
+            return None
+        return trigger, state
+
+    def _run_redeploy(self, tid, trigger="manual", pr_state=None):
+        with self.redeploy_lock:
+            task = self.store.get(tid)
+            if not task:
+                raise KeyError("Task not found")
+            cfg = self.cfg()
+            if not cfg.get("redeploy_enabled"):
+                raise ValueError("Redeploy is disabled in Settings → Git & GitHub.")
+            if not redeploy.command(cfg):
+                raise ValueError("No redeploy command is configured in Settings → Git & GitHub.")
+            if (task.get("redeploy") or {}).get("status") == "running":
+                raise ValueError("A redeploy is already running for this task.")
+            self.store.update(tid, immediate=True, redeploy={
+                "status": "running", "trigger": trigger, "command": redeploy.command(cfg),
+                "cwd": str(redeploy.working_dir(task, cfg)), "exit_code": None, "output": "",
+                "started_at": now(), "finished_at": None, "pr_state": pr_state})
+            self.emit_task(tid)
+            record = redeploy.run(task, cfg, trigger=trigger, pr_state=pr_state)
+            self.store.update(tid, immediate=True, redeploy=record)
+            ok = record["status"] == "succeeded"
+            title = "Redeploy succeeded" if ok else "Redeploy failed"
+            self.timeline(tid, "system", title, f"exit {record.get('exit_code')} · {record.get('cwd')}")
+            self.notify("success" if ok else "error", title, task.get("name", ""), tid)
+            self.emit("redeploy", {"task_id": tid, "record": record})
+            self.emit_task(tid)
+            return record
+
+    def redeploy_now(self, tid):
+        """Run the configured command now, whatever the pull request state is."""
+        return self._run_redeploy(tid, trigger="manual", pr_state=None)
+
+    def _redeploy_loop(self):
+        while self.redeploy_watcher:
+            cfg = self.cfg()
+            try:
+                if cfg.get("redeploy_enabled") and redeploy.command(cfg):
+                    for task in self.store.list():
+                        candidate = self._redeploy_candidate(task, cfg)
+                        if not candidate:
+                            continue
+                        trigger, state = candidate
+                        try:
+                            self._run_redeploy(task["id"], trigger=trigger, pr_state=state)
+                        except Exception as exc:
+                            self.redeploy_status = {"last_poll": now(), "error": str(exc)}
+                        break  # one deployment per sweep, one at a time
+                    else:
+                        self.redeploy_status = {"last_poll": now(), "error": None}
+                else:
+                    self.redeploy_status = {"last_poll": now(), "error": None}
+            except Exception as e:
+                self.redeploy_status = {"last_poll": now(), "error": str(e)}
+            self.emit("redeploy_status", self.redeploy_status)
+            seconds = max(15, int(cfg.get("redeploy_poll_seconds") or 120))
+            for _ in range(seconds):
+                if not self.redeploy_watcher:
+                    return
+                time.sleep(1)
 
     # ------------------------------------------------------------ github intake
     def start_github_watcher(self):

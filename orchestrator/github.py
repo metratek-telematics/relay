@@ -164,6 +164,17 @@ def pr_for_branch(repo_full, branch):
         return None
 
 
+def pr_state(repo_full, number):
+    """Merge state of one pull request, or None when GitHub is unavailable."""
+    if not repo_full or not number:
+        return None
+    try:
+        return gh_json(["pr", "view", str(number), "--repo", repo_full,
+                        "--json", "state,mergedAt,mergeCommit"])
+    except Exception:
+        return None
+
+
 def create_pr(runner, wt, repo_full, branch, title, body_file, base="", draft=True) -> dict:
     args = ["gh", "pr", "create", "--repo", repo_full, "--head", branch, "--title", title, "--body-file", str(body_file)]
     if base:

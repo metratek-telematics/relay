@@ -67,6 +67,7 @@ export function workflowEditor(host, wf, { agents, presets, showAdvanced = true,
       <div class="grid2">
         <div class="field inline"><label>Require my approval before commit & PR</label><span class="switch ${wf.approval_before_delivery ? "on" : ""}" data-sw="approval_before_delivery"></span></div>
         <div class="field inline"><label>Agents may ask me questions</label><span class="switch ${wf.allow_agent_questions !== false ? "on" : ""}" data-sw="allow_agent_questions"></span></div>
+        <div class="field inline"><label>Redeploy when the pull request is merged<span class="help" style="display:block;margin:2px 0 0">Runs the command set in Settings → Git &amp; GitHub. Nothing runs unless redeploy is enabled there.</span></label><span class="switch ${wf.redeploy_on_merge ? "on" : ""}" data-sw="redeploy_on_merge" role="switch" tabindex="0" aria-checked="${!!wf.redeploy_on_merge}" aria-label="Redeploy when the pull request is merged"></span></div>
       </div>
       ${perTask ? `<div class="field inline"><label>Show me mockups before building<span class="help" style="display:block;margin:2px 0 0">The team explores design directions, then waits for your pick (the focus group's pick after the answer timeout).</span></label><span class="switch ${wf.show_mockups ? "on" : ""}" data-sw="show_mockups" role="switch" tabindex="0" aria-checked="${!!wf.show_mockups}" aria-label="Show me mockups before building"></span></div>` : ""}
       <div class="field"><label>Verification commands (one per line, optional)</label><textarea data-wf="verification_commands" rows="2" placeholder="npm test&#10;python -m pytest -q">${esc((wf.verification_commands || []).join("\n"))}</textarea><div class="help">Auto-detected commands (npm scripts, pytest, gradle, …) are added too unless disabled. <label style="display:inline-flex;gap:4px;align-items:center"><input type="checkbox" data-cb="auto_detect_verification" ${wf.auto_detect_verification !== false ? "checked" : ""}> auto-detect</label></div></div>` : ""}`;
@@ -125,7 +126,7 @@ export function defaultWorkflow() {
     roles[r] = { agent, model: cfg.roles?.[r]?.model || "", effort: cfg.roles?.[r]?.effort || "", provider: same ? (cfg.roles?.[r]?.provider || "") : "" };
   }
   return { preset: cfg.workflow_preset || "custom", roles, max_turns: cfg.max_turns || 12, max_review_rounds: cfg.max_review_rounds || 3, verify_mode: cfg.verify_mode || "each_report",
-    approval_before_delivery: !!cfg.approval_before_delivery, allow_agent_questions: cfg.allow_agent_questions !== false, design_mode: cfg.design_mode || "auto", design_approval: cfg.design_approval || "auto", show_mockups: false, verification_commands: [], auto_detect_verification: cfg.auto_detect_verification !== false, team_mode: cfg.team_mode || "auto" };
+    approval_before_delivery: !!cfg.approval_before_delivery, allow_agent_questions: cfg.allow_agent_questions !== false, redeploy_on_merge: !!cfg.redeploy_default_on, design_mode: cfg.design_mode || "auto", design_approval: cfg.design_approval || "auto", show_mockups: false, verification_commands: [], auto_detect_verification: cfg.auto_detect_verification !== false, team_mode: cfg.team_mode || "auto" };
 }
 
 // A follow-up is a new task on a delivered task's branch, with the same repository and team.

@@ -17,6 +17,18 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Redeploy after merge** (`orchestrator/redeploy.py`, `orchestrator/manager.py`, `web_app.py`,
+  `web/js/views/{settings,newtask,task}.js`). *Settings → Git & GitHub → Redeploy after merge* adds
+  `redeploy_enabled` (off by default), `redeploy_command`, `redeploy_working_dir`, `redeploy_trigger`,
+  `redeploy_timeout_minutes` and `redeploy_poll_seconds`; `redeploy_default_on` is a separate setting for what
+  the per-task switch in the workflow editor starts with, so changing the default for new tasks never flips the
+  master switch. A watcher checks each delivered opted-in task's pull request with `gh pr view` and runs the
+  command once, one deployment at a time, in its own process group with the configured timeout; the output goes
+  to `runtime/<task>/redeploy.log` and the status, exit code, trigger and timestamps onto the task, with a
+  timeline event and a notification. The task page shows the record beside the pull request and
+  `POST /api/tasks/<tid>/redeploy` (the *Redeploy now* button) runs it regardless of merge state, or returns 400
+  when no command is configured. The command is owner configuration only: never task text, agent output or a
+  request body.
 - **Report an issue** (`web/js/views/report.js`, `POST /api/github/report-issue`). A flag button in the left rail and a
   command-palette entry open a dialog that files a bug report or a feature request on the Relay repository without
   leaving the workspace. The fields follow the repository's own issue templates, the environment block (Relay version,

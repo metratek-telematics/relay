@@ -556,6 +556,9 @@ def task_action(tid, action):
     try:
         if action == "start":
             return jsonify({"ok": True, "task": manager.start_task(tid)})
+        elif action == "redeploy":
+            # The command comes from settings only; nothing in the request body reaches it.
+            return jsonify(manager.redeploy_now(tid))
         elif action == "stop":
             manager.stop(tid)
         elif action == "pause":
