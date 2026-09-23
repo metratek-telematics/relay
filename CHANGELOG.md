@@ -6,6 +6,15 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Tasks no longer start from stale code** (`orchestrator/gitops.py`, setting `branch_from_upstream`).
+  A new task branch is created after a fetch, from the remote branch the checkout follows, whenever that checkout
+  is merely behind it — a server checkout nobody pulls used to send every task off from months-old files, so the
+  work did not fit current code and the pull request could not be merged. A checkout that has diverged, carries
+  uncommitted changes or follows no remote branch still starts from what is checked out, and the timeline says
+  which of the two happened.
+
 ### Added
 
 - **Speed: triage and a solo fast path** (`orchestrator/triage.py`, `orchestrator/solo.py`, docs/SPEED_AUDIT.md).

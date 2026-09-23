@@ -159,6 +159,55 @@ def copy_ignored_root_files(source, wt, runner=None) -> list[str]:
     return copied
 
 
+def upstream_ref(repo) -> str:
+    """The remote branch the checkout follows (`origin/main`), or "" when it follows none."""
+    p = quiet(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], cwd=repo, timeout=15)
+    if p.returncode == 0 and (p.stdout or "").strip():
+        return p.stdout.strip()
+    head = quiet(["git", "symbolic-ref", "--short", "-q", "refs/remotes/origin/HEAD"], cwd=repo, timeout=15)
+    return (head.stdout or "").strip()
+
+
+def branch_base(repo, runner, cfg) -> str:
+    """Where a new task branch starts.
+
+    A checkout that is simply behind its remote (a server checkout nobody pulls, Relay's own repository) would
+    otherwise send every task off from stale code: the work is written against months-old files and the pull
+    request cannot be merged. So fetch, and when the checkout is behind with nothing of its own, start the
+    branch from the remote branch instead of the local HEAD. A checkout that has diverged, has uncommitted work
+    or no upstream keeps starting from HEAD, which is what the person is looking at.
+    """
+    if not cfg.get("branch_from_upstream", True):
+        return "HEAD"
+    ref = ""
+    try:
+        quiet(["git", "fetch", "--prune", "--quiet"], cwd=repo, timeout=180)
+        ref = upstream_ref(repo)
+        if not ref:
+            return "HEAD"
+        if quiet(["git", "rev-parse", "--verify", "--quiet", ref], cwd=repo, timeout=15).returncode != 0:
+            return "HEAD"
+        here = quiet(["git", "rev-parse", "HEAD"], cwd=repo, timeout=15).stdout.strip()
+        there = quiet(["git", "rev-parse", ref], cwd=repo, timeout=15).stdout.strip()
+        if not here or not there or here == there:
+            return "HEAD"
+        # Behind only: HEAD must be an ancestor of the remote branch, or the checkout has work the remote lacks.
+        if quiet(["git", "merge-base", "--is-ancestor", "HEAD", ref], cwd=repo, timeout=30).returncode != 0:
+            return "HEAD"
+        dirty = [l for l in quiet(["git", "status", "--porcelain", "--untracked-files=no"], cwd=repo, timeout=60).stdout.splitlines() if l.strip()]
+        behind = (quiet(["git", "rev-list", "--count", f"HEAD..{ref}"], cwd=repo, timeout=30).stdout or "").strip() or "?"
+        if dirty:
+            runner.timeline("git", "Starting from the local checkout", f"{repo.name} is {behind} commit(s) behind {ref}, but has uncommitted changes, "
+                                                                      "so the task starts from what is checked out.")
+            return "HEAD"
+        runner.timeline("git", f"Branching from {ref}", f"The {repo.name} checkout is {behind} commit(s) behind {ref}; the task starts from the "
+                                                       "up-to-date remote branch so the work applies to current code.")
+        return ref
+    except Exception as e:
+        runner.timeline("git", "Could not check the remote", f"{truncate(str(e), 200)} — starting from the local checkout.")
+        return "HEAD"
+
+
 def create_worktree(runner, task, cfg, run_dir, repo=None, wt_path=None):
     """The task's isolated worktree and branch. `repo`/`wt_path` place a multi-repository task's other repositories."""
     repo = Path(repo or task["repo"]).resolve()
@@ -183,7 +232,8 @@ def create_worktree(runner, task, cfg, run_dir, repo=None, wt_path=None):
             runner.run_shell_args(["git", "-C", holder, "switch", "--detach"], cwd=repo, role="git", title="Release branch from previous worktree")
         runner.run_shell_args(["git", "worktree", "add", str(wt), branch], cwd=repo, role="git", title="Attach worktree")
     else:
-        runner.run_shell_args(["git", "worktree", "add", "-b", branch, str(wt), "HEAD"], cwd=repo, role="git", title="Create worktree")
+        runner.run_shell_args(["git", "worktree", "add", "-b", branch, str(wt), branch_base(repo, runner, cfg)],
+                              cwd=repo, role="git", title="Create worktree")
     snapshot_source(repo, wt, run_dir, cfg, runner)
     return wt, branch
 
