@@ -6,6 +6,15 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Tasks no longer start from stale code** (`orchestrator/gitops.py`, setting `branch_from_upstream`).
+  A new task branch is created after a fetch, from the remote branch the checkout follows, whenever that checkout
+  is merely behind it — a server checkout nobody pulls used to send every task off from months-old files, so the
+  work did not fit current code and the pull request could not be merged. A checkout that has diverged, carries
+  uncommitted changes or follows no remote branch still starts from what is checked out, and the timeline says
+  which of the two happened.
+
 ### Added
 
 - **Personal settings, on top of the organisation's** (`orchestrator/personal.py`, `orchestrator/org/identity.py`,
@@ -71,6 +80,23 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   links straight to the new issue. GitHub accepts issue images only through its web interface, so pasted screenshots are
   held briefly under `DATA_DIR/issue-attachments/` and offered for one-click copying instead. The target repository is
   the new `github_issue_repo` setting under Settings → Git and GitHub.
+- **The model and effort a task runs on are shown, and come from the orchestrator** (`orchestrator/pipeline.py`
+  `publish_role_plan`, `orchestrator/runner.py`, `web/js/state.js`). Relay resolves each role's model and effort
+  once, with the same code that launches the agent, and records what every finished turn actually used; the task
+  page's Team card, the team pills, the theatre and the dashboard team hover show that rather than re-deriving
+  the settings in the browser. A role with no model states the CLI's own default, and a CLI with no effort
+  setting says so instead of showing a blank.
+- **Knowledge docs as a first-class source** (`orchestrator/knowledge.py`, `web_knowledge.py`, `web/js/views/kdocs.js`).
+  Every kickoff prompt (supervisor, worker, solo, reviewer, fresh-session handoffs) carries a short Knowledge section: the
+  paths under `DATA_DIR/knowledge` that apply to the task (its repositories' docs, related repositories from the approved
+  system map, and the platform docs a repository doc names in `platform_docs`) with one line each, for agents to read
+  before planning. Knowledge → Docs lists, searches and renders them; owners and admins can edit a doc (audited, with a
+  stale-edit check), and every section they change is recorded in `human_sections` so no refresh rewrites it.
+- **Knowledge docs stay current.** Repository docs record the commit they were written from (`source_commit`). A daily
+  job (and Refresh now) asks GitHub, read-only, how far the default branch moved; a doc behind by N commits or by
+  changes to key files (manifests, Dockerfiles, compose, CI, migrations, config) gets ONE cheap agent turn on a
+  shallow clone that rewrites only the affected sections of the doc and playbook, then the repository is rescanned in
+  the system map. A delivery that touched key files marks the repository's doc as possibly stale.
 
 - **Speed: triage and a solo fast path** (`orchestrator/triage.py`, `orchestrator/solo.py`, docs/SPEED_AUDIT.md).
   Team mode per task (Auto, Solo, Team). Auto triages every task with a heuristic and, for borderline requests, a cheap
