@@ -131,6 +131,9 @@ export function mountLearning(main) {
         <div class="field"><label for="lxMin">Tasks needed to auto-approve</label><input id="lxMin" type="number" min="2" max="20" value="${esc(s.auto_approve_min_tasks)}"></div>
         ${sw("playbooks_inject", "Playbooks in planning prompts", "The repository playbook goes to the supervisor's kickoff.")}
         ${sw("playbook_agent_refresh", "Agent refreshes playbooks", "One cheap turn per repository at most every " + s.playbook_refresh_hours + " h, after two new successful runs.")}
+        ${sw("knowledge_inject", "Knowledge docs in task prompts", "Every kickoff lists the task's repository and platform docs (paths and one line each) for agents to read.")}
+        ${sw("knowledge_refresh", "Keep knowledge docs current", "Every " + s.knowledge_refresh_hours + " h, compare each repository doc with GitHub; a doc behind by " + s.knowledge_min_commits + "+ commits or by key-file changes gets one cheap agent turn.")}
+        <div class="field"><label for="lxKnP">Knowledge refresh runs on</label><select id="lxKnP"><option value="" ${s.knowledge_refresh_provider ? "" : "selected"}>The retrospective agent's cheap model</option><option value="openrouter" ${s.knowledge_refresh_provider === "openrouter" ? "selected" : ""}>OpenRouter (automatic best free model)</option></select></div>
       </div></details>`;
   }
 
@@ -188,6 +191,7 @@ export function mountLearning(main) {
     $$("[data-pb-open]", page).forEach((b) => (b.onclick = () => openPlaybook(data.playbooks.find((p) => p.repo === b.dataset.pbOpen))));
     $$("[data-set]", page).forEach((s) => { const flip = () => saveSetting({ [s.dataset.set]: !s.classList.contains("on") }); s.onclick = flip; s.onkeydown = (e) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); flip(); } }; });
     $("#lxMode", page).onchange = (e) => saveSetting({ recommend_mode: e.target.value });
+    $("#lxKnP", page) && ($("#lxKnP", page).onchange = (e) => saveSetting({ knowledge_refresh_provider: e.target.value }));
     $("#lxSel", page).onchange = (e) => saveSetting({ lessons_selection: e.target.value });
     $("#lxEps", page).onchange = (e) => saveSetting({ explore_rate: Math.max(0, Math.min(50, Number(e.target.value) || 0)) / 100 });
     $("#lxMin", page).onchange = (e) => saveSetting({ auto_approve_min_tasks: Math.max(2, Number(e.target.value) || 3) });
@@ -197,7 +201,7 @@ export function mountLearning(main) {
     if (!pb) return;
     const m = modal(`<h2>Playbook · ${esc(pb.repo_label || pb.repo)}</h2><p class="hint">Edited sections are kept as you wrote them; new evidence is offered as a suggestion next to them.</p>
       <div class="lx-pb-edit">${Object.entries(pb.labels).map(([k, l]) => { const s = pb.sections[k] || {};
-        return `<div class="field"><div class="row between wrap field-label"><label for="pb_${k}">${esc(l)}</label><span class="muted">${s.edited ? "edited by you" : esc(s.source || "")}</span></div>
+        return `<div class="field"><div class="row between wrap field-label"><label for="pb_${k}">${esc(l)}</label><span class="muted">${s.source === "knowledge" ? "from the knowledge doc" : s.edited ? "edited by you" : esc(s.source || "")}</span></div>
           <textarea id="pb_${k}" rows="5" data-sec="${k}">${esc(s.text || "")}</textarea>
           ${s.suggestion ? `<div class="lx-suggest"><span class="muted">Suggested (${esc(s.suggestion_source || "")}):</span><pre>${esc(s.suggestion)}</pre><button class="btn xs" data-accept="${k}">Use suggestion</button></div>` : ""}</div>`; }).join("")}</div>
       <div class="modal-actions"><button class="btn" data-close>Close</button><button class="btn primary" id="pbSave">${icon("save")}Save changes</button></div>`, { wide: true });

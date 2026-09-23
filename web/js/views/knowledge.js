@@ -1,6 +1,6 @@
 // Knowledge: what Relay knows about the systems it works on. The system map, the repositories with their
 // environments, stacks and worktrees, the connectors to real environments, the lessons learned from past runs and
-// the learning engine's view of what works, and the GitHub repositories it watches, under one roof.
+// the learning engine's view of what works, the knowledge docs agents read, and the GitHub repositories it watches, under one roof.
 import { $, $$, esc, icon } from "../ui.js";
 import { S } from "../state.js";
 import { mountRepos } from "./repos.js";
@@ -8,9 +8,11 @@ import { mountConnectors } from "./connectors.js";
 import { mountLessons } from "./lessons.js";
 import { mountGithub } from "./github.js";
 import { mountLearning } from "./learning.js";
+import { mountKdocs } from "./kdocs.js";
 
 const TABS = [
   ["system", "System map", "globe", "How your repositories depend on each other."],
+  ["docs", "Docs", "book", "What agents read before planning: platform and repository docs, kept current against GitHub."],
   ["repositories", "Repositories", "folder", "Local clones, their environments, stacks and connectors."],
   ["connectors", "Connectors", "zap", "The APIs, databases and logs agents may check."],
   ["lessons", "Lessons", "brain", "What retrospectives learned, and what reaches the prompts."],
@@ -51,6 +53,7 @@ export function mountKnowledge(main, tab) {
     else if (k === "lessons") child = mountLessons(host);
     else if (k === "github") child = mountGithub(host);
     else if (k === "learning") child = mountLearning(host);
+    else if (k === "docs") child = mountKdocs(host);
   }
   show(cur);
   return {

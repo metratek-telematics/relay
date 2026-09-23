@@ -13,6 +13,13 @@ DEFAULTS = {
     "playbooks_inject": True,            # the repository's playbook goes into the supervisor's kickoff prompt
     "playbook_agent_refresh": True,      # a cheap agent turn refreshes playbooks with new evidence
     "playbook_refresh_hours": 24,
+    "knowledge_inject": True,            # every kickoff prompt lists the task's knowledge docs (paths + one line each)
+    "knowledge_refresh": True,           # daily: check repository docs against GitHub, refresh the stale ones (knowledge.py)
+    "knowledge_refresh_hours": 24,
+    "knowledge_min_commits": 10,         # commits since the doc's source commit that make it stale without key-file changes
+    "knowledge_refresh_agent": "",       # blank: the retrospective agent (or the supervisor's) with its cheap model
+    "knowledge_refresh_model": "",
+    "knowledge_refresh_provider": "",    # "openrouter": run the refresh there (blank model = automatic best free model)
     "revert_window_days": 14,
     "repo_teams": {},                    # repository key → team key pinned from a proposal or by hand
 }
