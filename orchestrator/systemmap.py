@@ -604,6 +604,70 @@ def scan(paths=None, extra=()) -> dict:
         return view(save(data))
 
 
+def _stored_evidence(comp: dict) -> dict:
+    """Provider-side evidence rebuilt from a component's stored `provides`, so one repository can be rescanned alone."""
+    prov = comp.get("provides") or {}
+    routes = []
+    for ep in prov.get("endpoints") or []:
+        method, _, path = str(ep).partition(" ")
+        routes.append({"method": method, "path": path or method})
+    fns = []
+    for f in prov.get("sql_functions") or []:
+        schema, _, name = str(f).rpartition(".")
+        fns.append({"schema": schema, "name": name})
+    return {"routes": routes, "functions": fns, "calls": [], "rpc_calls": [], "config": [], "services": []}
+
+
+def rescan_repo(repo: str, path) -> dict:
+    """Rescan ONE repository from a checkout that is not its component's clone (the knowledge refresh's shallow clone).
+
+    Updates that component's `provides` and its outgoing proposed edges; the component's path, description and every
+    approved or rejected decision stay. Returns what changed.
+    """
+    path = Path(path)
+    with _lock:
+        data = load()
+        comp = find(data, repo)
+        if not comp:
+            return {"component": None, "note": "not in the system map"}
+        ev = scan_repo(path)
+        before = {k: set(v) for k, v in (comp.get("provides") or {}).items() if isinstance(v, list)}
+        comp["provides"] = {
+            "endpoints": sorted({f"{r['method']} {normalize_path(r['path']) or r['path']}" for r in ev["routes"]})[:300],
+            "sql_functions": sorted({(f["schema"] + "." if f["schema"] else "") + f["name"] for f in ev["functions"]})[:300],
+            "services": sorted({s["name"] for s in ev["services"]})[:60],
+        }
+        comp["scan"] = {"time": now(), "calls": len(ev["calls"]), "routes": len(ev["routes"]), "functions": len(ev["functions"]),
+                        "config_keys": sorted({c["key"] for c in ev["config"]})[:40], "from": "knowledge refresh"}
+        evidence = {c["id"]: _stored_evidence(c) for c in data["components"] if c["id"] != comp["id"]}
+        evidence[comp["id"]] = ev
+        proposed = [p for p in match_edges(data["components"], evidence) if p["from"] == comp["id"]]
+        index = {(e["from"], e["to"], e["via"]): e for e in data["edges"]}
+        added = []
+        for p in proposed:
+            key = (p["from"], p["to"], p["via"])
+            cur = index.get(key)
+            if cur:
+                cur["evidence"], cur["matched"], cur["seen"] = p["evidence"], p["matched"], now()
+                if cur.get("source") != "manual" and not cur.get("details_locked"):
+                    cur["details"] = p["details"]
+            else:
+                row = {"id": new_id("edge"), "from": p["from"], "to": p["to"], "via": p["via"], "details": p["details"], "status": "proposed",
+                       "evidence": p["evidence"], "matched": p["matched"], "source": "scan", "seen": now()}
+                data["edges"].append(row)
+                added.append(f"{p['from']} → {p['to']} ({p['via']})")
+        live = {(p["from"], p["to"], p["via"]) for p in proposed}
+        dropped = [f"{e['from']} → {e['to']} ({e['via']})" for e in data["edges"]
+                   if e["from"] == comp["id"] and e["status"] == "proposed" and e.get("source") != "manual" and (e["from"], e["to"], e["via"]) not in live]
+        data["edges"] = [e for e in data["edges"] if not (e["from"] == comp["id"] and e["status"] == "proposed" and e.get("source") != "manual"
+                                                          and (e["from"], e["to"], e["via"]) not in live)]
+        after = comp["provides"]
+        diff = {k: {"added": len(set(after.get(k) or []) - before.get(k, set())), "removed": len(before.get(k, set()) - set(after.get(k) or []))}
+                for k in after}
+        save(data)
+        return {"component": comp["id"], "provides": diff, "edges_added": added, "edges_dropped": dropped}
+
+
 # ----------------------------------------------------------------------------- edits
 def update_component(cid: str, patch: dict) -> dict:
     with _lock:

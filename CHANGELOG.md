@@ -17,6 +17,18 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Knowledge docs as a first-class source** (`orchestrator/knowledge.py`, `web_knowledge.py`, `web/js/views/kdocs.js`).
+  Every kickoff prompt (supervisor, worker, solo, reviewer, fresh-session handoffs) carries a short Knowledge section: the
+  paths under `DATA_DIR/knowledge` that apply to the task (its repositories' docs, related repositories from the approved
+  system map, and the platform docs a repository doc names in `platform_docs`) with one line each, for agents to read
+  before planning. Knowledge → Docs lists, searches and renders them; owners and admins can edit a doc (audited, with a
+  stale-edit check), and every section they change is recorded in `human_sections` so no refresh rewrites it.
+- **Knowledge docs stay current.** Repository docs record the commit they were written from (`source_commit`). A daily
+  job (and Refresh now) asks GitHub, read-only, how far the default branch moved; a doc behind by N commits or by
+  changes to key files (manifests, Dockerfiles, compose, CI, migrations, config) gets ONE cheap agent turn on a
+  shallow clone that rewrites only the affected sections of the doc and playbook, then the repository is rescanned in
+  the system map. A delivery that touched key files marks the repository's doc as possibly stale.
+
 - **Speed: triage and a solo fast path** (`orchestrator/triage.py`, `orchestrator/solo.py`, docs/SPEED_AUDIT.md).
   Team mode per task (Auto, Solo, Team). Auto triages every task with a heuristic and, for borderline requests, a cheap
   one-shot rating that runs while dependencies install. Small and moderate single-repository work runs one agent that

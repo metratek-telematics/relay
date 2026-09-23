@@ -186,6 +186,9 @@ def _snapshot(path: str, method: str, body):
         if path == "/api/org/me":
             u = current_user() or {}
             return identity.public(identity.get(u.get("username")), full=True)
+        if path == "/api/knowledge/docs/save" and isinstance(body, dict):
+            from .. import knowledge
+            return knowledge.snapshot(str(body.get("path") or ""))
         if mr := re.match(r"^/api/rules/([^/]+)$", path):
             from ..util import APP_DIR, read_text
             p = APP_DIR / "rules" / f"{mr.group(1)}.md"
@@ -200,7 +203,7 @@ TYPE_NAMES = {"tasks": "task", "connectors": "connector", "stacks": "stack", "le
               "settings": "settings", "queue": "queue", "autopilot": "autopilot", "github": "github", "issues": "issue", "agents": "agent",
               "system": "system_map", "rules": "rule", "notifications": "notification", "projects": "project", "users": "user",
               "me": "profile", "tokens": "token", "integrations": "integration", "budgets": "budget", "onboarding": "onboarding", "audit": "audit",
-              "run": "queue", "providers": "provider"}
+              "run": "queue", "providers": "provider", "knowledge": "knowledge"}
 
 
 def describe(method: str, path: str) -> tuple[str, dict]:
@@ -218,7 +221,8 @@ def describe(method: str, path: str) -> tuple[str, dict]:
     obj = {"type": typ}
     verb = ACTION_WORDS.get(method, method.lower())
     if len(parts) >= 2:
-        if parts[0] in ("queue", "autopilot", "github", "repos", "worktrees", "system", "onboarding", "integrations", "notifications", "audit", "issues", "providers"):
+        if parts[0] in ("queue", "autopilot", "github", "repos", "worktrees", "system", "onboarding", "integrations", "notifications", "audit", "issues", "providers",
+                        "knowledge"):
             verb = "_".join(parts[1:])
         elif parts[0] == "me":
             obj = {"type": "profile"}
