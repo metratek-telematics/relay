@@ -1,14 +1,17 @@
 """Relay local backend: HTTP API + Server-Sent Events for the browser workspace."""
 from __future__ import annotations
 
+import base64
 import json
 import os
 import queue
 import re
+import shutil
 import subprocess
 import sys
 import threading
 import time
+import uuid
 import webbrowser
 from pathlib import Path
 
@@ -26,7 +29,7 @@ from orchestrator.scorecard import repo_label  # noqa: E402
 # Agents installed from the Agents page must be found by health checks, runs and verification alike.
 installer.extend_path()
 from orchestrator.manager import Manager  # noqa: E402
-from orchestrator.util import IN_DOCKER, IS_WINDOWS, RUNTIME_DIR, quiet, read_text  # noqa: E402
+from orchestrator.util import DATA_DIR, IN_DOCKER, IS_WINDOWS, RUNTIME_DIR, quiet, read_text, safe_slug  # noqa: E402
 
 # 127.0.0.1 keeps Relay private to this machine. Inside Docker it must listen on
 # 0.0.0.0, and the compose file publishes the port on the host's loopback only.
@@ -1062,6 +1065,115 @@ def gh_clone():
         return jsonify(github.clone_repo(b.get("repo"), b.get("name")))
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 502
+
+
+# Screenshots people paste into the report dialog. Neither the GitHub API nor gh can
+# upload issue attachments, so the images are held here only long enough for the
+# reporter to copy them into the issue the browser just opened.
+ISSUE_ATTACHMENTS_DIR = DATA_DIR / "issue-attachments"
+ISSUE_ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024
+ISSUE_ATTACHMENT_TTL = 3 * 24 * 3600
+ISSUE_IMAGE_SUFFIX = {"image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif", "image/webp": ".webp"}
+
+
+def purge_issue_attachments() -> None:
+    """Drop attachment folders older than the copy-it-now window they exist for."""
+    cutoff = time.time() - ISSUE_ATTACHMENT_TTL
+    try:
+        folders = list(ISSUE_ATTACHMENTS_DIR.iterdir())
+    except OSError:
+        return
+    for folder in folders:
+        try:
+            if folder.is_dir() and folder.stat().st_mtime < cutoff:
+                shutil.rmtree(folder, ignore_errors=True)
+        except OSError:
+            pass
+
+
+def save_issue_attachments(attachments, folder: Path) -> list:
+    """Decode data-URL images into `folder`. Raises ValueError on anything unsuitable."""
+    saved, total = [], 0
+    for item in attachments:
+        if not isinstance(item, dict):
+            raise ValueError("Each attachment must be an image.")
+        name = str(item.get("name") or "image.png")
+        m = re.fullmatch(r"data:(image/[A-Za-z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+)", str(item.get("data_url") or ""))
+        if not m:
+            raise ValueError(f"{name} is not a supported image.")
+        mime, encoded = m.group(1), re.sub(r"\s+", "", m.group(2))
+        try:
+            raw = base64.b64decode(encoded, validate=True)
+        except (ValueError, TypeError):
+            raise ValueError(f"{name} is not a valid image.") from None
+        total += len(raw)
+        if total > ISSUE_ATTACHMENT_MAX_BYTES:
+            raise ValueError("Images must fit within the 5 MB total size limit.")
+        stem = safe_slug(Path(name.replace("\\", "/")).stem, 72).strip(".") or "image"
+        suffix = Path(name).suffix.lower()
+        if not re.fullmatch(r"\.[a-z0-9]{1,8}", suffix):
+            suffix = ISSUE_IMAGE_SUFFIX.get(mime.lower(), ".img")
+        path = folder / f"{stem}{suffix}"
+        if path.exists():
+            path = folder / f"{stem}-{len(saved) + 1}{suffix}"
+        # safe_slug already strips separators; resolving proves no name can climb out.
+        if folder.resolve() not in path.resolve().parents:
+            raise ValueError(f"{name} is not a valid file name.")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(raw)
+        saved.append({"name": path.name, "path": str(path)})
+    return saved
+
+
+@app.post("/api/github/report-issue")
+def gh_report_issue():
+    """File a bug report or feature request on the Relay repository from inside Relay."""
+    b = body()
+    kind = b.get("kind")
+    title = str(b.get("title") or "").strip()
+    description = str(b.get("body") or "").strip()
+    if kind not in ("bug", "feature"):
+        return jsonify({"error": "Choose Bug or Feature."}), 400
+    if not title:
+        return jsonify({"error": "A title is required."}), 400
+    if not description:
+        return jsonify({"error": "A description is required."}), 400
+    attachments = b.get("attachments") or []
+    if not isinstance(attachments, list) or len(attachments) > 5:
+        return jsonify({"error": "Add no more than 5 images."}), 400
+
+    purge_issue_attachments()
+    folder = ISSUE_ATTACHMENTS_DIR / uuid.uuid4().hex
+    try:
+        saved = save_issue_attachments(attachments, folder)
+    except ValueError as e:
+        shutil.rmtree(folder, ignore_errors=True)
+        return jsonify({"error": str(e)}), 400
+
+    version = str(b.get("version") or "").strip()
+    agent_versions = str(b.get("agents") or "").strip()
+    log = str(b.get("log") or "").strip()
+    idea = str(b.get("idea") or "").strip()
+    # Headings follow .github/ISSUE_TEMPLATE/bug_report.yml and feature_request.yml.
+    sections = [f"### {'What happened' if kind == 'bug' else 'The problem'}\n\n{description}"]
+    if kind == "feature" and idea:
+        sections.append(f"### What you would like\n\n{idea}")
+    sections.append(f"### Relay version\n\n{version or 'Not provided'}")
+    sections.append(f"### Agent CLI versions\n\n{agent_versions or 'Not provided'}")
+    if kind == "bug":
+        sections.append(f"### Relevant log\n\n{log or 'Not provided'}")
+    if saved:
+        names = ", ".join(a["name"] for a in saved)
+        sections.append(f"### Attachments\n\n{len(saved)} image(s) pasted by the reporter into this issue after filing: {names}")
+    try:
+        url = github.create_issue(manager.cfg().get("github_issue_repo") or "metratek-telematics/relay", title,
+                                  "\n\n".join(sections), "bug" if kind == "bug" else "enhancement")
+    except RuntimeError as e:
+        # Nothing was filed, so the images have nowhere to be pasted: do not leave them behind.
+        shutil.rmtree(folder, ignore_errors=True)
+        return jsonify({"error": str(e)}), 502
+    number = re.search(r"/issues/(\d+)", url)
+    return jsonify({"url": url, "number": int(number.group(1)) if number else None, "attachments": saved})
 
 
 @app.get("/api/github/sources")

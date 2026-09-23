@@ -11,6 +11,7 @@ import { mountKnowledge } from "./views/knowledge.js";
 import { mountSettings } from "./views/settings.js";
 import { mountAgents } from "./views/agents.js";
 import { openNewTask } from "./views/newtask.js";
+import { openReportIssue } from "./views/report.js";
 import { deliver, markSeen, renderAttention, permission, requestPermission } from "./notify.js";
 import { GOTO, keysFor, openShortcuts } from "./shortcuts.js";
 import { noteMessage } from "./live.js";
@@ -45,6 +46,7 @@ $("#themeBtn").onclick = toggleTheme;
 // ---------------------------------------------------------------------------- navigation chrome
 mountNav();
 $("#newTaskBtn").onclick = () => openNewTask();
+$("#reportBtn").onclick = () => openReportIssue();
 $("#tabNew").onclick = () => openNewTask();
 // On a phone "More" opens the whole navigation as a drawer rather than a short menu of leftovers.
 $("#tabMore").onclick = (e) => innerWidth <= 760 ? openDrawer() : menu(e.currentTarget, [

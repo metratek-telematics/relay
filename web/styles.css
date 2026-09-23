@@ -240,6 +240,50 @@ kbd { font-size: 10px; padding: 1px 5px; border-radius: 4px; background: var(--p
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 .modal-error { margin-top: 12px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--red) 40%, var(--border)); background: var(--red-soft); border-radius: var(--r-sm); font-size: var(--fs-sm); }
 
+/* report an issue */
+.report-dialog { min-width: 0; }
+.report-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.report-head h2 { margin-bottom: 2px; }
+.report-kind { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 16px 0 14px; }
+.report-kind-btn { min-width: 0; display: grid; gap: 2px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--r); background: var(--bg); color: var(--text-2); text-align: left; font-size: var(--fs-sm); }
+.report-kind-btn:hover { border-color: var(--border-strong); background: var(--panel-2); }
+.report-kind-btn.active { border-color: var(--accent); background: var(--accent-soft); color: var(--text); box-shadow: 0 0 0 2px var(--accent-soft); }
+.report-kind-title { font-weight: 700; color: inherit; }
+.report-dialog .req, .report-dialog .opt { color: var(--text-3); font-size: 10px; font-weight: 500; margin-left: 4px; }
+.report-section { margin: 16px 0; padding: 12px 14px 2px; border: 1px solid var(--border); border-radius: var(--r); background: var(--panel-2); }
+.report-section-head { display: flex; justify-content: space-between; gap: 12px; color: var(--text-3); }
+.report-section-head h3 { margin: 0; font-size: var(--fs); color: var(--text); }
+.report-section-head p { margin: 2px 0 0; font-size: var(--fs-xs); }
+.report-dialog #reportBody { min-height: 88px; }
+.report-dialog #reportIdea, .report-dialog #reportLog { min-height: 70px; }
+.report-drop { display: grid; place-items: center; min-height: 80px; border: 1px dashed var(--border-strong); border-radius: var(--r); background: var(--bg); color: var(--text-2); text-align: center; cursor: pointer; transition: border-color .12s, background .12s; }
+.report-drop:hover, .report-drop:focus-visible, .report-drop.dragging { border-color: var(--accent); background: var(--accent-soft); }
+.report-drop-copy { display: grid; place-items: center; gap: 3px; padding: 12px; }
+.report-drop-copy .ic { color: var(--accent); margin-bottom: 2px; }
+.report-drop-copy strong { color: var(--text); font-size: var(--fs-sm); }
+.report-drop-copy span { font-size: var(--fs-xs); color: var(--text-3); }
+.report-previews { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-top: 8px; }
+.report-preview { min-width: 0; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 7px; align-items: center; padding: 5px 6px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--panel-2); }
+.report-preview img, .report-success-file img { width: 34px; height: 34px; object-fit: cover; border-radius: 4px; background: var(--bg); }
+.report-preview span, .report-success-file span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-xs); }
+.report-inline-error { margin-top: 7px; color: var(--red); font-size: var(--fs-xs); font-weight: 600; }
+.report-footnote { flex: 1; align-self: center; color: var(--text-3); font-size: var(--fs-xs); }
+.report-success { text-align: center; padding: 8px 0 2px; }
+.report-success-mark { width: 46px; height: 46px; display: grid; place-items: center; margin: 0 auto 12px; border-radius: 50%; background: var(--green-soft); color: var(--green); }
+.report-success h2 { margin-bottom: 5px; }
+.report-success .hint { max-width: 560px; margin: 0 auto 16px; }
+.report-issue-link { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; }
+.report-success-files { display: grid; gap: 7px; max-width: 520px; margin: 18px auto 0; text-align: left; }
+.report-success-file { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 9px; align-items: center; padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--panel-2); }
+.report-success .modal-actions { justify-content: center; }
+@media (max-width: 620px) {
+  .report-kind { grid-template-columns: 1fr; }
+  .report-section .grid2 { grid-template-columns: 1fr; }
+  .report-footnote { display: none; }
+  .report-success-file { grid-template-columns: 34px minmax(0, 1fr); }
+  .report-success-file .btn { grid-column: 2; justify-self: start; }
+}
+
 .menu-pop { position: fixed; z-index: 450; min-width: 200px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--r); box-shadow: var(--shadow-2); padding: 4px; transform-origin: left top; animation: pop-in var(--dur-enter) var(--ease-out); }
 .menu-pop.out { animation: pop-out var(--dur-exit) var(--ease-in) forwards; }
 @keyframes pop-in { from { opacity: 0; transform: scale(.96) translateY(-4px); } to { opacity: 1; transform: none; } }

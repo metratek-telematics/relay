@@ -339,6 +339,7 @@ DEFAULTS = {
     # github
     "github_intake_enabled": True,
     "github_poll_seconds": 60,
+    "github_issue_repo": "metratek-telematics/relay",
     "github_default_label": "agent",
     "github_auto_push_on_pass": True,
     "github_auto_create_pr": True,
