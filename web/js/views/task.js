@@ -27,6 +27,20 @@ const VIEWS = (t) => [
   ["logs", "Logs", "terminal"],
 ];
 const CHECK_TABS = ["checks", "review", "timeline"];
+const RD_TONE = { succeeded: "green", failed: "red", running: "amber" };
+const RD_ICON = { succeeded: "check", failed: "alert", running: "spinner" };
+const RD_TRIGGER = { pr_merged: "after PR merge", delivered: "after delivery", manual: "manual" };
+
+// The redeploy record a delivered task carries (orchestrator/redeploy.py), as one meta pill.
+function redeployPill(t) {
+  const rd = t.redeploy;
+  if (!rd) return "";
+  const st = String(rd.status || "");
+  const exit = rd.exit_code === null || rd.exit_code === undefined ? "" : ` · exit ${esc(rd.exit_code)}`;
+  const when = rd.finished_at || rd.started_at;
+  const parts = `${esc(RD_TRIGGER[rd.trigger] || rd.trigger || "manual")}${exit}${when ? ` · ${timeAgo(when)}` : ""}`;
+  return `<span class="meta-fact redeploy-fact tone-${esc(RD_TONE[st] || "none")}" title="${esc(rd.command || "")}">${icon(RD_ICON[st] || "info", st === "running" ? "sm spin" : "sm")}<span>Redeploy ${esc(st || "unknown")}</span><span class="redeploy-detail muted">${parts}</span></span>`;
+}
 
 export function mountTask(main, id) {
   const getTask = () => S.tasks.get(id);
@@ -153,6 +167,7 @@ export function mountTask(main, id) {
       ${active ? (paused ? `<button type="button" class="btn sm" data-act="resume">${icon("play")}Resume</button>` : `<button type="button" class="btn sm" data-act="pause" title="Pause after the current agent turn">${icon("pause")}Pause</button>`) : ""}
       ${active ? `<button type="button" class="btn sm danger" data-act="stop">${icon("stop")}Stop</button>` : ""}
       ${t.status === "done" ? `<button type="button" class="btn sm" data-act="followup" title="Start a new task that builds on this branch">${icon("arrowRight")}Follow up</button>` : ""}
+      ${t.status === "done" ? `<button type="button" class="btn sm" data-act="redeploy" ${t.redeploy?.status === "running" ? "disabled" : ""} title="Run the redeploy command configured in Settings → Git & GitHub now, whatever the pull request state is">${icon(t.redeploy?.status === "running" ? "spinner" : "retry", t.redeploy?.status === "running" ? "spin" : "")}Redeploy now</button>` : ""}
       <button type="button" class="btn sm icon" data-share title="Copy a read-only status link for stakeholders" aria-label="Share status">${icon("share")}</button>
       <button type="button" class="btn sm icon" id="moreBtn" title="More" aria-label="More actions">${icon("more")}</button>`;
     $$("[data-act]", $("#tpActions", page)).forEach((b) => (b.onclick = () => act(b.dataset.act)));
@@ -182,6 +197,7 @@ export function mountTask(main, id) {
     const prs = repos.filter((r) => r.pr_url || r.pr_number);
     $("#tpMeta", page).innerHTML = `<span class="team-flow">${team}</span>
       ${prs.length ? `<span class="meta-group">${prs.map((r) => r.primary ? prPill(t, prCached(t.id)) : `<a class="pr-pill" href="${esc(r.pr_url)}" target="_blank" rel="noopener">${icon("github", "sm")}<span>${esc(r.name)} #${esc(r.pr_number || "")}</span></a>`).join("")}</span>` : ""}
+      ${redeployPill(t)}
       <span class="meta-fact" title="Elapsed">${icon("clock", "sm")}<span class="mono" data-tp-elapsed>${fmtSec(taskElapsed(t))}</span></span>
       <span class="meta-fact" title="${tot.estimated ? "Estimated at API-equivalent rates" : "Reported by the CLI"}">${icon("dollar", "sm")}<span class="mono">${fmtCost(tot.cost_usd, tot.estimated)}</span></span>
       ${lineage(t)}
@@ -221,6 +237,7 @@ export function mountTask(main, id) {
       else if (a === "queue") { await api.action(t.id, "queue"); toast("success", "Queued"); }
       else if (a === "start") { await api.action(t.id, "start"); toast("success", "Started", "Running alongside any other active tasks."); }
       else if (a === "followup") { openFollowUp(t); }
+      else if (a === "redeploy") { const r = await api.action(t.id, "redeploy"); toast(r.status === "succeeded" ? "success" : "error", r.status === "succeeded" ? "Redeploy succeeded" : "Redeploy failed", `exit ${r.exit_code} · ${r.cwd || ""}`); }
       else if (a === "duplicate") { const n = await api.action(t.id, "duplicate"); toast("success", "Duplicated", n.name); navigate(`#/task/${n.id}`); }
       else if (a === "archive") { await api.action(t.id, "archive", { archived: true }); toast("info", "Archived"); }
       else if (a === "unarchive") { await api.action(t.id, "archive", { archived: false }); }
@@ -228,7 +245,7 @@ export function mountTask(main, id) {
         if (!(await confirm("Delete this task?", "Conversation, artifacts and logs are removed. The git worktree is also removed.", { danger: true, okLabel: "Delete" }))) return;
         await api.deleteTask(t.id, true); toast("info", "Task deleted"); navigate("#/work");
       }
-    } catch (e) { toast("error", "Action failed", e.message); }
+    } catch (e) { toast("error", a === "redeploy" && e.status === 400 ? "Redeploy unavailable" : "Action failed", e.message); }
   }
 
   // ---------------------------------------------------------------- outline

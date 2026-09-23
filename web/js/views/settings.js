@@ -114,8 +114,8 @@ export function mountSettings(main, section) {
         </div></div>
         ${explorationCard(c)}
         ${learningCard(c)}`;
-      const wf = { preset: c.workflow_preset, roles: JSON.parse(JSON.stringify(c.roles || {})), max_turns: c.max_turns, max_review_rounds: c.max_review_rounds, verify_mode: c.verify_mode, approval_before_delivery: c.approval_before_delivery, allow_agent_questions: c.allow_agent_questions, verification_commands: c.verification_commands || [], auto_detect_verification: c.auto_detect_verification, design_mode: c.design_mode, design_approval: c.design_approval, team_mode: c.team_mode || "auto" };
-      const persist = debounce((w) => save({ workflow_preset: w.preset, roles: JSON.parse(JSON.stringify(w.roles)), max_turns: w.max_turns, max_review_rounds: w.max_review_rounds, verify_mode: w.verify_mode, approval_before_delivery: w.approval_before_delivery, allow_agent_questions: w.allow_agent_questions, verification_commands: w.verification_commands, auto_detect_verification: w.auto_detect_verification, design_mode: w.design_mode, design_approval: w.design_approval, team_mode: w.team_mode || "auto" }), 400);
+      const wf = { preset: c.workflow_preset, roles: JSON.parse(JSON.stringify(c.roles || {})), max_turns: c.max_turns, max_review_rounds: c.max_review_rounds, verify_mode: c.verify_mode, approval_before_delivery: c.approval_before_delivery, allow_agent_questions: c.allow_agent_questions, redeploy_on_merge: !!c.redeploy_default_on, verification_commands: c.verification_commands || [], auto_detect_verification: c.auto_detect_verification, design_mode: c.design_mode, design_approval: c.design_approval, team_mode: c.team_mode || "auto" };
+      const persist = debounce((w) => save({ workflow_preset: w.preset, roles: JSON.parse(JSON.stringify(w.roles)), max_turns: w.max_turns, max_review_rounds: w.max_review_rounds, verify_mode: w.verify_mode, approval_before_delivery: w.approval_before_delivery, allow_agent_questions: w.allow_agent_questions, redeploy_default_on: !!w.redeploy_on_merge, verification_commands: w.verification_commands, auto_detect_verification: w.auto_detect_verification, design_mode: w.design_mode, design_approval: w.design_approval, team_mode: w.team_mode || "auto" }), 400);
       workflowEditor($("#wfEd", body), wf, { agents: S.agentMeta, presets: S.presets, onChange: persist });
       bindAuto();
       // The model catalogue and efforts depend on the agent, so redraw once the new agent is saved.
@@ -325,6 +325,17 @@ export function mountSettings(main, section) {
         <div class="field inline"><label>Create PRs as drafts</label><span class="switch ${c.github_pr_draft ? "on" : ""}" data-sw-cfg="github_pr_draft"></span></div>
         <div class="grid2"><div class="field"><label>Base branch (blank = repository default)</label><input data-cfg="github_pr_base" value="${esc(c.github_pr_base)}"></div><div class="field"><label>Default agent label</label><input data-cfg="github_default_label" value="${esc(c.github_default_label)}"></div></div>
         <div class="field"><label>PR body template</label><textarea data-cfg="github_pr_body_template" rows="5">${esc(c.github_pr_body_template)}</textarea><div class="help">Placeholders: <code>{summary}</code> <code>{details}</code> <code>{issue_close}</code></div></div>
+      </div></div>
+      <div class="card"><div class="card-head"><div><h3>Redeploy after merge</h3><p class="card-sub">For delivered tasks whose workflow opted in. Nothing runs while this is off.</p></div><span class="badge outline">owner configured</span></div><div class="card-body">
+        <div class="field inline"><label>Run the redeploy command for opted-in tasks</label><span class="switch ${c.redeploy_enabled ? "on" : ""}" data-sw-cfg="redeploy_enabled"></span></div>
+        <div class="field"><label>Redeploy command</label><input data-cfg="redeploy_command" value="${esc(c.redeploy_command || "")}" placeholder="./deploy.sh"><div class="help">Owner configuration only: agents, task text and API callers cannot set or change it.</div></div>
+        <div class="field"><label>Working folder</label><input data-cfg="redeploy_working_dir" value="${esc(c.redeploy_working_dir || "")}" placeholder="Blank = the delivered task worktree"></div>
+        <div class="grid3">
+          <div class="field"><label>Trigger</label><select data-cfg="redeploy_trigger"><option value="pr_merged" ${c.redeploy_trigger !== "delivered" ? "selected" : ""}>When the pull request is merged</option><option value="delivered" ${c.redeploy_trigger === "delivered" ? "selected" : ""}>As soon as the task is delivered</option></select></div>
+          <div class="field"><label>Timeout (minutes)</label><input type="number" min="1" data-cfg="redeploy_timeout_minutes" value="${esc(c.redeploy_timeout_minutes)}"></div>
+          <div class="field"><label>Poll interval (seconds)</label><input type="number" min="15" data-cfg="redeploy_poll_seconds" value="${esc(c.redeploy_poll_seconds)}"></div>
+        </div>
+        <div class="help">Each task opts in separately. <a href="#/settings/workflow">Settings → Workflow</a> sets what new tasks start with (currently <strong>${c.redeploy_default_on ? "on" : "off"}</strong>); this switch stays in charge of whether anything runs at all.</div>
       </div></div>
       <div class="card"><div class="card-head"><h3>GitHub intake</h3></div><div class="card-body">
         <div class="field inline"><label>Watch repositories for eligible issues</label><span class="switch ${c.github_intake_enabled ? "on" : ""}" data-sw-cfg="github_intake_enabled"></span></div>

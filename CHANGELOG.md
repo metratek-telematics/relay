@@ -35,6 +35,18 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   shallow clone that rewrites only the affected sections of the doc and playbook, then the repository is rescanned in
   the system map. A delivery that touched key files marks the repository's doc as possibly stale.
 
+- **Redeploy after merge** (`orchestrator/redeploy.py`, `orchestrator/manager.py`, `web_app.py`,
+  `web/js/views/{settings,newtask,task}.js`). *Settings → Git & GitHub → Redeploy after merge* adds
+  `redeploy_enabled` (off by default), `redeploy_command`, `redeploy_working_dir`, `redeploy_trigger`,
+  `redeploy_timeout_minutes` and `redeploy_poll_seconds`; `redeploy_default_on` is a separate setting for what
+  the per-task switch in the workflow editor starts with, so changing the default for new tasks never flips the
+  master switch. A watcher checks each delivered opted-in task's pull request with `gh pr view` and runs the
+  command once, one deployment at a time, in its own process group with the configured timeout; the output goes
+  to `runtime/<task>/redeploy.log` and the status, exit code, trigger and timestamps onto the task, with a
+  timeline event and a notification. The task page shows the record beside the pull request and
+  `POST /api/tasks/<tid>/redeploy` (the *Redeploy now* button) runs it regardless of merge state, or returns 400
+  when no command is configured. The command is owner configuration only: never task text, agent output or a
+  request body.
 - **Speed: triage and a solo fast path** (`orchestrator/triage.py`, `orchestrator/solo.py`, docs/SPEED_AUDIT.md).
   Team mode per task (Auto, Solo, Team). Auto triages every task with a heuristic and, for borderline requests, a cheap
   one-shot rating that runs while dependencies install. Small and moderate single-repository work runs one agent that
