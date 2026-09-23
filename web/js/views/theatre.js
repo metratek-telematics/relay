@@ -3,7 +3,7 @@
 // commands and their output; the feed lists every step as it happens. Everything comes from the task's message
 // stream that the task page already keeps current, so the theatre adds no requests.
 import { $, $$, esc, icon, fmtSec, fmtTime, diffHtml, basename } from "../ui.js";
-import { S, LIVE, agentLabel, roleAgent, roleModel, ROLE_LABEL } from "../state.js";
+import { S, LIVE, agentLabel, roleAgent, roleModelText, roleEffortText, ROLE_LABEL } from "../state.js";
 import { describeEdit, shellEditTargets } from "./conversation.js";
 import { activityHtml, activity, stepperHtml, describeActivity } from "../live.js";
 
@@ -51,7 +51,7 @@ export function mountTheatre(host, getTask) {
       track.innerHTML = `<div class="th-rail" aria-hidden="true"></div><span class="th-baton" aria-hidden="true"></span>${roles.map((r) => `<div class="th-role" data-role="${r}">
           <span class="th-av-wrap"><span class="av lg ${esc(roleAgent(t, r))}">${esc(agentLabel(roleAgent(t, r)).slice(0, 2))}</span><span class="th-ring" aria-hidden="true"></span></span>
           <span class="th-role-name">${esc(ROLE_LABEL[r])}</span>
-          <span class="th-agent">${esc(agentLabel(roleAgent(t, r)))}<small>${esc(roleModel(t, r) || "default model")}</small></span>
+          <span class="th-agent">${esc(agentLabel(roleAgent(t, r)))}<small title="Model: ${esc(roleModelText(t, r))}\nEffort: ${esc(roleEffortText(t, r))}">${esc(roleModelText(t, r))}</small></span>
           <span class="th-role-state" data-state="${r}"></span>
         </div>`).join("")}`;
     }

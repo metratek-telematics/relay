@@ -17,6 +17,12 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The model and effort a task runs on are shown, and come from the orchestrator** (`orchestrator/pipeline.py`
+  `publish_role_plan`, `orchestrator/runner.py`, `web/js/state.js`). Relay resolves each role's model and effort
+  once, with the same code that launches the agent, and records what every finished turn actually used; the task
+  page's Team card, the team pills, the theatre and the dashboard team hover show that rather than re-deriving
+  the settings in the browser. A role with no model states the CLI's own default, and a CLI with no effort
+  setting says so instead of showing a blank.
 - **Knowledge docs as a first-class source** (`orchestrator/knowledge.py`, `web_knowledge.py`, `web/js/views/kdocs.js`).
   Every kickoff prompt (supervisor, worker, solo, reviewer, fresh-session handoffs) carries a short Knowledge section: the
   paths under `DATA_DIR/knowledge` that apply to the task (its repositories' docs, related repositories from the approved
