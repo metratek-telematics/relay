@@ -9,6 +9,7 @@ import { mountConnectors } from "./connectors.js";
 import { mountTools } from "./tools.js";
 import { mountTokens } from "./tokens.js";
 import { mountProviders } from "./openrouter.js";
+import { ORG, loadMe, can } from "./org/org.js";
 
 const SECTIONS = [["workflow", "Team and workflow", "layers"], ["agents", "Agents and models", "bot"], ["verification", "Verification", "shield"], ["prompts", "Saved prompts", "message"], ["rules", "Rules", "docs"], ["autopilot", "Autopilot", "clock"], ["budget", "Usage and budget", "gauge"], ["notifications", "Notifications", "bell"], ["git", "Git and GitHub", "github"], ["providers", "Model providers", "layers"], ["tools", "Agent tools", "package"], ["tokens", "Token efficiency", "gauge"], ["workspace", "Workspace and access", "user"], ["appearance", "Appearance", "sun"], ["about", "About", "info"]];
 const GROUPS = [["Team", ["workflow", "agents", "tools", "verification", "prompts", "rules"]], ["Automation", ["autopilot", "budget", "tokens", "notifications"]], ["Integrations", ["providers", "git", "workspace"]], ["You", ["appearance", "about"]]];
@@ -52,6 +53,43 @@ function learningCard(c) {
   </div></div>`;
 }
 
+// ---------------------------------------------------------------------------- personal vs organisation
+// The keys of the Team and workflow section a person may decide for themselves. The server owns this
+// list and the precedence (orchestrator/personal.py); this only labels what it sends back.
+const PERSONAL_WF = ["workflow_preset", "roles", "team_mode", "max_turns", "max_review_rounds", "verify_mode",
+  "approval_before_delivery", "allow_agent_questions", "design_mode", "design_approval", "auto_detect_verification"];
+
+// Key order never decides whether two values are the same.
+const norm = (v) => (v && typeof v === "object" && !Array.isArray(v)
+  ? JSON.stringify(Object.keys(v).sort().map((k) => [k, norm(v[k])]))
+  : JSON.stringify(v ?? null));
+
+// What the workflow editor holds, as personal settings.
+const wfToPersonal = (w) => ({
+  workflow_preset: w.preset, roles: JSON.parse(JSON.stringify(w.roles)), team_mode: w.team_mode || "auto",
+  max_turns: w.max_turns, max_review_rounds: w.max_review_rounds, verify_mode: w.verify_mode,
+  approval_before_delivery: w.approval_before_delivery, allow_agent_questions: w.allow_agent_questions,
+  design_mode: w.design_mode, design_approval: w.design_approval, auto_detect_verification: w.auto_detect_verification,
+});
+
+function scopeCard(ps, scope, admin) {
+  const mine = PERSONAL_WF.filter((k) => (ps.sources || {})[k] === "yours");
+  const label = (k) => (ps.labels || {})[k] || k;
+  const seg = admin ? `<div class="seg" role="radiogroup" aria-label="Which defaults to edit">
+      <button type="button" role="radio" data-scope="mine" aria-checked="${scope === "mine"}" class="${scope === "mine" ? "active" : ""}">Yours</button>
+      <button type="button" role="radio" data-scope="org" aria-checked="${scope === "org"}" class="${scope === "org" ? "active" : ""}">Organisation default</button>
+    </div>` : "";
+  const body = scope === "org"
+    ? `<p class="help">You are editing the <b>organisation default</b>. It applies to everyone who has not set their own, and it never overwrites what someone already chose for themselves.</p>`
+    : mine.length
+      ? `<p class="help">In effect: <b>yours</b> for ${esc(mine.map(label).join(", ").toLowerCase())}. Everything else here is the <b>organisation default</b>.</p>
+         <div class="row wrap" style="gap:6px">${mine.map((k) => `<button type="button" class="chip active" data-clear="${esc(k)}" title="Use the organisation default for ${esc(label(k).toLowerCase())}">${esc(label(k))} ${icon("x", "sm")}</button>`).join("")}</div>
+         <p class="help">Remove one to fall back to the organisation default.</p>
+         <button type="button" class="btn xs" data-clear-all>Use the organisation default for everything here</button>`
+      : `<p class="help">Everything here is the <b>organisation default</b>. Change anything below and it becomes yours; the organisation's stays as it is.</p>`;
+  return `<div class="card" id="scopeCard"><div class="card-head"><div><h3>Whose defaults</h3><p class="card-sub">New tasks start from your own settings where you have them, and from the organisation's everywhere else. A task keeps whatever it was created with.</p></div>${seg}</div><div class="card-body">${body}</div></div>`;
+}
+
 export function mountSettings(main, section) {
   let cur = SECTIONS.some(([k]) => k === section) ? section : "workflow";
   main.innerHTML = `<div class="page settings-page"><header class="page-header"><div class="ph-title"><div class="eyebrow">Settings</div><h1>How Relay works for you</h1><p class="ph-sub">Defaults for new tasks; existing tasks keep their own workflow. Connectors and repositories live in <a href="#/knowledge/connectors">Knowledge</a>.</p></div><div class="ph-actions"><span class="save-state" id="saveState" role="status" aria-live="polite"></span></div></header>
@@ -59,6 +97,19 @@ export function mountSettings(main, section) {
   const nav = $("#sNav", main), body = $("#sMain", main);
   const saved = (ok = true, msg) => { const s = $("#saveState", main); s.textContent = msg || (ok ? "Saved" : "Save failed"); s.style.color = ok ? "var(--green)" : "var(--red)"; setTimeout(() => { if (s.textContent === "Saved") s.textContent = ""; }, 2000); };
   const save = async (partial) => { try { S.config = await api.saveSettings(partial); saved(true); bus.emit("config"); } catch (e) { saved(false); toast("error", "Could not save", e.message); } };
+  // Personal settings (orchestrator/personal.py): what this person overrides, what the organisation
+  // would give them, and what is in effect. The server resolves it; nothing here re-derives it.
+  let ps = null, scope = "mine";
+  const applyPersonal = (r) => { ps = r.settings; if (r.config) { S.config = r.config; bus.emit("config"); } return ps; };
+  const loadPersonal = async () => {
+    try {
+      if (!ORG.me) await loadMe();
+      applyPersonal(await api.mySettings());
+    } catch { ps = null; }
+    return ps;
+  };
+  const savePersonal = async (patch) => { try { applyPersonal(await api.saveMySettings(patch)); saved(true); } catch (e) { saved(false); toast("error", "Could not save", e.message); } };
+  const clearPersonal = async (keys) => { try { applyPersonal(await api.clearMySettings(keys)); saved(true, "Back to the organisation default"); render(); } catch (e) { saved(false); toast("error", "Could not clear", e.message); } };
   const bindAuto = () => {
     $$("[data-cfg]", body).forEach((i) => {
       const k = i.dataset.cfg;
@@ -72,6 +123,22 @@ export function mountSettings(main, section) {
     });
     $$("[data-sw-cfg]", body).forEach((s) => (s.onclick = () => { s.classList.toggle("on"); save({ [s.dataset.swCfg]: s.classList.contains("on") }); }));
   };
+
+  // The "whose defaults" card: switch what is being edited, and clear an override in one click.
+  function bindScope() {
+    const card = $("#scopeCard", body);
+    if (!card) return;
+    $$("[data-scope]", card).forEach((b) => (b.onclick = () => { scope = b.dataset.scope; render(); }));
+    $$("[data-clear]", card).forEach((b) => (b.onclick = () => clearPersonal([b.dataset.clear])));
+    const all = $("[data-clear-all]", card);
+    if (all) all.onclick = () => clearPersonal(PERSONAL_WF);
+  }
+  function renderScopeCard() {
+    const card = $("#scopeCard", body);
+    if (!card || !ps) return;
+    card.outerHTML = scopeCard(ps, scope, can("admin"));
+    bindScope();
+  }
 
   let query = "";
   const matches = (k) => { if (!query) return true; const [, l] = SECTIONS.find(([x]) => x === k); return `${l} ${KEYWORDS[k] || ""}`.toLowerCase().includes(query); };
@@ -93,7 +160,14 @@ export function mountSettings(main, section) {
     const c = S.config || {};
     drawNav();
     if (cur === "workflow") {
-      body.innerHTML = `<div class="card"><div class="card-head"><h3>Default team</h3></div><div class="card-body"><div id="wfEd"></div></div></div>
+      if (!ps) { loadPersonal().then(render); return; }
+      const admin = can("admin");
+      if (scope === "org" && !admin) scope = "mine";
+      // In "yours" the editor shows what is in effect for this person (the config it was given is
+      // already resolved); in "organisation" it shows the shared defaults themselves.
+      const base = scope === "org" ? { ...c, ...(ps.organisation || {}) } : c;
+      body.innerHTML = `${scopeCard(ps, scope, admin)}
+        <div class="card"><div class="card-head"><h3>${scope === "org" ? "Organisation default team" : "Your default team"}</h3></div><div class="card-body"><div id="wfEd"></div></div></div>
         <div class="card"><div class="card-head"><h3>Turn behaviour</h3></div><div class="card-body">
           <div class="grid3">
             <div class="field"><label>Agent turn timeout (minutes)</label><input type="number" min="5" data-cfg="agent_turn_timeout_minutes" value="${esc(c.agent_turn_timeout_minutes)}"><div class="help">A turn that runs longer is terminated and the agent is asked to continue in smaller steps.</div></div>
@@ -114,9 +188,39 @@ export function mountSettings(main, section) {
         </div></div>
         ${explorationCard(c)}
         ${learningCard(c)}`;
-      const wf = { preset: c.workflow_preset, roles: JSON.parse(JSON.stringify(c.roles || {})), max_turns: c.max_turns, max_review_rounds: c.max_review_rounds, verify_mode: c.verify_mode, approval_before_delivery: c.approval_before_delivery, allow_agent_questions: c.allow_agent_questions, redeploy_on_merge: !!c.redeploy_default_on, verification_commands: c.verification_commands || [], auto_detect_verification: c.auto_detect_verification, design_mode: c.design_mode, design_approval: c.design_approval, team_mode: c.team_mode || "auto" };
-      const persist = debounce((w) => save({ workflow_preset: w.preset, roles: JSON.parse(JSON.stringify(w.roles)), max_turns: w.max_turns, max_review_rounds: w.max_review_rounds, verify_mode: w.verify_mode, approval_before_delivery: w.approval_before_delivery, allow_agent_questions: w.allow_agent_questions, redeploy_default_on: !!w.redeploy_on_merge, verification_commands: w.verification_commands, auto_detect_verification: w.auto_detect_verification, design_mode: w.design_mode, design_approval: w.design_approval, team_mode: w.team_mode || "auto" }), 400);
+      const wf = { preset: base.workflow_preset, roles: JSON.parse(JSON.stringify(base.roles || {})), max_turns: base.max_turns, max_review_rounds: base.max_review_rounds, verify_mode: base.verify_mode, approval_before_delivery: base.approval_before_delivery, allow_agent_questions: base.allow_agent_questions, redeploy_on_merge: !!c.redeploy_default_on, verification_commands: c.verification_commands || [], auto_detect_verification: base.auto_detect_verification, design_mode: base.design_mode, design_approval: base.design_approval, team_mode: base.team_mode || "auto" };
+      // Verification commands and the redeploy opt-in are organisation settings even here: they run
+      // commands on the server, so they are never personal.
+      const orgOnly = (w) => {
+        const o = {};
+        if ((w.verification_commands || []).join("\n") !== (c.verification_commands || []).join("\n")) o.verification_commands = w.verification_commands;
+        if (!!w.redeploy_on_merge !== !!c.redeploy_default_on) o.redeploy_default_on = !!w.redeploy_on_merge;
+        return o;
+      };
+      // Only what this person really changed becomes theirs. A value set back to the organisation's
+      // clears the override instead of freezing today's shared value into their account.
+      const personalDiff = (w) => {
+        const want = wfToPersonal(w), org = ps.organisation || {}, out = {};
+        for (const k of PERSONAL_WF) {
+          const same = norm(want[k]) === norm(org[k]);
+          if (!same) out[k] = want[k];
+          else if ((ps.sources || {})[k] === "yours") out[k] = null;
+        }
+        return out;
+      };
+      const persist = debounce(async (w) => {
+        const shared = orgOnly(w);
+        if (scope === "org") return save({ ...wfToPersonal(w), ...shared });
+        const diff = personalDiff(w);
+        if (Object.keys(diff).length) await savePersonal(diff);
+        if (Object.keys(shared).length) {
+          if (admin) await save(shared);
+          else toast("info", "That one is shared", "Verification commands and redeploy after merge belong to the organisation; an admin changes them in Settings.");
+        }
+        renderScopeCard();
+      }, 400);
       workflowEditor($("#wfEd", body), wf, { agents: S.agentMeta, presets: S.presets, onChange: persist });
+      bindScope();
       bindAuto();
       // The model catalogue and efforts depend on the agent, so redraw once the new agent is saved.
       $("[data-cfg='retro_agent']", body).addEventListener("change", () => setTimeout(render, 300));

@@ -26,6 +26,10 @@ DEFAULT_PREFS = {
     "theme": "system",
     "density": "comfortable",
     "gravatar": False,
+    # Personal settings: the organisation defaults this person overrides for themselves.
+    # Written only through save_settings(), which takes values already validated by
+    # orchestrator/personal.py; nothing secret is ever a personal setting.
+    "settings": {},
     "notifications": {
         "events": {"needs_input": ["inapp", "browser"], "approval": ["inapp", "browser"], "delivered": ["inapp"],
                    "failed": ["inapp", "browser"], "digest": ["inapp"], "budget": ["inapp"]},
@@ -281,7 +285,11 @@ def save_prefs(username: str, prefs: dict) -> dict:
         if not u:
             raise KeyError("No such user")
         old = u["prefs"]
+        # Personal settings have their own validated endpoint (save_settings); a preferences body
+        # cannot reach them, or it could store a setting nobody checked.
+        prefs = {k: v for k, v in (prefs or {}).items() if k != "settings"}
         new = _deep(old, prefs or {})
+        new["settings"] = old.get("settings") or {}
         n = new["notifications"]
         for ev, chans in list((n.get("events") or {}).items()):
             if ev not in NOTIFY_EVENTS:
@@ -316,6 +324,32 @@ def save_prefs(username: str, prefs: dict) -> dict:
         u["prefs"] = new
         _save_user(u)
         return with_defaults(u)
+
+
+def save_settings(username: str, patch: dict | None) -> dict:
+    """Personal settings, already validated by orchestrator/personal.py.
+
+    A key set to None is removed, so it falls back to the organisation default; patch=None clears
+    every override at once. Returns the person's overrides as they now stand.
+    """
+    with _store.lock:
+        u = get(username)
+        if not u:
+            raise KeyError("No such user")
+        cur = dict(u["prefs"].get("settings") or {})
+        if patch is None:
+            cur = {}
+        else:
+            for k, v in patch.items():
+                if v is None:
+                    cur.pop(k, None)
+                else:
+                    cur[k] = v
+        prefs = dict(u["prefs"])
+        prefs["settings"] = cur
+        u["prefs"] = prefs
+        _save_user(u)
+        return cur
 
 
 def link_telegram(username: str, telegram_user_id: str):

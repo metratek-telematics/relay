@@ -6,6 +6,22 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Personal settings, on top of the organisation's** (`orchestrator/personal.py`, `orchestrator/org/identity.py`,
+  `orchestrator/manager.py`, `web/js/views/settings.js`). Each person can keep their own default team and workflow
+  — agent, model and effort per role, team mode, turn budget, review rounds, verification, the approval gate,
+  agent questions, the design step — and new tasks start from theirs. Everything shared stays shared and
+  owner/admin only: provider keys and OpenRouter, spend caps, connectors, repositories, the redeploy command,
+  sign-in and role mapping; the role matrix refuses those to anyone below admin, and the personal endpoint
+  refuses to store them at all. The precedence — what the task itself says, then the person's own setting, then
+  the organisation default — is resolved once in the backend and nowhere else, so the browser is handed values
+  that are already in effect. Settings → Team and workflow says which values are yours and which are the
+  organisation's, clears an override back to the organisation default in one click, and lets an admin switch to
+  editing the organisation default itself. A task records who created it and which defaults it started from, so
+  it does not change meaning when somebody else looks at it. An installation where nobody has personal settings
+  behaves exactly as before.
+
 ### Fixed
 
 - **Tasks no longer start from stale code** (`orchestrator/gitops.py`, setting `branch_from_upstream`).

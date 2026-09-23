@@ -36,6 +36,10 @@ RULES: list[tuple[tuple, re.Pattern, str, str]] = [(m, re.compile(rx), r, label)
     (("GET",), r"^/api/org/integrations(/.*)?$", "admin", "read integration status"),
     (("GET",), r"^/api/org/users/[^/]+$", "admin", "read a person's details"),
     # ---- everyone signed in, for themselves
+    # Personal settings: the defaults this person's own tasks start from. The keys that may be
+    # personal, and their validation, are in orchestrator/personal.py; everything shared stays on
+    # /api/settings below, which is admin only.
+    (W, r"^/api/org/me/settings$", "self", "change your own default team and workflow"),
     (W, r"^/api/org/me(/.*)?$", "self", "change your own profile, preferences, tokens and channels"),
     (W, r"^/api/notifications/read$", "viewer", "mark notifications read"),
     (W, r"^/api/org/onboarding/dismiss$", "viewer", "hide the setup checklist"),
@@ -62,6 +66,10 @@ RULES: list[tuple[tuple, re.Pattern, str, str]] = [(m, re.compile(rx), r, label)
     (W, r"^/api/org/budgets$", "owner", "change budgets"),
     (W, r"^/api/org/audit/verify$", "admin", "verify the audit chain"),
     # ---- admins (stated for the Access page; the default would be admin too)
+    # The organisation's shared settings: provider keys and OpenRouter, spend caps, connectors,
+    # repositories, the redeploy command, sign-in and role mapping. Anyone below admin changes their
+    # own copy instead, through /api/org/me/settings.
+    (W, r"^/api/settings$", "admin", "change the organisation's shared settings"),
     (W, r"^/api/knowledge(/.*)?$", "admin", "edit knowledge docs and refresh them"),
     # ---- public API: each route checks its scope; the matrix only requires a person
     (W, r"^/api/v1/.*$", "viewer", "use the public API"),

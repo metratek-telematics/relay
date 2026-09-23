@@ -24,7 +24,7 @@ from datetime import datetime
 
 from flask import Blueprint, Response, g, jsonify, request
 
-from .. import config as C, connectors, github, lessons, repos, stacks
+from .. import config as C, connectors, github, lessons, personal, repos, stacks
 from . import audit, identity, notify, onboarding, projects, rbac, settings as OS, telegram, tokens, usage, webpush
 from .common import MASK, mask, now_iso
 
@@ -327,6 +327,10 @@ def install(app, manager, broadcast):
     threading.Thread(target=_merged_by_loop, args=(manager,), name="relay-merged-by", daemon=True).start()
     from . import api_v1
     api_v1.STATE = STATE
+    # One place decides whose personal settings apply (orchestrator/personal.py); this is how it
+    # learns who is acting. Identity always comes from the trusted header or from acting_as(),
+    # never from a request body.
+    personal.set_actor_provider(_acting_user)
     app.register_blueprint(bp)
     app.register_blueprint(api_v1.bp)
 
@@ -367,6 +371,12 @@ def install(app, manager, broadcast):
                 prefs["density"] = g.org_body["ui_density"]
             if prefs:
                 identity.save_prefs(u["username"], prefs)
+            rest = {k: v for k, v in g.org_body.items() if k in personal.KEYS}
+            if rest:
+                try:
+                    personal.save(u["username"], rest)
+                except ValueError as e:
+                    return _json_response({"error": str(e)}, 400)
             audit.record(u, "profile.preferences", {"type": "profile", "id": u["username"]}, request={"method": "POST", "path": path, "ip": client_ip(), "body": g.org_body},
                          status=200, via=g.get("org_via") or "", detail="Appearance saved as a personal preference (no global settings changed)")
             g.org_audited = True
@@ -431,9 +441,17 @@ def _untrusted_once():
                  detail="Identity headers ignored: the request did not come from a trusted proxy.")
 
 
+def _acting_user() -> dict | None:
+    """Who Relay is acting for right now: Telegram's acting_as, else the person behind the request."""
+    act, _ = acting()
+    return act or (current_user() if _in_request() else None)
+
+
 def _config_for(u, cfg: dict) -> dict:
-    """Settings as a person sees them: their own theme, and agent secrets only for admins."""
-    cfg = dict(cfg)
+    """Settings as a person sees them: their own settings on top of the organisation's, their own
+    theme, and agent secrets only for admins. The browser is given values already resolved, so no
+    page has to work out the precedence for itself."""
+    cfg = personal.effective(dict(cfg), u or {})
     p = (u or {}).get("prefs") or {}
     if p.get("theme"):
         cfg["ui_theme"] = p["theme"]
@@ -714,6 +732,46 @@ def me_patch():
                     x["avatar_url"] = url
         store.update(fn)
     return me()
+
+
+# ---------------------------------------------------------------- personal settings
+# What is in effect for this person, what they decided themselves, and what the organisation would
+# give them. Which keys may be personal, and every value's validation, live in orchestrator/personal.py:
+# a body that names anything else (a provider key, a spend cap, the redeploy command) is refused here
+# and, for the shared endpoint, refused by the role matrix in rbac.py.
+def _personal_payload(u) -> dict:
+    cfg = C.public_view(STATE["manager"].cfg())
+    return {"settings": personal.view(cfg, u or {}), "config": _config_for(u, cfg)}
+
+
+@bp.get("/api/org/me/settings")
+def me_settings():
+    u = current_user()
+    return jsonify(_personal_payload(identity.get(u["username"]) or u))
+
+
+@bp.patch("/api/org/me/settings")
+def me_settings_save():
+    u = current_user()
+    b = request.get_json(silent=True) or {}
+    patch = b.get("settings") if isinstance(b.get("settings"), dict) else b
+    try:
+        personal.save(u["username"], patch)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify(_personal_payload(identity.get(u["username"])))
+
+
+@bp.delete("/api/org/me/settings")
+def me_settings_clear():
+    """Back to the organisation default: one key (?key=…), several, or all of them."""
+    u = current_user()
+    wanted = [k for k in (request.args.get("key") or "").split(",") if k.strip()]
+    try:
+        personal.clear(u["username"], wanted or None)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify(_personal_payload(identity.get(u["username"])))
 
 
 @bp.get("/api/org/me/notifications/latest")
