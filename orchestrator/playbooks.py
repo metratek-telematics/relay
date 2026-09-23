@@ -17,6 +17,8 @@ Sources
              sections from the seed plus digests of recent successful and failed runs.
     person   any section can be edited on the Learning page; an edited section is never overwritten
              (the agent's suggestion is kept next to it for review).
+    knowledge  written from the repository's knowledge doc (orchestrator/knowledge.py). Pinned like an edit so re-seeding
+             keeps it, but the knowledge refresh may rewrite it (merge_partial).
 
 Only the supervisor's kickoff prompt gets the playbook (planning), capped at PROMPT_CHARS.
 Layout: DATA_DIR/learning/playbooks/<slug>-<hash>.json
@@ -37,6 +39,7 @@ SECTIONS = ("run", "conventions", "gotchas", "breakdown", "fixes")
 SECTION_LABEL = {"run": "How to run and test", "conventions": "Conventions", "gotchas": "Gotchas",
                  "breakdown": "Typical work-package breakdown", "fixes": "Common failures and fixes"}
 PROMPT_CHARS = 3500
+KNOWLEDGE_SOURCE = "knowledge"   # written from a knowledge doc (orchestrator/knowledge.py): pinned against re-seeding, not a person's edit
 _lock = threading.RLock()
 
 
@@ -153,6 +156,31 @@ def merge_seed(pb: dict | None, repo: str, repo_label: str, sections: dict, sour
         pb["sections"][s] = cur
     pb[f"{source}_at"] = now()
     return pb
+
+
+def merge_partial(pb: dict | None, repo: str, repo_label: str, sections: dict, source: str = "agent") -> tuple[dict, list]:
+    """Refresh only the given sections (the knowledge refresh touches what changed); edited sections keep their text
+    and get the new text as a suggestion. Returns (playbook, sections whose text changed)."""
+    pb = pb or {"repo": repo, "repo_label": repo_label, "created_at": now(), "sections": {}}
+    pb.setdefault("sections", {})
+    changed = []
+    for s, new in (sections or {}).items():
+        new = str(new or "").strip()
+        if s not in SECTIONS or not new:
+            continue
+        cur = pb["sections"].get(s) or {}
+        if cur.get("edited") and cur.get("source") != KNOWLEDGE_SOURCE:
+            if new != cur.get("text"):
+                cur["suggestion"] = new
+                cur["suggestion_source"] = source
+                pb["sections"][s] = cur
+        elif new != (cur.get("text") or "").strip():
+            # Sections written from a knowledge doc stay pinned (a re-seed must not blank them) and stay the doc's to update.
+            ours = cur.get("source") == KNOWLEDGE_SOURCE
+            pb["sections"][s] = {"text": new, "source": KNOWLEDGE_SOURCE if ours else source, "edited": ours, "updated_at": now()}
+            changed.append(s)
+    pb[f"{source}_at"] = now()
+    return pb, changed
 
 
 def edit(pb: dict, section: str, text: str) -> dict:

@@ -315,6 +315,7 @@ function onEvent(ev) {
     case "config": S.config = p; applyTheme(p.ui_theme, p.ui_density); break;
     case "queue": S.queue = { ...S.queue, ...p }; view?.update?.("queue", p); break;
     case "autopilot": S.autopilot = p; renderAutopilot(); view?.update?.("autopilot", p); break;
+    case "knowledge": if (p.error) toast("error", "Knowledge refresh failed", p.error); else if (p.refreshed) { const bad = p.refreshed.filter((r) => r.status === "error"); toast(bad.length ? "error" : "success", "Knowledge docs checked", p.refreshed.map((r) => `${r.repo.split("/").pop()}: ${r.status}${r.error ? ` (${r.error})` : ""}`).join(" · ")); } view?.update?.("knowledge"); break;
     case "lessons": S.lessonsPending = p.pending || 0; renderCounts(); view?.update?.("lessons"); break;
     case "learning": if (p.proposals !== undefined) { S.learningProposals = p.proposals || 0; renderCounts(); } if (p.error) toast("error", "Playbook refresh failed", p.error); view?.update?.("learning"); break;
     case "agents": { const j = p.job; if (j) toast(j.state === "done" ? "success" : "error", `${agentLabel(p.agent)} ${j.action === "remove" ? "removal" : j.action} ${j.state === "done" ? "finished" : "failed"}`, j.error || ""); view?.update?.("agents"); break; }

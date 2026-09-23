@@ -19,7 +19,7 @@ from pathlib import Path
 
 from . import config as C
 from . import commitguard, connectors, design, designcheck, environment, exploration, gitops, github, judge, lessons, multirepo, protocol, repo_env, stacks
-from . import perfcheck, solo, timing, tokens, toolbox, triage, verifyfast
+from . import knowledge, perfcheck, solo, timing, tokens, toolbox, triage, verifyfast
 from .runner import Interrupted, Stopped, TurnTimeout
 from .util import APP_DIR, new_id, now, quiet, read_text, truncate, write_text
 
@@ -130,6 +130,7 @@ class Pipeline(solo.SoloFlow, exploration.ExplorationFlow, design.DesignFlow, mu
         self._auto_choice = False
         self.lessons_text = ""
         self.playbook_text = ""
+        self.knowledge_text = ""  # the task's knowledge docs (orchestrator/knowledge.py), in every kickoff prompt
         self.stack = None  # integration stack definition (orchestrator/stacks.py)
         self.related = []  # the task's other repositories (orchestrator/multirepo.py)
 
@@ -871,6 +872,16 @@ class Pipeline(solo.SoloFlow, exploration.ExplorationFlow, design.DesignFlow, mu
         # Approved lessons from earlier tasks on this repository, added to the kickoff prompts.
         self.lessons_text = lessons.kickoff_block(self.m, {**t, "github_repo": repo_full}, self.cfg)
         self.learning_start({**t, "github_repo": repo_full})
+        self.knowledge_start({**t, "github_repo": repo_full})
+
+    def knowledge_start(self, t):
+        """The Knowledge section (paths and one line per doc) every kickoff prompt of this task carries (knowledge.py)."""
+        try:
+            self.knowledge_text = knowledge.task_block(t, self.cfg)
+        except Exception:  # knowledge must never stop a task
+            self.knowledge_text = ""
+        if self.knowledge_text:
+            self.m.set_meta(self.tid, knowledge_docs=[line[2:].split(":", 1)[0] for line in self.knowledge_text.splitlines()[1:] if line.startswith("- /")])
 
     def learning_start(self, t):
         """Prompt/rule versions for the outcome dataset, and the repository's playbook for planning (learning_engine.py)."""
@@ -893,6 +904,7 @@ class Pipeline(solo.SoloFlow, exploration.ExplorationFlow, design.DesignFlow, mu
         prompt = protocol.supervisor_kickoff(self.task, self.wt, self.branch, self.issue_text, self.refs_text, guidance, self.verify_cmds, self.cfg,
                                              self.env_text(), self.tools_text("supervisor"))
         prompt = protocol.with_lessons(prompt, self.lessons_text)
+        prompt = protocol.with_block(prompt, self.knowledge_text, "knowledge")
         prompt = protocol.with_block(prompt, self.playbook_text)
         prompt = protocol.with_block(prompt, self.context_text("supervisor"))
         prompt = protocol.with_block(prompt, self.kickoff_design_note())
@@ -1005,6 +1017,7 @@ class Pipeline(solo.SoloFlow, exploration.ExplorationFlow, design.DesignFlow, mu
                                                      self.state.get("instruction", ""), guidance, self.cfg,
                                                      self.gate_command(), self.env_text(), self.tools_text("worker"))
                     prompt = protocol.with_lessons(prompt, self.lessons_text)
+                    prompt = protocol.with_block(prompt, self.knowledge_text, "knowledge")
                     prompt = protocol.with_block(prompt, self.context_text("worker"))
                 else:
                     prompt = protocol.worker_followup(_label(sup_agent), turn, self.state.get("instruction", ""), guidance, kind)
@@ -1539,6 +1552,7 @@ class Pipeline(solo.SoloFlow, exploration.ExplorationFlow, design.DesignFlow, mu
                                                    self.state.get("pr_summary", ""), vt, diff, rnd, self.cfg,
                                                    self.state.get("blocked_checks") or [], judge.acceptance_block(self.criteria()) if self.criteria() else "",
                                                    self.tools_text("reviewer"))
+                prompt = protocol.with_block(prompt, self.knowledge_text, "knowledge")
                 prompt = protocol.with_block(prompt, self.context_text("reviewer"))
             else:
                 prompt = protocol.reviewer_followup(rnd, vt, diff, self.state.get("pr_summary", ""),
@@ -1701,6 +1715,7 @@ class Pipeline(solo.SoloFlow, exploration.ExplorationFlow, design.DesignFlow, mu
                 self.comment_design(pr)
 
         self.deliver_related(pr, title, prefix)
+        self.note_knowledge(changed, pr)
         self.write_pr_previews()
         report = self.final_report_md(pr, committed)
         self.artifact("report", "REPORT.md", report)
@@ -1710,6 +1725,20 @@ class Pipeline(solo.SoloFlow, exploration.ExplorationFlow, design.DesignFlow, mu
                                    "summary": self.state.get("summary") or self.state.get("pr_summary") or "", "diffstat": gitops.diff_stat(self.wt, self.base), "changed_count": len(gitops.changed_files(self.wt, self.base))})
         self.r.msg(role="orchestrator", agent=None, kind="complete", content=self.state.get("summary") or "", pr_url=pr.get("url"),
                    branch=self.branch, turn=self.state.get("turn"))
+
+    def note_knowledge(self, changed, pr):
+        """A delivery that touched key files (manifests, Dockerfiles, compose, CI, migrations, config) marks the repository's
+        knowledge doc as possibly stale until the next refresh (knowledge.py)."""
+        try:
+            rows = [(self.repo_full, [c["path"] for c in changed], pr.get("url") or "")]
+            for r in getattr(self, "related", None) or []:
+                rows.append((r.get("github_repo"), [c["path"] for c in gitops.changed_files(r["worktree"], r.get("base_commit"))], r.get("pr_url") or ""))
+            for repo, files, url in rows:
+                mark = knowledge.mark_delivery(repo, files, self.tid, url)
+                if mark:
+                    self.r.timeline("system", "Knowledge doc may be stale", f"{repo}: " + ", ".join(mark["key_files"][:5]))
+        except Exception:  # knowledge bookkeeping must never fail a delivery
+            traceback.print_exc()
 
     def write_pr_previews(self):
         """The pull request bodies as Relay sends them, per repository, written also when nothing is pushed."""
@@ -1905,8 +1934,9 @@ class Pipeline(solo.SoloFlow, exploration.ExplorationFlow, design.DesignFlow, mu
         changed = self.all_changed_files() if self.wt else []
         handoff = tokens.compact_handoff(role, self.state, judge.acceptance_block(self.criteria()) if self.criteria() else "",
                                          changed, self.open_findings_text(), int(context_tokens or 0))
-        return protocol.resume_kickoff(role, self.task, self.wt, self.branch, self.cfg, note + "\n\n" + handoff, str(message),
-                                       self.env_text(), self.tools_text(role), self.gate_command() if role == "worker" else "")
+        prompt = protocol.resume_kickoff(role, self.task, self.wt, self.branch, self.cfg, note + "\n\n" + handoff, str(message),
+                                         self.env_text(), self.tools_text(role), self.gate_command() if role == "worker" else "")
+        return protocol.with_block(prompt, getattr(self, "knowledge_text", ""), "knowledge")
 
     def maybe_compact(self, role, agent, sess, prompt, skey=None):
         """A session whose context outgrew the threshold is replaced by a fresh one that starts from a Relay handoff."""
