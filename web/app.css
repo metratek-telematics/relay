@@ -523,6 +523,15 @@ a.metric:hover { background: color-mix(in srgb, var(--panel) 94%, var(--text)); 
 .meta-fact .ic { color: var(--text-3); }
 a.meta-fact:hover { color: var(--accent); text-decoration: none; }
 .meta-group { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+/* Redeploy record on a delivered task (orchestrator/redeploy.py). */
+.redeploy-fact { gap: 6px; flex-wrap: wrap; white-space: normal; min-width: 0; font-weight: 600; }
+.redeploy-fact .redeploy-detail { font-weight: 400; overflow-wrap: anywhere; }
+.redeploy-fact.tone-green { color: var(--green); }
+.redeploy-fact.tone-green .ic { color: var(--green); }
+.redeploy-fact.tone-red { color: var(--red); }
+.redeploy-fact.tone-red .ic { color: var(--red); }
+.redeploy-fact.tone-amber { color: var(--amber); }
+.redeploy-fact.tone-amber .ic { color: var(--amber); }
 .team-flow { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .team-pill { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px 0 5px; border-radius: 99px; background: var(--panel-2); border: 1px solid transparent; font-size: var(--fs-xs); }
 .team-pill.on { background: var(--green-soft); border-color: color-mix(in srgb, var(--green) 35%, transparent); }

@@ -351,6 +351,16 @@ DEFAULTS = {
     # watchdog and the morning digest. Keys and meaning: orchestrator/autopilot.py DEFAULTS.
     "autopilot": copy.deepcopy(_AUTOPILOT_DEFAULTS),  # one-after-the-other chains keep going after a failed task
     "github_pr_body_template": "{summary}\n\n---\n{details}\n\n{issue_close}\n",
+    # Redeploy after merge (orchestrator/redeploy.py). Off by default; each task also opts in
+    # through its workflow. The command is owner configuration only: it never comes from task
+    # text, agent output or a request body.
+    "redeploy_enabled": False,          # master switch: no command ever runs while this is off
+    "redeploy_default_on": False,       # the per-task opt-in a new task starts with
+    "redeploy_command": "",
+    "redeploy_working_dir": "",         # blank = the delivered task worktree
+    "redeploy_trigger": "pr_merged",    # pr_merged | delivered
+    "redeploy_timeout_minutes": 10,
+    "redeploy_poll_seconds": 120,
     # learning: scorecards, retrospectives, lessons (orchestrator/learning.py)
     "retro_enabled": True,             # one short agent turn after each task ends, proposing lessons for review
     "retro_agent": "",                 # "" = the task's supervisor agent
