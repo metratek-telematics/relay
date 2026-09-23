@@ -330,6 +330,9 @@ DEFAULTS = {
     "design_forbidden_terms": [],
     "branch_naming": "type",               # type: feat/…, fix/… from the task type · prefix: <branch_prefix>/…
     "branch_prefix": "agent",
+    # Fetch first and start a new task branch from the remote branch when the checkout is merely behind it,
+    # so tasks are never written against stale code (a server checkout nobody pulls).
+    "branch_from_upstream": True,
     "snapshot_working_tree": True,
     "copy_untracked_files": True,
     "copy_ignored_root_files": True,   # .env, .env.local, dev auth cookies: what the app needs to run
@@ -339,6 +342,7 @@ DEFAULTS = {
     # github
     "github_intake_enabled": True,
     "github_poll_seconds": 60,
+    "github_issue_repo": "metratek-telematics/relay",
     "github_default_label": "agent",
     "github_auto_push_on_pass": True,
     "github_auto_create_pr": True,

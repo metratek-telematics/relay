@@ -5,6 +5,7 @@ import { S, bus, navigate, statusOf, LIVE, agentLabel } from "./state.js";
 import { api } from "./api.js";
 import { toast, basename, copyText } from "./ui.js";
 import { openNewTask, defaultWorkflow } from "./views/newtask.js";
+import { openReportIssue } from "./views/report.js";
 import { keysFor, openShortcuts } from "./shortcuts.js";
 import { reposOf } from "./live.js";
 import { inProject } from "./views/org/org.js";
@@ -90,6 +91,7 @@ export function commandItems(q, { view } = {}) {
     { group: "Actions", icon: S.queue?.running ? "stop" : "play", label: S.queue?.running ? "Halt the queue" : "Run the queue", onClick: () => bus.emit(S.queue?.running ? "queue:halt" : "queue:run") },
     { group: "Actions", icon: "sun", label: "Toggle theme", keywords: "dark light", onClick: () => document.getElementById("themeBtn").click() },
     { group: "Actions", icon: "keyboard", label: "Keyboard shortcuts", hint: keysFor("help"), onClick: () => openShortcuts() },
+    { group: "Actions", icon: "flag", label: "Report an issue", keywords: "bug feature request github feedback", onClick: () => openReportIssue() },
   );
   const nav = [
     ["Mission Control", "#/", "radar", "home live dashboard overview"], ["Needs you", "#/home/needs", "inbox", "inbox questions approvals answer"],

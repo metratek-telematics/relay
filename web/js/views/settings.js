@@ -341,6 +341,7 @@ export function mountSettings(main, section) {
         <div class="field inline"><label>Watch repositories for eligible issues</label><span class="switch ${c.github_intake_enabled ? "on" : ""}" data-sw-cfg="github_intake_enabled"></span></div>
         <div class="field"><label>Poll interval (seconds)</label><input type="number" min="15" data-cfg="github_poll_seconds" value="${esc(c.github_poll_seconds)}" style="width:120px"></div>
         <a class="btn sm" href="#/knowledge/github">${icon("github")}Manage watched repositories</a>
+        <div class="field" style="margin-bottom:0"><label>Repository for "Report an issue"</label><input data-cfg="github_issue_repo" value="${esc(c.github_issue_repo || "")}" placeholder="metratek-telematics/relay"><div class="help">Where the Report an issue dialog files bug reports and feature requests. Point a fork at its own repository.</div></div>
       </div></div>
       <div class="card"><div class="card-head"><h3>Issues board</h3></div><div class="card-body">
         <div class="field inline"><label>Comment “Relay picked this up” on an issue when a task is created from it</label><span class="switch ${c.issues_comment_on_pickup ? "on" : ""}" data-sw-cfg="issues_comment_on_pickup"></span></div>

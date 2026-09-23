@@ -436,7 +436,10 @@ class Runner:
                          summary=t.get("summary"), input="", status="error" if t.get("ok") is False else "ok", turn=turn)
         res["session"] = {**{k: v for k, v in session.items() if not k.startswith("_")},
                           "id": res.get("session_id") or session.get("id"),
-                          "turns": int(session.get("turns", 0)) + 1, "agent": agent_name}
+                          "turns": int(session.get("turns", 0)) + 1, "agent": agent_name,
+                          # What this turn actually ran on, so the task shows the truth rather than re-deriving
+                          # the settings: blank model means the CLI's own default was left in place.
+                          "model": model or "", "effort": effort or ""}
         if or_info is not None:
             res["session"]["provider"] = "openrouter"
             if or_info.get("auto"):
@@ -444,6 +447,7 @@ class Runner:
             used = list(dict.fromkeys(list(res["session"].get("or_models") or []) + list(or_info.get("models") or [])))
             res["session"]["or_models"] = used[-12:]
             res["model"] = or_info.get("final_model") or res.get("model")
+            res["session"]["model"] = or_info.get("final_model") or or_info.get("model") or res["session"].get("model") or ""
         if not ad.supports_resume:
             transcript.append({"prompt": truncate(prompt, 20000), "reply": truncate(res.get("text") or "", 12000)})
             while len(transcript) > 1 and sum(len(t["prompt"]) + len(t["reply"]) for t in transcript) > 80000:

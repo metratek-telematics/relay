@@ -61,6 +61,8 @@ RULES: list[tuple[tuple, re.Pattern, str, str]] = [(m, re.compile(rx), r, label)
     (W, r"^/api/org/settings/auth$", "owner", "change sign-in and role mapping"),
     (W, r"^/api/org/budgets$", "owner", "change budgets"),
     (W, r"^/api/org/audit/verify$", "admin", "verify the audit chain"),
+    # ---- admins (stated for the Access page; the default would be admin too)
+    (W, r"^/api/knowledge(/.*)?$", "admin", "edit knowledge docs and refresh them"),
     # ---- public API: each route checks its scope; the matrix only requires a person
     (W, r"^/api/v1/.*$", "viewer", "use the public API"),
 ]]
