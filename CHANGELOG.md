@@ -17,6 +17,13 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The model and effort a task runs on are shown, and come from the orchestrator** (`orchestrator/pipeline.py`
+  `publish_role_plan`, `orchestrator/runner.py`, `web/js/state.js`). Relay resolves each role's model and effort
+  once, with the same code that launches the agent, and records what every finished turn actually used; the task
+  page's Team card, the team pills, the theatre and the dashboard team hover show that rather than re-deriving
+  the settings in the browser. A role with no model states the CLI's own default, and a CLI with no effort
+  setting says so instead of showing a blank.
+
 - **Speed: triage and a solo fast path** (`orchestrator/triage.py`, `orchestrator/solo.py`, docs/SPEED_AUDIT.md).
   Team mode per task (Auto, Solo, Team). Auto triages every task with a heuristic and, for borderline requests, a cheap
   one-shot rating that runs while dependencies install. Small and moderate single-repository work runs one agent that

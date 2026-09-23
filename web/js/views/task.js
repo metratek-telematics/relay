@@ -2,7 +2,7 @@
 // a phase outline on the left; the conversation (or the live theatre, the changes, the checks, the logs) in the
 // middle; a rail of collapsible context sections on the right.
 import { $, $$, esc, icon, fmtSec, fmtDur, fmtCost, timeAgo, basename, toast, confirm, menu, copyText } from "../ui.js";
-import { S, agentLabel, ROLE_LABEL, roleAgent, roleModelLabel, roleEffort, statusOf, LIVE, msgStore, taskElapsed, navigate, bus } from "../state.js";
+import { S, agentLabel, ROLE_LABEL, roleAgent, roleModelText, roleEffortText, roleDetails, statusOf, LIVE, msgStore, taskElapsed, navigate, bus } from "../state.js";
 import { api } from "../api.js";
 import { Conversation } from "./conversation.js";
 import { mountInspector, TABS } from "./inspector.js";
@@ -177,7 +177,7 @@ export function mountTask(main, id) {
     const tot = t.metrics?.total || {};
     const team = ["supervisor", "worker", "reviewer"].filter((r) => roleAgent(t, r)).map((r) => {
       const a = roleAgent(t, r), on = p.state === "running" && p.role === r;
-      return `<span class="team-pill ${on ? "on" : ""}" title="${esc(ROLE_LABEL[r])}: ${esc(agentLabel(a))} · ${esc(roleModelLabel(t, r))}${roleEffort(t, r) ? ` · ${esc(roleEffort(t, r))} effort` : ""}"><span class="av xs ${esc(a)}"></span><span class="tpl-role">${esc(ROLE_LABEL[r])}</span><span class="tpl-agent">${esc(agentLabel(a))}</span>${on ? '<span class="live-dot sm"></span>' : ""}</span>`;
+      return `<span class="team-pill ${on ? "on" : ""}" title="${esc(roleDetails(t, [r]))}"><span class="av xs ${esc(a)}"></span><span class="tpl-role">${esc(ROLE_LABEL[r])}</span><span class="tpl-agent">${esc(agentLabel(a))}</span>${on ? '<span class="live-dot sm"></span>' : ""}</span>`;
     }).join(`<span class="team-arrow" aria-hidden="true">${icon("arrowRight", "sm")}</span>`);
     const prs = repos.filter((r) => r.pr_url || r.pr_number);
     $("#tpMeta", page).innerHTML = `<span class="team-flow">${team}</span>

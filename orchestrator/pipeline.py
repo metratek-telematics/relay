@@ -1793,6 +1793,25 @@ class Pipeline(solo.SoloFlow, exploration.ExplorationFlow, design.DesignFlow, mu
             a = self.role_agent(r)[0]
             if a and a not in C.AGENTS:
                 raise RuntimeError(f"Unknown agent '{a}' for the {r} role.")
+        self.publish_role_plan()
+
+    def publish_role_plan(self):
+        """Record what each role will actually run on, resolved here rather than guessed by the browser.
+
+        The model and effort a role ends up with come from the task's team, the global role settings and the
+        agent defaults, in that order, and an effort the CLI does not offer is dropped. The task page shows this,
+        so it has to be the same answer the runner uses.
+        """
+        plan = {}
+        for r in ("supervisor", "worker", "reviewer"):
+            agent, model = self.role_agent(r)
+            if not agent:
+                continue
+            plan[r] = {"agent": agent, "model": model, "effort": self.role_effort(r),
+                       "provider": self.role_provider(r),
+                       "supports_effort": bool(C.AGENTS.get(agent, {}).get("efforts"))}
+        self.m.set_meta(self.tid, role_plan=plan)
+        return plan
 
     # ------------------------------------------------------------ tools and token efficiency (orchestrator/toolbox.py, tokens.py)
     def tools_text(self, role):
