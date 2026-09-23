@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 import time
 from pathlib import Path
 
@@ -28,6 +29,43 @@ def gh_text(args, cwd=None, timeout=60):
     if p.returncode != 0:
         raise RuntimeError(((p.stdout or "") + (p.stderr or "")).strip())
     return (p.stdout or "").strip()
+
+
+def create_issue(repo_full, title, body, label="") -> str:
+    """File an issue through `gh issue create` and return the issue URL.
+
+    Labels are optional in a GitHub repository, so a label the fork has never
+    created must not cost the reporter their report: the call is retried once
+    without it.
+    """
+    repo_full = normalize_repo_full_name(repo_full)
+    if "/" not in repo_full:
+        raise RuntimeError("The issue repository must be in owner/repository form.")
+    if not which("gh"):
+        raise RuntimeError("GitHub CLI (gh) is not installed.")
+    body_path = None
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as f:
+            f.write(body or "")
+            body_path = f.name
+        base = ["gh", "issue", "create", "--repo", repo_full, "--title", title or "", "--body-file", body_path]
+        p = quiet(base + (["--label", label] if label else []), timeout=90)
+        out = ((p.stdout or "") + (p.stderr or "")).strip()
+        if p.returncode != 0 and label and re.search(r"label.*(?:not found|does not exist)|could not (?:add|find) label", out, re.I):
+            p = quiet(base, timeout=90)
+            out = ((p.stdout or "") + (p.stderr or "")).strip()
+        if p.returncode != 0:
+            raise RuntimeError(out or "gh issue create failed.")
+        url = next((ln.strip() for ln in reversed(out.splitlines()) if re.match(r"https?://", ln.strip())), "")
+        if not url:
+            raise RuntimeError("gh issue create returned no issue URL.")
+        return url
+    finally:
+        if body_path:
+            try:
+                Path(body_path).unlink()
+            except OSError:
+                pass
 
 
 def auth_info() -> dict:
