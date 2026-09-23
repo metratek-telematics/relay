@@ -42,6 +42,11 @@ class Learning:
             return
         self._started = True
         threading.Thread(target=self._background, name="relay-learning", daemon=True).start()
+        try:
+            from . import knowledge
+            knowledge.start_daily(self.m)   # daily staleness check and refresh of the repository knowledge docs
+        except Exception:
+            log.exception("knowledge refresh loop did not start")
 
     def task_ended(self, tid: str, retro_turn: bool = True):
         """Record the scorecard of a run that just ended and queue its retrospective. Never raises."""

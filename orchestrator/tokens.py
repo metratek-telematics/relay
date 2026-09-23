@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 CHARS_PER_TOKEN = 4
 
 # Sections in the order they appear in a kickoff prompt: stable first (prefix-cache friendly), volatile last.
-SECTION_ORDER = ["rules", "protocol", "tools", "task", "lessons", "context", "design", "environment", "packet",
+SECTION_ORDER = ["rules", "protocol", "tools", "task", "lessons", "knowledge", "context", "design", "environment", "packet",
                  "judge", "report", "verification", "diff", "guidance", "instruction", "other"]
 
 
