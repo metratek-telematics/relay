@@ -17,6 +17,38 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **From merge to deployed, everywhere, without a person** (`orchestrator/delivery.py`,
+  `orchestrator/manager.py`, `web_app.py`, settings `merge_watch_enabled` / `merge_poll_seconds`).
+  The deploy recipes now join up into one pipeline, and one structure tells its story.
+  A **merge watcher** polls `gh pr list --state merged` every three minutes for the repositories the
+  deployment map can actually deploy - and only those, so an installation that enabled nothing makes
+  no GitHub calls at all - so a merge made from a phone or from another machine deploys exactly like
+  one Relay was watching. Merges older than the watcher's first sweep are history and are never
+  deployed; every merge is written to `DATA_DIR/merges.json` by `owner/repo#number` *before* anything
+  runs, so a second sweep, or a restart mid-deployment, can never act on it twice; and each record
+  says what triggered the deployment (`merge_watcher`, `pr_merged`, `manual`, `resume`).
+  **Deployments are ordered by the system map**: an approved edge "the app depends on the decoder"
+  deploys the decoder first, and the plan says so in a sentence a person can check
+  ("decoder-repo before app-repo: app-repo depends on decoder-repo via http (the app reads its
+  feed)"). Where the map has no approved opinion, the deployment map's own order is kept and the plan
+  says that too; a loop in the approved edges falls back to map order and names itself.
+  **A failure stops what depends on it**: a target that fails, is refused or is blocked leaves every
+  target downstream of it recorded as "not attempted because X failed" with nothing run, and the task
+  can say exactly what is now half-deployed and resume from the failed step, keeping what succeeded.
+  A multi-repository task waits until *every* one of its pull requests is merged, because deploying
+  half a change in dependency order is worse than deploying none of it.
+  New read-only API for the interface: `GET /api/delivery` (one story per change, plus merges with no
+  task behind them, plus watcher state), `GET /api/delivery/<task>`, `GET /api/delivery/merges`,
+  `GET /api/deploy/plan?target=…` (the order and the reasons, running nothing), and
+  `POST /api/delivery/<task>/resume`. Each story carries the plan, the repositories touched, each pull
+  request and its state, each merge, each deployment with host, method, outcome, duration and log
+  path, and what is blocked and why - nothing has to be re-derived in the browser.
+  Every rule from the deploy recipes still holds, because every deployment still goes through
+  `deploy.run_target`: only enabled targets run automatically, critical targets only from the button,
+  `never_pull` is refused, commands come from the deployment map alone, and one deployment runs at a
+  time instance-wide.
+
+
 - **Deploy recipes: a merge redeploys the right thing, everywhere the repository runs**
   (`orchestrator/deploy.py`, `tools/seed_deploy_map.py`, `orchestrator/manager.py`, `web_app.py`,
   `web/js/views/deploy.js`, Settings → Deploy). The deployment map is executable configuration in

@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 from orchestrator import agents, config as C, design, github, gitops, handoff, history, repo_env, repos  # noqa: E402
-from orchestrator import deploy, issues, stacks  # noqa: E402
+from orchestrator import delivery, deploy, issues, stacks  # noqa: E402
 from orchestrator import multirepo, systemmap  # noqa: E402
 from orchestrator import agent_info, installer, lessons  # noqa: E402
 from orchestrator.scorecard import repo_label  # noqa: E402
@@ -1750,6 +1750,67 @@ def deploy_seed():
         return jsonify(deploy.seed_from_scans(force=bool((body() or {}).get("force"))))
     except deploy.DeployError as e:
         return jsonify({"error": str(e)}), 400
+
+
+# ----------------------------------------------------------------------------- delivery pipeline (#60)
+@app.get("/api/delivery")
+def delivery_list():
+    """One story per change, plus merges noticed with no task behind them, plus watcher state."""
+    try:
+        limit = max(1, min(200, int(request.args.get("limit") or 40)))
+    except (TypeError, ValueError):
+        limit = 40
+    return jsonify(manager.delivery_stories(limit))
+
+
+@app.get("/api/delivery/<tid>")
+def delivery_one(tid):
+    task_or_404(tid)
+    return jsonify(manager.delivery_story(tid))
+
+
+@app.post("/api/delivery/<tid>/resume")
+def delivery_resume(tid):
+    """Carry on from the step that failed. Nothing in the body reaches a command."""
+    task_or_404(tid)
+    try:
+        return jsonify(manager.resume_deploy(tid))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except deploy.DeployError as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.get("/api/delivery/merges")
+def delivery_merges():
+    """The merge ledger: what was noticed, when, what it triggered, and what it did not."""
+    doc = delivery.load_ledger()
+    return jsonify({"started_at": doc.get("started_at"), "last_poll": doc.get("last_poll"),
+                    "merges": delivery.merge_records(100),
+                    "repos": delivery.watched_repos(),
+                    "watcher": {"running": manager.merge_watcher,
+                                "enabled": bool(manager.cfg().get("merge_watch_enabled", True)),
+                                "poll_seconds": int(manager.cfg().get("merge_poll_seconds") or 180),
+                                **manager.merge_status}})
+
+
+@app.get("/api/deploy/plan")
+def deploy_plan():
+    """The order a set of targets would deploy in, and why. Read-only: it runs nothing.
+
+    `?target=a&target=b`, or `?repo=owner/name` for a repository's enabled targets.
+    """
+    ids = [i for i in request.args.getlist("target") if i]
+    targets = [t for t in (deploy.get_target(i) for i in ids) if t]
+    for repo in request.args.getlist("repo"):
+        targets += [t for t in deploy.targets_for_repo(repo) if t.get("enabled")]
+    seen, uniq = set(), []
+    for t in targets:
+        if t["id"] not in seen:
+            seen.add(t["id"])
+            uniq.append(t)
+    steps = delivery.plan(uniq)
+    return jsonify({k: v for k, v in steps.items() if k != "targets"})
 
 
 # ----------------------------------------------------------------------------- integration stacks
