@@ -14,8 +14,30 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   work did not fit current code and the pull request could not be merged. A checkout that has diverged, carries
   uncommitted changes or follows no remote branch still starts from what is checked out, and the timeline says
   which of the two happened.
+- **A dialog that asks for a name keeps the name** (`web/js/ui.js`). The prompt dialog closed before it resolved,
+  and closing it answers "cancelled", so OK returned nothing and whatever was typed was dropped.
 
 ### Added
+
+- **Several accounts per agent CLI, and a page that says what each one costs and when it runs out**
+  (`orchestrator/accounts.py`, `orchestrator/agent_info.py`, `orchestrator/autopilot.py`, `orchestrator/runner.py`,
+  `web/js/views/accounts.js`, `web_app.py`). A CLI is signed in per configuration folder, so a second subscription
+  needed a second folder: Claude, Codex, Gemini and every pack agent can now hold more than one account, each with
+  a name you choose, its own sign-in folder under the data directory, its own limit reading and an enabled/paused
+  flag. One account stays the default, and an installation with the single account it has always had behaves
+  exactly as before — same folder, same readings, same answers. A turn prefers the account its role's session
+  already runs on, then the default, then the next enabled account with capacity, and only then falls back to what
+  Relay did before: switch the role to a fallback agent, or wait for the window to reset. Two turns never share a
+  configuration folder while another account is free, and the task records which account took each turn, beside
+  the model and the effort. Signing a second account in stays manual — these CLIs need an interactive login — so
+  the Agents page prints the exact command, with the account's folder in it, and notices by itself when the
+  sign-in lands there. The new Accounts, plans and limits card gives one state per account: signed in or not, the
+  plan, how much of each window is used with its reset time, and the reason it cannot run when it cannot. It says
+  in words what happens when a limit is hit (move to the next account, switch to a fallback, wait), keeps a plan
+  subscription visually apart from pay-as-you-go spend, describes OpenRouter credit and free-model rotation in the
+  same language, marks which numbers came from the CLI and which Relay measured, and says "not known" wherever it
+  has not read something instead of showing a blank or a zero. Closes #55 and #56.
+
 
 - **Personal settings, on top of the organisation's** (`orchestrator/personal.py`, `orchestrator/org/identity.py`,
   `orchestrator/manager.py`, `web/js/views/settings.js`). Each person can keep their own default team and workflow
