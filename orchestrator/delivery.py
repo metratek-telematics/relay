@@ -375,12 +375,17 @@ def task_pull_requests(task: dict) -> list[dict]:
                         "url": w.get("pr_url") or "", "title": name, "branch": w.get("branch") or "",
                         "role": "related"})
     ledger = load_ledger().get("seen") or {}
+    # What the deploy hook saw when it decided to run: the state of every pull request it checked.
+    checked = {seen_key(p.get("repo"), p.get("number")): p
+               for p in (((task.get("deploy") or {}).get("pr_state") or {}).get("pull_requests") or [])}
     for pr in out:
-        row = ledger.get(seen_key(pr["repo"], pr["number"])) or {}
-        state = str((((task.get("deploy") or {}).get("pr_state") or {}).get("state")) or "") if pr["role"] == "primary" else ""
-        pr["state"] = ("MERGED" if row.get("merged_at") or state.upper() == "MERGED" else (state or "OPEN"))
-        pr["merged_at"] = row.get("merged_at") or ((task.get("deploy") or {}).get("pr_state") or {}).get("mergedAt") or ""
-        pr["merge_commit"] = row.get("commit") or ""
+        key = seen_key(pr["repo"], pr["number"])
+        row = ledger.get(key) or {}
+        seen_state = checked.get(key) or {}
+        state = str(seen_state.get("state") or "").upper()
+        pr["state"] = "MERGED" if (row.get("merged_at") or state == "MERGED") else (state or "OPEN")
+        pr["merged_at"] = row.get("merged_at") or seen_state.get("merged_at") or ""
+        pr["merge_commit"] = row.get("commit") or seen_state.get("merge_commit") or ""
     return out
 
 
