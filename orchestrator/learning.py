@@ -19,7 +19,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 
-from . import github, lessons, retro, scorecard
+from . import github, lessons, retro, scorecard, shipped
 from .learning_engine import LearningEngine
 from .util import RUNTIME_DIR
 
@@ -30,6 +30,7 @@ class Learning:
     def __init__(self, manager):
         self.m = manager
         self.cards = scorecard.ScorecardStore()
+        self.shipped = shipped.ShippedStore()   # did it actually ship: merged, deployed, untouched (#65)
         self._retros: queue.Queue = queue.Queue()
         self._retro_thread = None
         self._started = False
@@ -99,6 +100,7 @@ class Learning:
         self.cards.put(card)
         self.m.store.update(tid, touch=False, scorecard=card)
         self.engine.record(tid, card)  # the outcome dataset, and an autopsy when the run failed or scored low
+        self.record_shipped(t, card)
         self.m.emit_task(tid)
         return card
 
@@ -188,6 +190,12 @@ class Learning:
                 log.info("backfilled %d outcome record(s)", done)
         except Exception:
             log.exception("outcome backfill failed")
+        try:
+            done = self.shipped_backfill()
+            if done:
+                log.info("rebuilt %d shipped record(s)", done)
+        except Exception:
+            log.exception("shipped backfill failed")
         while True:
             try:
                 self.refresh_prs()
@@ -199,6 +207,66 @@ class Learning:
                 log.exception("playbook refresh failed")
             minutes = max(5, int(self.m.cfg().get("scorecard_refresh_minutes") or 30))
             time.sleep(minutes * 60)
+
+    # ------------------------------------------------------------ did it ship (#65)
+    def _deploy_targets(self, repo: str):
+        try:
+            from . import deploy
+            # Only targets Relay would actually run: a repository with none ships when it merges.
+            return len([t for t in deploy.targets_for_repo(repo) or [] if t.get("enabled")]) if repo else None
+        except Exception:
+            return None
+
+    def record_shipped(self, task: dict, card: dict) -> dict | None:
+        """The honest record of one run: merged, deployed and untouched by a person, or why not.
+
+        The post-merge file check costs GitHub calls, so it runs once per merge and is kept on the record.
+        """
+        try:
+            prev = self.shipped.get(card.get("task_id")) or {}
+            pr = card.get("pr") or {}
+            post = (prev.get("facts") or {}).get("_post_merge")
+            repo = shipped._repo_of(card, task)
+            if pr.get("state") == "merged" and (not post or post.get("merged_at") != pr.get("merged_at")):
+                files = shipped.delivered_files(task) or shipped.pr_files(repo, pr.get("number"), github.gh_json)
+                post = {**shipped.post_merge_edits(repo, pr.get("merge_sha") or "", pr.get("merged_at") or "",
+                                                   files, github.gh_json,
+                                                   prefix=self.m.cfg().get("commit_message_prefix") or "agent:",
+                                                   base=pr.get("base") or "", number=pr.get("number"),
+                                                   own_prs=[int(c["pr"]["number"]) for c in self.cards.all()
+                                                            if (c.get("pr") or {}).get("number") and shipped._repo_of(c, {}) == repo]),
+                        "merged_at": pr.get("merged_at")}
+            rec = shipped.record(task, card, deploy_targets=self._deploy_targets(repo), post_merge=post)
+            rec["facts"]["_post_merge"] = post
+            self.shipped.put(rec)
+            return rec
+        except Exception:
+            log.exception("the shipped record of %s failed", card.get("task_id"))
+            return None
+
+    def shipped_backfill(self) -> int:
+        """Rebuild every honest record from the task records and scorecards, marking what cannot be told."""
+        by_id = {t["id"]: t for t in self.m.store.list()}
+        n = 0
+        for card in self.cards.all():
+            tid = card.get("task_id")
+            if not tid or self.m.store.is_deleted(tid):
+                continue
+            if self.record_shipped(by_id.get(tid) or {}, card):
+                n += 1
+        return n
+
+    def shipped_view(self) -> dict:
+        rows = [r for r in self.shipped.all() if not self.m.store.is_deleted(r.get("task_id"))]
+        cards = [c for c in self.cards.all() if not self.m.store.is_deleted(c.get("task_id"))]
+        if len(rows) < len(cards):
+            self.shipped_backfill()
+            rows = [r for r in self.shipped.all() if not self.m.store.is_deleted(r.get("task_id"))]
+        out = shipped.summarize(rows)
+        # What the old scorecard rate claims over the same runs, so the difference is visible.
+        out["scorecard"] = {"n": len(cards), "success": sum(1 for c in cards if c.get("success")),
+                            "rate": (sum(1 for c in cards if c.get("success")) / len(cards)) if cards else None}
+        return out
 
     # ------------------------------------------------------------ views
     def summary(self) -> dict:

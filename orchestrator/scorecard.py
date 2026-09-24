@@ -186,7 +186,8 @@ def compute(task: dict, messages: list[dict], pr: dict | None = None) -> dict:
     questions = sum(1 for m in msgs if m.get("kind") == "question" and m.get("qid"))
     approvals = [m for m in msgs if m.get("kind") == "approval"]
     rejections = sum(1 for m in approvals if m.get("answered") and m.get("approved") is False)
-    guidance = [g for g in task.get("guidance") or [] if within(g.get("time"))]
+    # Relay's own notes to the team (a retry note, for instance) are not the human steering the run.
+    guidance = [g for g in task.get("guidance") or [] if within(g.get("time")) and not g.get("relay")]
     titles = [e.get("title") or "" for e in events]
     interrupts = sum(1 for x in titles if x.startswith("Interrupting with guidance"))
     trouble = {"failures": sum(1 for x in titles if x.startswith("Agent turn failed")),

@@ -19,6 +19,37 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **90% success, measured honestly: what Relay counts as a win** (`orchestrator/shipped.py`,
+  `orchestrator/predelivery.py`, Knowledge → **Shipped**, `GET /api/shipped`). Relay's scorecard counted a
+  task a success when a pull request was opened and not closed; three deliveries written against a
+  38-commit-old base could not be merged at all and were rebuilt by hand, and all three counted as wins.
+  A run now counts only when it **merged**, **reached production** (or its repository has no deployment
+  target, so merging is where it ships) and **nobody had to touch it afterwards**. Per run Relay records,
+  as true, false or *not known* — never as a guess — whether the branch was cut from current code, whether
+  the pull request merged and merged cleanly, whether a person changed the delivered files afterwards (on
+  the branch after delivery, or on the base branch after the merge, with the record saying which of the two
+  was actually checked), how many review rounds it took, whether the deployment succeeded and whether it was
+  reverted. A run whose facts are not all known is reported as unclear and left out of the rate rather than
+  counted as a win. The **Shipped** page shows the rate over time, by repository, by team preset and by
+  agent, each with its sample size and an explicit "too few to mean anything" under ten known runs, next to
+  what the old scorecard claims; every run that did not ship is listed with the facts behind the verdict.
+  Existing tasks are backfilled from their records, scorecards and GitHub.
+- **Guards that catch the known failures before delivery, not after** (`orchestrator/predelivery.py`,
+  `orchestrator/pipeline.py`, settings `base_guard`, `evidence_gate`, `question_wait_minutes`). Before the
+  pull request is opened, Relay asks git whether the branch still merges into its base branch; when it does
+  not, it rebases onto the base branch, runs verification again and only then delivers, and when the rebase
+  conflicts it says which files and asks instead of pushing something nobody can merge. The delivery gate
+  refuses proof that proves nothing — a passing claim with no command output captured in the run, a
+  user-interface change with no browser evidence — with the criterion and the reason named, using the
+  judge's own evidence rules rather than a second set. A task waiting on an unanswered question now carries
+  on with the acceptance criteria the question does not block instead of idling, and the question stays open
+  for the owner.
+- **Unattended: one more try, and one place for what is blocked** (`orchestrator/autopilot.py`). A failed run
+  is retried once with the cause of the failure and what the retrospective made of it written into the next
+  run's instructions; a second failure is left alone. Everything genuinely blocked — an unanswered question
+  (including one a run is working around), a task the autopilot parked, a run that failed again after its
+  retry, a task whose dependency failed — now appears together in the morning digest with what it needs. No
+  second notification system.
 - **The interface explains itself: one story per change, and every waiting state says what happens next**
   (`web/js/waiting.js`, `web/js/views/journey.js`, task page → Delivery, Work, Agents, Connectors,
   Settings → Deploy). A new **Delivery** tab on the task page tells the whole story of a change in order —

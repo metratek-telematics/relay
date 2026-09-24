@@ -25,7 +25,8 @@ export function successSection(s) {
   const prs = s.prs || {};
   const pending = s.lessons_pending || 0;
   const head = `<div class="section-head"><div><h2>Success</h2><p class="card-sub">Scored after every task · last ${s.window_weeks} weeks · ${s.finished} finished</p></div>
-      <a class="btn sm ${pending ? "primary" : ""}" href="#/knowledge/lessons">${icon("brain")}Lessons${pending ? ` <span class="pill-count">${pending} to review</span>` : ""}</a></div>`;
+      <div class="row"><a class="btn sm" href="#/knowledge/shipped" title="How often a task reaches production with nobody rescuing it">${icon("check")}Shipped</a>
+      <a class="btn sm ${pending ? "primary" : ""}" href="#/knowledge/lessons">${icon("brain")}Lessons${pending ? ` <span class="pill-count">${pending} to review</span>` : ""}</a></div></div>`;
   if (!s.finished) return `${head}<div class="card success-empty"><div class="card-body chart-empty">No task has finished in the last ${s.window_weeks} weeks. Each finished task gets a scorecard and a short retrospective, and the results collect here.</div></div>`;
   const weekBars = weeks.map((w) => {
     const h = w.success_rate === null ? 0 : Math.max(3, w.success_rate * 100);
