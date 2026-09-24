@@ -9,7 +9,7 @@ import time
 import traceback
 from pathlib import Path
 
-from . import agents, config as C, deploy, github, gitops, judge, multirepo, personal, redeploy, stacks
+from . import agents, config as C, delivery, deploy, github, gitops, judge, multirepo, personal, redeploy, stacks
 from .autopilot import Autopilot
 from .learning import Learning
 from .pipeline import TurnBudget, orchestrate
@@ -45,6 +45,9 @@ class Manager:
         self.github_status = {"last_poll": None, "error": None, "login": None}
         self.redeploy_watcher = False
         self.redeploy_status = {"last_poll": None, "error": None}
+        # The merge watcher (#60): merges made anywhere, not only on a pull request Relay opened.
+        self.merge_watcher = False
+        self.merge_status = {"last_poll": None, "error": None, "repos": [], "started_at": None}
         # One deployment at a time across the whole instance: the #50 command and the deploy
         # recipes (orchestrator/deploy.py) share one re-entrant lock, so they never overlap.
         self.redeploy_lock = deploy.LOCK
@@ -473,6 +476,7 @@ class Manager:
             self.config_changed()
         if self.scheduler:
             self.start_redeploy_watcher()
+            self.start_merge_watcher()
             self.emit("queue", {"running": True, "max_parallel": self.max_parallel})
             return
         self.scheduler = True
@@ -481,10 +485,12 @@ class Manager:
         if self.cfg().get("github_intake_enabled", True):
             self.start_github_watcher()
         self.start_redeploy_watcher()
+        self.start_merge_watcher()
 
     def stop_queue(self):
         self.scheduler = False
         self.stop_redeploy_watcher()
+        self.stop_merge_watcher()
         C.update({"queue_running": False})
         self.config_changed()
         self.emit("queue", {"running": False, "max_parallel": self.max_parallel})
@@ -1051,58 +1057,82 @@ class Manager:
         """Run the configured command now, whatever the pull request state is."""
         return self._run_redeploy(tid, trigger="manual", pr_state=None)
 
-    # ------------------------------------------------------------ deploy recipes (#53)
+    # ------------------------------------------------------------ deploy recipes (#53) + delivery (#60)
+    def _task_deploy_repos(self, task) -> list[str]:
+        """Every GitHub repository a task touched, primary first (multi-repository tasks included)."""
+        rows = [r["repo"] for r in delivery.task_repositories(task) if r.get("repo")]
+        return rows
+
+    def _task_pr_states(self, task) -> tuple[list[dict], list[dict]]:
+        """(merged, waiting) pull requests of a task, across every repository it touched."""
+        merged, waiting = [], []
+        for pr in delivery.task_pull_requests(task):
+            state = github.pr_state(pr["repo"], pr["number"]) or {}
+            pr = dict(pr, state=str(state.get("state") or pr.get("state") or "").upper() or "UNKNOWN",
+                      merged_at=state.get("mergedAt") or pr.get("merged_at") or "",
+                      merge_commit=((state.get("mergeCommit") or {}) or {}).get("oid") or pr.get("merge_commit") or "")
+            (merged if pr["state"] == "MERGED" else waiting).append(pr)
+        return merged, waiting
+
     def _deploy_candidate(self, task, cfg=None):
-        """(trigger, pr_state, targets) for a merged task whose repository has enabled targets.
+        """(trigger, pr_state, targets) for a merged task whose repositories have enabled targets.
 
         The gate is the deployment map, not the task: only targets the owner enabled *and* marked
         automatic, and never a critical one, run by themselves. A task that already carries a deploy
         record is never picked up again, so a failing recipe cannot loop.
+
+        A task that touched several repositories waits until *every* one of its pull requests is
+        merged: deploying half of a change in system-map order is worse than deploying none of it.
         """
         if task.get("deploy") is not None or task.get("status") != "done":
             return None
-        targets = deploy.auto_targets_for_repo(task.get("github_repo") or "")
+        repos = self._task_deploy_repos(task)
+        targets = [t for r in repos for t in deploy.auto_targets_for_repo(r)]
         if not targets:
             return None
-        state = redeploy.merged_state(task)
-        if not state or str(state.get("state") or "").upper() != "MERGED":
+        merged, waiting = self._task_pr_states(task)
+        if not merged or waiting:
             return None
+        state = {"state": "MERGED", "mergedAt": merged[0].get("merged_at"),
+                 "mergeCommit": {"oid": merged[0].get("merge_commit")},
+                 "pull_requests": merged}
         return "pr_merged", state, targets
 
-    def _run_deploy(self, tid, targets, trigger="pr_merged", pr_state=None, automatic=True):
-        """Run targets in order, one deployment at a time, and record every one on the task."""
+    def _run_deploy(self, tid, targets, trigger="pr_merged", pr_state=None, automatic=True, only=None):
+        """Plan the targets by the system map, run them in that order, stop what a failure blocks."""
         with deploy.LOCK:
             task = self.store.get(tid)
             if not task:
                 raise KeyError("Task not found")
             if (task.get("deploy") or {}).get("status") == "running":
                 raise ValueError("A deployment is already running for this task.")
+            steps = delivery.plan(targets)
+            if only is not None:
+                steps["previous"] = list((task.get("deploy") or {}).get("targets") or [])
             self.store.update(tid, immediate=True, deploy={
                 "status": "running", "trigger": trigger, "pr_state": pr_state,
-                "started_at": now(), "finished_at": None, "targets": []})
+                "plan": {k: v for k, v in steps.items() if k != "targets"},
+                "started_at": now(), "finished_at": None, "targets": [], "blocked": [],
+                "half_deployed": {"deployed": [], "not_deployed": [], "failed": [], "resume_from": None},
+                "can_resume": False})
             self.emit_task(tid)
-            records = [deploy.run_target(t, trigger=trigger, task=task, automatic=automatic) for t in targets]
-            ran = [r for r in records if r["status"] != "skipped"]
-            status = ("failed" if any(r["status"] == "failed" for r in ran)
-                      else "blocked" if any(r["status"] in ("refused", "blocked") for r in ran)
-                      else "manual" if ran and all(r["status"] == "manual" for r in ran)
-                      else "succeeded" if ran else "skipped")
-            record = {"status": status, "trigger": trigger, "pr_state": pr_state,
-                      "started_at": records[0]["started_at"] if records else now(),
-                      "finished_at": now(), "targets": records}
+            record = delivery.run_plan(steps, trigger=trigger, task=task, automatic=automatic, only=only)
+            record["pr_state"] = pr_state
             self.store.update(tid, immediate=True, deploy=record)
+            status = record["status"]
             title = {"succeeded": "Deploy succeeded", "failed": "Deploy failed",
                      "blocked": "Deploy needs a person", "manual": "Deploy is manual",
                      "skipped": "Deploy skipped"}[status]
-            detail = " · ".join(f"{r['target']}: {r['status']}" for r in records) or "no targets"
+            detail = " · ".join(f"{r['target']}: {r['status']}" for r in record["targets"]) or "no targets"
             self.timeline(tid, "system", title, detail)
             self.notify("success" if status in ("succeeded", "manual") else "error", title, task.get("name", ""), tid)
             self.emit("deploy", {"task_id": tid, "record": record})
+            self.emit("delivery", {"task_id": tid, "story": delivery.story(self.store.get(tid) or task)})
             self.emit_task(tid)
             return record
 
     def deploy_now(self, tid, target_id=None):
-        """The Run now button on a task: one target, or every enabled target of its repository.
+        """The Run now button on a task: one target, or every enabled target of its repositories.
 
         Enabled is still required - the button cannot run a target the owner switched off - but a
         critical target may run here, because a person pressed it.
@@ -1116,10 +1146,33 @@ class Manager:
                 raise ValueError("No such deploy target.")
             targets = [target]
         else:
-            targets = [t for t in deploy.targets_for_repo(task.get("github_repo") or "") if t.get("enabled")]
+            targets = [t for r in self._task_deploy_repos(task) for t in deploy.targets_for_repo(r) if t.get("enabled")]
         if not targets:
             raise ValueError("No enabled deploy target for this repository. Enable one in Settings → Deploy.")
         return self._run_deploy(tid, targets, trigger="manual", pr_state=None, automatic=False)
+
+    def resume_deploy(self, tid):
+        """Carry on from the step that failed, keeping what already succeeded.
+
+        Only the failed target and everything that was not attempted because of it are run again;
+        targets that succeeded keep their record and are not touched.
+        """
+        task = self.store.get(tid)
+        if not task:
+            raise KeyError("Task not found")
+        record = task.get("deploy") or {}
+        if record.get("status") == "running":
+            raise ValueError("A deployment is already running for this task.")
+        retry = list((record.get("half_deployed") or {}).get("not_deployed") or [])
+        if not retry:
+            raise ValueError("There is nothing to resume: no target failed or was left unattempted.")
+        order = [s["target"] for s in ((record.get("plan") or {}).get("steps") or [])]
+        targets = [t for t in (deploy.get_target(i) for i in order) if t]
+        if not targets:
+            raise ValueError("The deployment plan no longer matches the deployment map; run it again from the button.")
+        self.store.update(tid, immediate=True, deploy={**record, "status": "resuming"})
+        return self._run_deploy(tid, targets, trigger="resume", pr_state=record.get("pr_state"),
+                                automatic=False, only=set(retry))
 
     def deploy_target_now(self, target_id):
         """Run one target from the Deploy page, with no task attached."""
@@ -1144,6 +1197,110 @@ class Manager:
             except Exception as exc:
                 self.redeploy_status = {"last_poll": now(), "error": str(exc)}
             return  # one deployment per sweep, one at a time
+
+    # ------------------------------------------------------------ merges noticed anywhere (#60)
+    def start_merge_watcher(self):
+        if self.merge_watcher:
+            return
+        self.merge_watcher = True
+        threading.Thread(target=self._merge_loop, daemon=True).start()
+
+    def stop_merge_watcher(self):
+        self.merge_watcher = False
+
+    def _task_for_merge(self, merge) -> str:
+        """The task whose pull request this merge is, if Relay opened it."""
+        for task in self.store.list():
+            for pr in delivery.task_pull_requests(task):
+                if pr.get("number") == merge.get("number") and str(pr.get("repo") or "").lower() == str(merge.get("repo") or "").lower():
+                    return task["id"]
+        return ""
+
+    def _merge_sweep(self):
+        """Notice merges wherever they happened and deploy the ones no task is watching.
+
+        Every merge is written to the ledger *before* anything runs, so a second sweep - or a
+        restart mid-deployment - can never act on it twice. A merge that belongs to a task is
+        recorded and left to the task's own deploy sweep, which keeps one story per change.
+        """
+        fresh = delivery.new_merges()
+        for merge in fresh:
+            tid = self._task_for_merge(merge)
+            if tid:
+                delivery.remember(merge, source="task pull request", task=tid, deployed=False)
+                continue
+            targets = deploy.auto_targets_for_repo(merge["repo"])
+            if not targets:
+                delivery.remember(merge, source="merge watcher", task="", deployed=False,
+                                  detail="No enabled automatic target for this repository.")
+                continue
+            row = delivery.remember(merge, source="merge watcher", task="", deployed=False,
+                                    deploy={"status": "running", "started_at": now()})
+            try:
+                steps = delivery.plan(targets)
+                record = delivery.run_plan(steps, trigger="merge_watcher", task=None, automatic=True)
+                delivery.remember(merge, source="merge watcher", deployed=True, deploy=record)
+                ok = record["status"] in ("succeeded", "manual")
+                self.notify("success" if ok else "error",
+                            "Deploy succeeded" if ok else "Deploy needs a person",
+                            f"{merge['repo']}#{merge['number']} merged outside a task", None)
+                self.emit("delivery", {"task_id": None, "story": delivery.merge_story(
+                    {**row, "deploy": record})})
+            except Exception as exc:
+                delivery.remember(merge, source="merge watcher", deployed=True,
+                                  deploy={"status": "failed", "detail": str(exc), "targets": []})
+                self.merge_status = {**self.merge_status, "error": str(exc)}
+            return  # one deployment per sweep, one at a time
+
+    def _merge_loop(self):
+        delivery.begin_watch()
+        while self.merge_watcher:
+            cfg = self.cfg()
+            repos = []
+            try:
+                if cfg.get("merge_watch_enabled", True):
+                    repos = delivery.watched_repos()
+                    if repos:
+                        self._merge_sweep()
+                    self.merge_status = {"last_poll": now(), "error": None, "repos": repos,
+                                         "started_at": delivery.load_ledger().get("started_at")}
+                else:
+                    self.merge_status = {**self.merge_status, "last_poll": now(), "error": None, "repos": []}
+            except Exception as e:
+                self.merge_status = {"last_poll": now(), "error": str(e), "repos": repos,
+                                     "started_at": delivery.load_ledger().get("started_at")}
+            self.emit("merges", self.merge_status)
+            seconds = max(30, int(cfg.get("merge_poll_seconds") or 180))
+            for _ in range(seconds):
+                if not self.merge_watcher:
+                    return
+                time.sleep(1)
+
+    # ------------------------------------------------------------ the delivery story (#60)
+    def delivery_story(self, tid) -> dict:
+        task = self.store.get(tid)
+        if not task:
+            raise KeyError("Task not found")
+        return delivery.story(task)
+
+    def delivery_stories(self, limit=40) -> dict:
+        """One story per change: every task that has a repository story, plus merges with no task."""
+        stories = []
+        for task in sorted(self.store.list(), key=lambda t: t.get("updated_at") or "", reverse=True):
+            if task.get("archived"):
+                continue
+            if not (task.get("deploy") or task.get("pr_url") or task.get("pr_number")):
+                continue
+            stories.append(delivery.story(task))
+            if len(stories) >= limit:
+                break
+        orphans = [delivery.merge_story(r) for r in delivery.merge_records(limit)
+                   if not r.get("task") and r.get("deploy")]
+        return {"stories": stories, "merges": orphans,
+                "watcher": {**self.merge_status, "enabled": bool(self.cfg().get("merge_watch_enabled", True)),
+                            "running": self.merge_watcher,
+                            "poll_seconds": int(self.cfg().get("merge_poll_seconds") or 180)},
+                "ledger": delivery.merge_records(limit)}
 
     def _redeploy_loop(self):
         while self.redeploy_watcher:

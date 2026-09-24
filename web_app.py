@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 from orchestrator import agents, config as C, design, github, gitops, handoff, history, repo_env, repos  # noqa: E402
-from orchestrator import deploy, issues, stacks  # noqa: E402
+from orchestrator import delivery, deploy, issues, stacks  # noqa: E402
 from orchestrator import multirepo, systemmap  # noqa: E402
 from orchestrator import agent_info, installer, lessons  # noqa: E402
 from orchestrator.scorecard import repo_label  # noqa: E402
@@ -334,56 +334,6 @@ def openrouter_account():
     tasks = manager.store.list()
     return jsonify({"account": acc, "relay": OR.usage_report(tasks), "meters": OR.budget_meters(tasks, s),
                     "low_credit_usd": s.get("low_credit_usd"), "configured": OR.configured(s)})
-
-
-# ----------------------------------------------------------------------------- agent accounts
-@app.get("/api/agents/accounts")
-def agent_accounts_all():
-    """Every account of every plan CLI, with plan, limits and the reason it cannot run.
-
-    Readings come from the cache (?refresh=1 asks the CLIs again), so the page never waits on one."""
-    from orchestrator import accounts
-    refresh = request.args.get("refresh") == "1"
-    only = request.args.get("agent")
-    cfg, tasks = manager.cfg(), manager.store.list()
-    names = [only] if only in C.AGENTS else [a for a in C.AGENTS if accounts.supports(a)]
-    return jsonify({"agents": [accounts.overview(a, cfg, manager.autopilot, tasks, refresh=refresh) for a in names]})
-
-
-@app.post("/api/agents/<name>/accounts")
-def agent_account_add(name):
-    from orchestrator import accounts
-    if not accounts.supports(name):
-        return jsonify({"error": f"{name} does not sign in per account"}), 400
-    try:
-        row = accounts.add(name, (body().get("name") or "").strip())
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
-    broadcast("agents", {"agent": name, "account": row.get("id")})
-    return jsonify(row)
-
-
-@app.post("/api/agents/<name>/accounts/<account_id>")
-def agent_account_update(name, account_id):
-    from orchestrator import accounts
-    d = body()
-    try:
-        row = accounts.update(name, account_id, name=d.get("name"), enabled=d.get("enabled"), default=d.get("default"))
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 404
-    broadcast("agents", {"agent": name, "account": account_id})
-    return jsonify(row)
-
-
-@app.delete("/api/agents/<name>/accounts/<account_id>")
-def agent_account_remove(name, account_id):
-    from orchestrator import accounts
-    try:
-        accounts.remove(name, account_id)
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
-    broadcast("agents", {"agent": name, "account": account_id})
-    return jsonify({"ok": True})
 
 
 @app.get("/api/agents/jobs")
@@ -1800,6 +1750,67 @@ def deploy_seed():
         return jsonify(deploy.seed_from_scans(force=bool((body() or {}).get("force"))))
     except deploy.DeployError as e:
         return jsonify({"error": str(e)}), 400
+
+
+# ----------------------------------------------------------------------------- delivery pipeline (#60)
+@app.get("/api/delivery")
+def delivery_list():
+    """One story per change, plus merges noticed with no task behind them, plus watcher state."""
+    try:
+        limit = max(1, min(200, int(request.args.get("limit") or 40)))
+    except (TypeError, ValueError):
+        limit = 40
+    return jsonify(manager.delivery_stories(limit))
+
+
+@app.get("/api/delivery/<tid>")
+def delivery_one(tid):
+    task_or_404(tid)
+    return jsonify(manager.delivery_story(tid))
+
+
+@app.post("/api/delivery/<tid>/resume")
+def delivery_resume(tid):
+    """Carry on from the step that failed. Nothing in the body reaches a command."""
+    task_or_404(tid)
+    try:
+        return jsonify(manager.resume_deploy(tid))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except deploy.DeployError as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.get("/api/delivery/merges")
+def delivery_merges():
+    """The merge ledger: what was noticed, when, what it triggered, and what it did not."""
+    doc = delivery.load_ledger()
+    return jsonify({"started_at": doc.get("started_at"), "last_poll": doc.get("last_poll"),
+                    "merges": delivery.merge_records(100),
+                    "repos": delivery.watched_repos(),
+                    "watcher": {"running": manager.merge_watcher,
+                                "enabled": bool(manager.cfg().get("merge_watch_enabled", True)),
+                                "poll_seconds": int(manager.cfg().get("merge_poll_seconds") or 180),
+                                **manager.merge_status}})
+
+
+@app.get("/api/deploy/plan")
+def deploy_plan():
+    """The order a set of targets would deploy in, and why. Read-only: it runs nothing.
+
+    `?target=a&target=b`, or `?repo=owner/name` for a repository's enabled targets.
+    """
+    ids = [i for i in request.args.getlist("target") if i]
+    targets = [t for t in (deploy.get_target(i) for i in ids) if t]
+    for repo in request.args.getlist("repo"):
+        targets += [t for t in deploy.targets_for_repo(repo) if t.get("enabled")]
+    seen, uniq = set(), []
+    for t in targets:
+        if t["id"] not in seen:
+            seen.add(t["id"])
+            uniq.append(t)
+    steps = delivery.plan(uniq)
+    return jsonify({k: v for k, v in steps.items() if k != "targets"})
 
 
 # ----------------------------------------------------------------------------- integration stacks
