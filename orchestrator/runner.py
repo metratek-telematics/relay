@@ -317,11 +317,18 @@ class Runner:
                 except Exception:
                     return {"ok": True}
             on = (session or {}).get("account") or ""
-            pick = accounts.choose(rows, state_of, on)
+            # The team can pin a role to one sign-in (pipeline.role_account); it is tried first and,
+            # when it cannot run, the turn still goes to an account that can rather than stopping.
+            pinned = (cfg.get("_account") or "").strip()
+            pick = accounts.choose(rows, state_of, on, pinned)
             row = pick["account"]
             if not row:
                 self.timeline(role, f"No {agent_name} account has capacity", pick["reason"])
                 return None
+            if pinned and row["id"] != pinned:
+                why = next((s["reason"] for s in pick["skipped"] if s["id"] == pinned), "it cannot run now")
+                self.timeline(role, "The pinned account is not running this turn",
+                              f"This role is set to the {next((r['name'] for r in rows if r['id'] == pinned), pinned)} account, but {why}; {row['name']} took the turn.")
             switched = bool(on and row["id"] != on and int((session or {}).get("turns") or 0) > 0)
             if switched:
                 # A CLI session id only exists inside the config folder that created it, so moving to

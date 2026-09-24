@@ -96,6 +96,18 @@ class ChoiceTests(unittest.TestCase):
         self.assertEqual(pick["account"]["id"], "default")
         self.assertTrue(pick["switched"])
 
+    def test_a_role_pinned_to_one_sign_in_gets_it(self):
+        rows = [row("default", "Main", default=True), row("second", "Team plan")]
+        pick = accounts.choose(rows, lambda aid: OK, prefer="second")
+        self.assertEqual(pick["account"]["id"], "second")
+
+    def test_a_pinned_sign_in_without_capacity_hands_the_turn_on(self):
+        # A pin is a preference, not a wall: the task keeps moving on an account that can run.
+        rows = [row("default", "Main", default=True), row("second", "Team plan")]
+        pick = accounts.choose(rows, lambda aid: out() if aid == "second" else OK, prefer="second")
+        self.assertEqual(pick["account"]["id"], "default")
+        self.assertIn("second", [s["id"] for s in pick["skipped"]])
+
     def test_a_free_account_is_preferred_over_one_a_turn_is_using(self):
         rows = [row("default", "Main", default=True, busy=True), row("second", "Team plan")]
         self.assertEqual(accounts.choose(rows, lambda aid: OK)["account"]["id"], "second")

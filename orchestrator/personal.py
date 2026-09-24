@@ -21,6 +21,7 @@ logged by this module.
 from __future__ import annotations
 
 import copy
+import re
 
 from . import config as C
 
@@ -153,6 +154,13 @@ def _role_value(r: str, v) -> dict:
     if provider not in ("", "openrouter"):
         raise ValueError(f"Unknown provider “{provider}” for {r} (use openrouter or leave it empty).")
     out["provider"] = provider
+    # The sign-in this role is pinned to (orchestrator/accounts.py); "" is the automatic pick. Only the
+    # shape is checked: an account can be removed later, and a pin to one that is gone falls back to
+    # the automatic pick rather than failing the task.
+    account = str(v.get("account") or "").strip()[:64]
+    if account and not re.fullmatch(r"[A-Za-z0-9_-]+", account):
+        raise ValueError(f"“{account}” is not an account id.")
+    out["account"] = account
     return out
 
 

@@ -8,6 +8,8 @@ export const S = {
   config: {},
   agents: {},
   agentMeta: {},
+  accounts: {},        // sign-ins per CLI (orchestrator/accounts.py), for a role's Account picker
+  personal: null,      // whose value is in effect per setting (orchestrator/personal.py)
   presets: [],
   templates: [],
   github: {},
@@ -67,61 +69,9 @@ export const statusOf = (t) => STATUS[t?.status] || STATUS.queued;
 export const toneVar = (tone) => ({ blue: "var(--blue)", accent: "var(--accent)", amber: "var(--amber)", purple: "var(--purple)", green: "var(--green)", red: "var(--red)" }[tone] || "var(--text-3)");
 
 export function roleAgent(t, role) { return t?.workflow?.roles?.[role]?.agent || ""; }
-// What the task is really running on: the orchestrator resolves the team, the global role settings and the agent
-// defaults once (role_plan) and each finished turn records what it used (sessions). Fall back to the task's own
-// team only before the task has started, so the browser never re-derives the resolution rules.
-const rolePlan = (t, role) => t?.role_plan?.[role] || {};
-export function roleModel(t, role) {
-  return t?.sessions?.[role]?.model || rolePlan(t, role).model || t?.workflow?.roles?.[role]?.model || S.config?.roles?.[role]?.model || "";
-}
-// What a role runs, in words: an OpenRouter role names OpenRouter and, for the automatic free pick, the model it is on now.
-export function roleModelLabel(t, role) {
-  const r = t?.workflow?.roles?.[role] || {};
-  if (r.provider !== "openrouter") return roleModel(t, role) || "default model";
-  const m = r.model || S.providers?.openrouter?.default_model || "openrouter:auto-free";
-  const now = t?.sessions?.[role]?.or_model;
-  return `${m === "openrouter:auto-free" ? "Auto · best free model" : m}${now && now !== m ? ` (now ${now})` : ""} via OpenRouter`;
-}
-export function roleEffort(t, role) {
-  const sess = t?.sessions?.[role] || {};
-  if (sess.effort !== undefined && sess.turns) return sess.effort;
-  const plan = rolePlan(t, role);
-  if (plan.effort !== undefined) return plan.effort;
-  return t?.workflow?.roles?.[role]?.effort || S.config?.roles?.[role]?.effort || "";
-}
-// The model in words, with the CLI's own default named when Relay passes no model at all.
-export function roleModelText(t, role) {
-  const m = roleModelLabel(t, role);
-  if (m !== "default model") return m;
-  const cli = S.agents?.[roleAgent(t, role)]?.default_model;
-  return cli ? `CLI default (${cli})` : "CLI default";
-}
-// The effort in words: what it runs at, the CLI's own default, or that this CLI has no effort setting.
-export function roleEffortText(t, role) {
-  const e = roleEffort(t, role);
-  if (e) return e;
-  const agent = roleAgent(t, role);
-  const plan = rolePlan(t, role);
-  const supports = plan.supports_effort !== undefined ? plan.supports_effort : ((S.agentMeta?.[agent]?.efforts || []).length > 0);
-  if (!supports) return "not supported by this CLI";
-  const cli = S.agents?.[agent]?.default_effort;
-  return cli ? `CLI default (${cli})` : "CLI default";
-}
-// Which sign-in of the CLI ran this role's turns. Blank when the CLI has the single account every
-// installation starts with, so nothing changes on a one-account setup.
-export function roleAccountText(t, role) {
-  const sess = t?.sessions?.[role] || {};
-  if (!sess.account || sess.account === "default") return "";
-  return sess.account_name || sess.account;
-}
-// One block per role for a hover: agent, model, effort, and the account when there is more than one.
-export function roleDetails(t, roles = ["supervisor", "worker", "reviewer"]) {
-  return roles.filter((r) => roleAgent(t, r))
-    .map((r) => `${ROLE_LABEL[r]} · ${agentLabel(roleAgent(t, r))}\nModel: ${roleModelText(t, r)}\nEffort: ${roleEffortText(t, r)}`
-      + (roleAccountText(t, r) ? `\nAccount: ${roleAccountText(t, r)}` : ""))
-    .join("\n\n");
-}
-export function defaultModelLabel(agent) { const h = S.agents?.[agent]; return h?.default_model ? `CLI default (${h.default_model}${h.default_effort ? ` · ${h.default_effort}` : ""})` : "CLI default"; }
+// What a role is on — agent, account, model, effort, and where each value comes from — lives in
+// web/js/rolecontrol.js: one control, one wording, read from what the orchestrator resolved
+// (role_plan) and what each finished turn recorded (sessions).
 
 export function msgStore(tid) {
   if (!S.msgs.has(tid)) S.msgs.set(tid, { list: [], byId: new Map(), loaded: false, count: 0 });

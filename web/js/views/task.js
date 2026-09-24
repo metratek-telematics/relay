@@ -2,7 +2,8 @@
 // a phase outline on the left; the conversation (or the live theatre, the changes, the checks, the logs) in the
 // middle; a rail of collapsible context sections on the right.
 import { $, $$, esc, icon, fmtSec, fmtDur, fmtCost, timeAgo, basename, toast, confirm, menu, copyText } from "../ui.js";
-import { S, agentLabel, ROLE_LABEL, roleAgent, roleModelText, roleEffortText, roleDetails, statusOf, LIVE, msgStore, taskElapsed, navigate, bus } from "../state.js";
+import { S, agentLabel, roleAgent, statusOf, LIVE, msgStore, taskElapsed, navigate, bus } from "../state.js";
+import { ROLES, roleNowHtml } from "../rolecontrol.js";
 import { api } from "../api.js";
 import { Conversation } from "./conversation.js";
 import { mountInspector, TABS } from "./inspector.js";
@@ -85,6 +86,7 @@ export function mountTask(main, id) {
         <h1 class="tp-title" id="tpTitle"></h1>
         <div class="tp-actions" id="tpActions"></div>
       </div>
+      <div class="tp-roster" id="tpRoster"></div>
       <div class="tp-meta" id="tpMeta"></div>
       <div class="tp-waiting" id="tpWaiting"></div>
       <nav class="tp-views" role="tablist" aria-label="Task views">${views.map(([k, l, i], n) => `<button type="button" role="tab" id="tv-${k}" aria-controls="tvp-${k}" data-view="${k}" aria-selected="${k === view}" class="${k === view ? "active" : ""}" title="${esc(l)} (${n + 1})">${icon(i, "sm")}<span>${esc(l)}</span><span class="tv-badge" data-vbadge="${k}" hidden></span></button>`).join("")}
@@ -214,13 +216,14 @@ export function mountTask(main, id) {
 
     const p = t.process || {};
     const tot = t.metrics?.total || {};
-    const team = ["supervisor", "worker", "reviewer"].filter((r) => roleAgent(t, r)).map((r) => {
-      const a = roleAgent(t, r), on = p.state === "running" && p.role === r;
-      return `<span class="team-pill ${on ? "on" : ""}" title="${esc(roleDetails(t, [r]))}"><span class="av xs ${esc(a)}"></span><span class="tpl-role">${esc(ROLE_LABEL[r])}</span><span class="tpl-agent">${esc(agentLabel(a))}</span>${on ? '<span class="live-dot sm"></span>' : ""}</span>`;
-    }).join(`<span class="team-arrow" aria-hidden="true">${icon("arrowRight", "sm")}</span>`);
+    // The roster: who is on this task, on which sign-in, model and effort, and the turn it is on.
+    // The same four values the team editor sets, in the same order and the same words.
+    const roster = ROLES.filter((r) => roleAgent(t, r))
+      .map((r) => roleNowHtml(t, r, { live: p.state === "running" && p.role === r })).join("");
+    $("#tpRoster", page).innerHTML = `${roster}<button type="button" class="btn xs ghost rc-edit" id="tpTeamEdit">${icon("edit", "sm")}Change the team</button>`;
+    $("#tpTeamEdit", page).onclick = () => openNewTask({ edit: t });
     const prs = repos.filter((r) => r.pr_url || r.pr_number);
-    $("#tpMeta", page).innerHTML = `<span class="team-flow">${team}</span>
-      ${prs.length ? `<span class="meta-group">${prs.map((r) => r.primary ? prPill(t, prCached(t.id)) : `<a class="pr-pill" href="${esc(r.pr_url)}" target="_blank" rel="noopener">${icon("github", "sm")}<span>${esc(r.name)} #${esc(r.pr_number || "")}</span></a>`).join("")}</span>` : ""}
+    $("#tpMeta", page).innerHTML = `${prs.length ? `<span class="meta-group">${prs.map((r) => r.primary ? prPill(t, prCached(t.id)) : `<a class="pr-pill" href="${esc(r.pr_url)}" target="_blank" rel="noopener">${icon("github", "sm")}<span>${esc(r.name)} #${esc(r.pr_number || "")}</span></a>`).join("")}</span>` : ""}
       ${redeployPill(t)}
       ${deployPill(t)}
       <span class="meta-fact" title="Elapsed">${icon("clock", "sm")}<span class="mono" data-tp-elapsed>${fmtSec(taskElapsed(t))}</span></span>

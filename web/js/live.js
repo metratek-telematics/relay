@@ -1,6 +1,7 @@
 // What every running task is doing right now, shared by Mission Control, the Work board, the live theatre and the
 // status page. Seeded from /api/mission and kept current from the event stream, so nothing polls per task.
-import { S, LIVE, statusOf, roleAgent, agentLabel, ROLE_LABEL, roleModelText, roleEffortText } from "./state.js";
+import { S, LIVE, statusOf, roleAgent, agentLabel, ROLE_LABEL } from "./state.js";
+import { roleSummaryText } from "./rolecontrol.js";
 import { describeEdit, shellEditTargets } from "./views/conversation.js";
 import { esc, icon, fmtSec, basename } from "./ui.js";
 
@@ -115,7 +116,7 @@ export function teamHtml(t, { size = "sm" } = {}) {
   return `<span class="team">${roles.map((r) => {
     const a = roleAgent(t, r);
     const on = p.state === "running" && p.role === r;
-    return `<span class="team-member ${on ? "on" : ""}" title="${esc(ROLE_LABEL[r])} · ${esc(agentLabel(a))}${on ? " · working now" : ""}\nModel: ${esc(roleModelText(t, r))}\nEffort: ${esc(roleEffortText(t, r))}"><span class="av ${size} ${esc(a)}">${esc(agentLabel(a).slice(0, 2))}</span></span>`;
+    return `<span class="team-member ${on ? "on" : ""}" title="${esc(roleSummaryText(t, [r]))}${on ? "\nWorking now" : ""}"><span class="av ${size} ${esc(a)}">${esc(agentLabel(a).slice(0, 2))}</span></span>`;
   }).join("")}</span>`;
 }
 

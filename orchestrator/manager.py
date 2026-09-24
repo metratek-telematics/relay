@@ -177,11 +177,16 @@ class Manager:
                     roles[r]["provider"] = (v.get("provider") or "").strip().lower()
                 elif "agent" in v:
                     roles[r]["provider"] = ""  # a new agent for the role starts on its own sign-in unless told otherwise
+                if "account" in v:
+                    roles[r]["account"] = (v.get("account") or "").strip()
+                elif "agent" in v:
+                    roles[r]["account"] = ""   # a sign-in belongs to one CLI, so a new agent clears the pin
         for r in C.ROLES:
             roles.setdefault(r, {"agent": "", "model": "", "effort": ""})
             roles[r].setdefault("model", "")
             roles[r].setdefault("effort", "")
             roles[r].setdefault("provider", "")
+            roles[r].setdefault("account", "")
         if not roles["supervisor"]["agent"] or not roles["worker"]["agent"]:
             raise ValueError("Both a supervisor and a worker agent are required.")
         for r in C.ROLES:
