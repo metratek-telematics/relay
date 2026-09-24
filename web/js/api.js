@@ -55,6 +55,10 @@ export const api = {
   openrouterSettings: () => get("/api/org/providers/openrouter"),
   saveOpenrouterSettings: (body) => put("/api/org/providers/openrouter", body),
   testOpenrouter: (apiKey) => post("/api/org/providers/openrouter/test", apiKey ? { api_key: apiKey } : {}),
+  // Deploy recipes (#53): the map is owner configuration; only the two switches are posted back.
+  deployTargets: () => get("/api/deploy"),
+  saveDeployTarget: (id, flags) => patch(`/api/deploy/${encodeURIComponent(id)}`, flags),
+  runDeployTarget: (id) => post(`/api/deploy/${encodeURIComponent(id)}/run`),
   settings: () => get("/api/settings"),
   saveSettings: (partial) => post("/api/settings", partial),
   // Personal settings: what this person overrides, what the organisation would give them, and what

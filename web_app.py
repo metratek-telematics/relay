@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 from orchestrator import agents, config as C, design, github, gitops, handoff, history, repo_env, repos  # noqa: E402
-from orchestrator import issues, stacks  # noqa: E402
+from orchestrator import deploy, issues, stacks  # noqa: E402
 from orchestrator import multirepo, systemmap  # noqa: E402
 from orchestrator import agent_info, installer, lessons  # noqa: E402
 from orchestrator.scorecard import repo_label  # noqa: E402
@@ -609,6 +609,9 @@ def task_action(tid, action):
         elif action == "redeploy":
             # The command comes from settings only; nothing in the request body reaches it.
             return jsonify(manager.redeploy_now(tid))
+        elif action == "deploy":
+            # Recipes come from the deployment map only: a body may name a target id, never a command.
+            return jsonify(manager.deploy_now(tid, (b.get("target") or "").strip() or None))
         elif action == "stop":
             manager.stop(tid)
         elif action == "pause":
@@ -1759,6 +1762,44 @@ def connect_call(name, op):
                             "status": res.get("call_status"), "duration": res.get("duration"), "summary": res.get("summary"),
                             "task": tid, "role": fields["role"], "agent": fields["agent"]})
     return jsonify(res), code
+
+
+# ----------------------------------------------------------------------------- deploy recipes (#53)
+@app.get("/api/deploy")
+def deploy_list():
+    doc = deploy.load()
+    return jsonify({"targets": [deploy.public(t) for t in doc.get("targets") or []],
+                    "hosts": doc.get("hosts") or {}, "seeded_at": doc.get("seeded_at"),
+                    "methods": list(deploy.METHODS)})
+
+
+@app.patch("/api/deploy/<target_id>")
+def deploy_patch(target_id):
+    """Only the owner's two switches. Commands, method and host are file configuration."""
+    b = body()
+    try:
+        return jsonify(deploy.public(deploy.set_flags(target_id, {k: b[k] for k in deploy.EDITABLE if k in b})))
+    except deploy.DeployError as e:
+        return jsonify({"error": str(e)}), 404
+
+
+@app.post("/api/deploy/<target_id>/run")
+def deploy_run(target_id):
+    """Run now. Nothing in the request body reaches the commands."""
+    try:
+        return jsonify(manager.deploy_target_now(target_id))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
+    except deploy.DeployError as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.post("/api/deploy/seed")
+def deploy_seed():
+    try:
+        return jsonify(deploy.seed_from_scans(force=bool((body() or {}).get("force"))))
+    except deploy.DeployError as e:
+        return jsonify({"error": str(e)}), 400
 
 
 # ----------------------------------------------------------------------------- integration stacks

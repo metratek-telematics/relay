@@ -1102,3 +1102,16 @@ time, .badge, .count-pill, .nav-count, .ql-pos, .ac-clock, .m-value, .trend-figs
   .nav-item, .nav-tool { min-height: 40px; }
 }
 .panel-body.flush > ol, .panel-body.flush > ul { scroll-margin-top: 52px; }
+
+/* Deploy (Settings → Deploy): one row per target, same rhythm as the other settings lists. */
+.dep-list { display: flex; flex-direction: column; gap: 10px; }
+.dep-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: 12px; align-items: center;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--r); background: var(--panel-2); }
+.dep-main { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.dep-switches { display: flex; flex-direction: column; gap: 6px; }
+.dep-cmds pre { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-2); }
+.dep-row .switch.disabled { opacity: .45; pointer-events: none; }
+@media (max-width: 900px) {
+  .dep-row { grid-template-columns: minmax(0, 1fr); }
+  .dep-switches { flex-direction: row; flex-wrap: wrap; }
+}
