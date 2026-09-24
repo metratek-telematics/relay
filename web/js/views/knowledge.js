@@ -8,6 +8,7 @@ import { mountConnectors } from "./connectors.js";
 import { mountLessons } from "./lessons.js";
 import { mountGithub } from "./github.js";
 import { mountLearning } from "./learning.js";
+import { mountShipped } from "./shipped.js";
 import { mountKdocs } from "./kdocs.js";
 
 const TABS = [
@@ -17,6 +18,7 @@ const TABS = [
   ["connectors", "Connectors", "zap", "The APIs, databases and logs agents may check."],
   ["lessons", "Lessons", "brain", "What retrospectives learned, and what reaches the prompts."],
   ["learning", "Learning", "trend", "Whether Relay is getting better, why, and what to change next."],
+  ["shipped", "Shipped", "check", "How often a task reaches production with nobody rescuing it, from merge and deploy facts."],
   ["worktrees", "Worktrees", "layers", "Isolated checkouts Relay created for tasks."],
   ["graph", "Branch graph", "branch", "How task branches relate to the main line."],
   ["github", "GitHub", "github", "Repositories watched for labelled or assigned issues."],
@@ -53,6 +55,7 @@ export function mountKnowledge(main, tab) {
     else if (k === "lessons") child = mountLessons(host);
     else if (k === "github") child = mountGithub(host);
     else if (k === "learning") child = mountLearning(host);
+    else if (k === "shipped") child = mountShipped(host);
     else if (k === "docs") child = mountKdocs(host);
   }
   show(cur);

@@ -19,7 +19,7 @@ from pathlib import Path
 
 from . import config as C
 from . import commitguard, connectors, design, designcheck, environment, exploration, gitops, github, judge, lessons, multirepo, protocol, repo_env, stacks
-from . import knowledge, perfcheck, solo, timing, tokens, toolbox, triage, verifyfast
+from . import knowledge, perfcheck, predelivery, solo, timing, tokens, toolbox, triage, verifyfast
 from .runner import Interrupted, Stopped, TurnTimeout
 from .util import APP_DIR, new_id, now, quiet, read_text, truncate, write_text
 
@@ -438,7 +438,10 @@ class Pipeline(solo.SoloFlow, exploration.ExplorationFlow, design.DesignFlow, mu
                                    "question": question, "options": options, "message_id": qmsg["id"], "time": now()})
         self.r.status("needs_input", f"{_label(agent)} ({asker_role}) has a question for you")
         self.m.notify("warning", f"{_label(agent)} needs your input", truncate(question, 140), self.tid, kind="needs_input")
-        ans = self.r.wait_for_answer(qid)
+        carry = self.carry_on_while_asking(question, qid)
+        if carry.get("prompt"):
+            return carry["prompt"]
+        ans = carry.get("answer") or self.r.wait_for_answer(qid)
         self.m.clear_pending(self.tid)
         self.r.msg_update(qmsg["id"], answered=True, answer=ans.get("text") or "")
         self.r.msg(role="user", agent=None, kind="user", content=ans.get("text") or "(no text)", to=asker_role,
@@ -446,6 +449,38 @@ class Pipeline(solo.SoloFlow, exploration.ExplorationFlow, design.DesignFlow, mu
         self.r.timeline("user", "Question answered", truncate(ans.get("text") or "", 200))
         self.apply_human_text(ans.get("text") or "")
         return protocol.human_answer(question, ans.get("text"))
+
+    def carry_on_while_asking(self, question, qid):
+        """Wait a while for the answer; if none comes and other work is not blocked, do that instead of idling.
+
+        The question stays open in the inbox and in the morning digest. Returns {"prompt": ...} to send the asker
+        back to the unblocked work, {"answer": ...} when the owner answered inside the wait, or {} when the run
+        really has to wait (nothing else is open, or it has already carried on through `MAX_DEFERRALS` packages).
+        """
+        minutes = float(self.cfg.get("question_wait_minutes", 15) or 0)
+        if minutes <= 0:
+            return {}
+        deferrals = int((self.state.get("deferred_questions") or {}).get(qid) or 0)
+        plan = predelivery.keep_working(self.criteria(), question, deferrals)
+        if not plan["go"]:
+            return {}
+        ans = self.r.wait_for_answer(qid, timeout=minutes * 60)
+        if ans is not None:
+            return {"answer": ans}   # answered in time: the normal path picks it up
+        self.state.setdefault("deferred_questions", {})[qid] = deferrals + 1
+        self.save()
+        items = "\n".join(f"- {c['id']} {c['criterion']}" for c in plan["items"][:10])
+        self.r.timeline("orchestrator", "Question still open · carrying on with what it does not block",
+                        f"{len(plan['items'])} criteria left to work on")
+        self.r.msg(role="orchestrator", agent=None, kind="notice", turn=self.state.get("turn"),
+                   content=f"Nobody has answered yet, so the run continues with the {len(plan['items'])} acceptance criteria "
+                           "the question does not block. The question stays open for the owner.")
+        self.r.status("implementing", "Working on what the open question does not block")
+        return {"prompt": protocol.human_answer(question, (
+            f"Nobody has answered yet ({int(minutes)} minutes). The question stays open for the owner — do not assume an answer "
+            "and do not deliver anything that depends on it. Carry on with the work it does not block:\n"
+            f"{items or '(the remaining acceptance criteria)'}\n"
+            "Ask again when only the blocked part is left."))}
 
     def supervisor_turn(self, prompt, label, turn=None):
         """Run the supervisor and resolve any questions to the human inline."""
@@ -1227,6 +1262,7 @@ class Pipeline(solo.SoloFlow, exploration.ExplorationFlow, design.DesignFlow, mu
 
     # How many times Relay keeps the team working on its own before accepting open problems, per escalation.
     KEEP_WORKING = {"Review rounds used up": 2, "Verification still failing": 2, "Acceptance criteria not proven": 1,
+                    "Delivery evidence proves nothing": 1,
                     "A blocking finding keeps coming back": 1, "Design review still blocking": 1, "Revision produced no change": 1}
 
     def escalate(self, title, question, choices, auto, work=None):
@@ -1672,8 +1708,118 @@ class Pipeline(solo.SoloFlow, exploration.ExplorationFlow, design.DesignFlow, mu
                 self.dialogue()
                 # dialogue ends with phase review (round already incremented) or deliver
 
+    # ------------------------------------------------------------ delivery guards (#65)
+    def proof_of_work(self):
+        """What Relay itself captured this run: verification output, and any image evidence on disk."""
+        images = []
+        try:
+            for p in Path(self.run_dir).rglob("*"):
+                if p.is_file() and p.suffix.lower() in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
+                    images.append(str(p))
+        except Exception:
+            pass
+        for c in gitops.changed_files(self.wt, self.base) or []:
+            path = c.get("path") if isinstance(c, dict) else str(c)
+            if str(path).lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".webp")):
+                images.append(path)
+        return predelivery.proof_index(self.task_meta().get("verification"), artifacts=images[:200])
+
+    def evidence_gate(self):
+        """Refuse a delivery whose proof proves nothing. Returns False when the team goes back to work.
+
+        Same contract as the judge's `done_gate`, read once more at the gate with the two shapes of empty
+        proof the judge cannot see on its own: a passing claim with no command output Relay captured, and a
+        user-interface change with no browser evidence anywhere in the run.
+        """
+        criteria = self.criteria()
+        if not criteria or self.state.get("deliver_now") or not self.cfg.get("evidence_gate", True):
+            return True
+        self.state["evidence_gate_rounds"] = int(self.state.get("evidence_gate_rounds") or 0) + 1
+        res = predelivery.evidence_gate(criteria, self.task_meta().get("verification"), self.proof_of_work())
+        self.m.set_meta(self.tid, delivery_refusals=res["refusals"])
+        if res["ok"]:
+            return True
+        rows = "\n".join(f"- **{r['id']}** {r['criterion']}: {r['reason']}" for r in res["refusals"])
+        self.r.msg(role="orchestrator", agent=None, kind="gate", ok=False, missing=res["refusals"], turn=self.state.get("turn"),
+                   content="Delivery refused: " + ", ".join(r["id"] for r in res["refusals"]) + " proved nothing")
+        self.r.timeline("judge", "Delivery refused · the proof proves nothing",
+                        "; ".join(f"{r['id']}: {r['reason']}" for r in res["refusals"])[:400])
+        key, text = self.escalate(
+            "Delivery evidence proves nothing",
+            f"These required criteria are marked done, but nothing in this run proves it:\n\n{rows}\n\n"
+            "Send it back for real proof, deliver anyway (they become follow-ups on the pull request), or stop.",
+            {"prove": "Send it back for real proof", "accept": "Deliver anyway, list them as follow-ups", "stop": "Stop the task"},
+            auto="accept",
+            work=("prove", "For each criterion named above, run the check and cite what came back: the exact command and its output, "
+                           "or a screenshot file for a user-interface change. Do not restate that it works."))
+        if key == "accept":
+            self.add_followups([{"severity": "should_fix", "problem": f"{r['id']} delivered without proof: {r['criterion']} ({r['reason']})"}
+                                for r in res["refusals"]], "delivery evidence gate")
+            self.save()
+            return True
+        sup_agent, _ = self.role_agent("supervisor")
+        instruction = text or ("Prove these criteria with captured output or a screenshot, then report again:\n" + rows)
+        _, senv = self.supervisor_turn(protocol.human_answer("Delivery was refused: the evidence proves nothing.", instruction),
+                                       f"{_label(sup_agent)} is getting real proof", self.state.get("turn"))
+        self.apply_supervisor_decision(senv, int(self.state.get("turn") or 1))
+        if self.state.get("phase") == "dialogue":
+            self.dialogue()
+            if self.state.get("phase") == "review":
+                self.review()
+        return False
+
+    def base_guard(self):
+        """The branch must still merge into its base branch when it is delivered, not when it was cut.
+
+        Rebases onto the base branch and re-runs verification when the branch no longer merges cleanly; when
+        the rebase conflicts, it says so and asks rather than pushing something nobody can merge.
+        """
+        if not self.cfg.get("base_guard", True):
+            return True
+        before = commitguard.head(self.wt)
+        chk = predelivery.base_guard(self.r, self.wt, self.cfg, self.task_meta())
+        if chk.get("rebased") and before:
+            # A rebase rewrites the branch; the push replaces exactly the commits that were there before.
+            self.state["agent_pushed"] = self.state.get("agent_pushed") or before
+        self.m.set_meta(self.tid, delivery_check={**chk, "time": now()})
+        if chk.get("note"):
+            self.r.msg(role="orchestrator", agent=None, kind="notice", turn=self.state.get("turn"),
+                       content=f"Base branch check: {chk['note']}")
+        if chk.get("needs_human"):
+            key, _ = self.escalate(
+                "The branch no longer merges",
+                chk["note"] + "\n\nRebase it yourself and resume the task, or deliver it anyway as an unmergeable pull request.",
+                {"stop": "Stop; I will rebase it", "accept": "Open the pull request anyway"}, auto="stop")
+            if key != "accept":
+                raise RuntimeError(chk["note"] + " Resume the task once the branch is rebased.")
+            self.add_followups([{"severity": "blocking",
+                                 "problem": "This branch does not merge into its base branch: "
+                                            + (", ".join(chk.get("conflicts") or []) or chk["note"])}], "base guard")
+            return True
+        if chk.get("reverify"):
+            vt = self.run_verification()
+            self.state["last_verification"] = vt
+            if not (self.task_meta().get("verification") or {}).get("ok", True):
+                failures = judge.failed_checks(self.task_meta().get("verification"))
+                detail = "; ".join(f"`{f.get('command')}` exit {f.get('rc')}" for f in failures) or "the checks did not pass"
+                key, _ = self.escalate(
+                    "Verification fails on the rebased branch",
+                    f"The branch was rebased onto {chk['ref']} because it no longer merged, and verification now fails: {detail}.\n\n"
+                    "Stop so the conflict with the new base can be sorted out, or deliver it with the failure recorded.",
+                    {"stop": "Stop the task", "accept": "Deliver with the failure recorded"}, auto="stop")
+                if key != "accept":
+                    raise RuntimeError(f"Verification fails after rebasing onto {chk['ref']}: {detail}")
+                self.add_followups([{"severity": "blocking", "problem": f"Verification failing after the rebase onto {chk['ref']}: {detail}"}],
+                                   "base guard")
+        return True
+
     def deliver(self):
         self.phase_mark("deliver")
+        # The gate may send the team back for proof; the escalation's own attempt limit ends that loop.
+        while not self.evidence_gate():
+            if self.state.get("phase") != "deliver":
+                return None
+            self.phase_mark("deliver")
         t = self.task_meta()
         ds = gitops.diff_stat(self.wt, self.base)
         changed = gitops.changed_files(self.wt, self.base)
@@ -1724,6 +1870,10 @@ class Pipeline(solo.SoloFlow, exploration.ExplorationFlow, design.DesignFlow, mu
         self.write_design_doc()   # docs/designs/<date>-<slug>.md in the primary repository, when the task has an approved design
         committed = gitops.commit_all(self.r, self.wt, f"{prefix} {title}".strip())
         self.r.timeline("git", "Committed" if committed else "Nothing new to commit", self.branch)
+        self.state["head"] = commitguard.head(self.wt)
+        self.save()
+        # The base branch may have moved while the run worked: check the merge now, not after a person tries it.
+        self.base_guard()
         self.state["head"] = commitguard.head(self.wt)
         self.save()
 

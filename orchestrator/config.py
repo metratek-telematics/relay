@@ -210,6 +210,10 @@ DEFAULTS = {
     "judge_revise_nudges": 1,                # revisions refused for missing ids / non-blocking-only findings before one is accepted
     "judge_budget_extension": 3,             # work packages granted when the budget runs out and the team continues
     "judge_escalation_timeout_minutes": 120,  # unanswered judge questions take the safe automatic choice after this (0 = wait)
+    # delivery guards (#65, orchestrator/predelivery.py)
+    "base_guard": True,                      # before delivery: rebase onto the base branch when the branch no longer merges
+    "evidence_gate": True,                   # refuse a delivery whose proof proves nothing (no captured output, no screenshot)
+    "question_wait_minutes": 15,             # wait this long for an answer, then work on what the question does not block (0 = always wait)
     "max_parallel": 1,
     # Speed (docs/SPEED_AUDIT.md). Team mode per task: auto (triage decides) | solo (one agent) | team (supervisor + worker).
     "team_mode": "auto",

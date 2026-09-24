@@ -1,6 +1,8 @@
 """HTTP API of the learning engine (orchestrator/learning_engine.py), as a Flask blueprint.
 
     GET    /api/learning                          everything the Learning page shows
+    GET    /api/shipped                           the honest success record (#65)
+    POST   /api/shipped/backfill                  rebuild it from the task records and scorecards
     GET    /api/learning/outcomes?limit=&repo=    the outcome dataset (latest record per run)
     POST   /api/learning/preflight                recommendation + risk for a draft task
     POST   /api/learning/backfill                 outcome records for scored runs that have none
@@ -43,6 +45,18 @@ def _body():
 @bp.get("/api/learning")
 def learning_view():
     return jsonify(_engine().view())
+
+
+@bp.get("/api/shipped")
+def shipped_view():
+    """The honest success record (#65): merged, deployed and untouched, computed from facts."""
+    return jsonify(_manager.learning.shipped_view())
+
+
+@bp.post("/api/shipped/backfill")
+def shipped_backfill():
+    n = _manager.learning.shipped_backfill()
+    return jsonify({"rebuilt": n, **_manager.learning.shipped_view()})
 
 
 @bp.get("/api/learning/outcomes")
