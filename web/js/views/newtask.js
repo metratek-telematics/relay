@@ -1,17 +1,15 @@
 // New task wizard: repository → request → team → review.
 import { $, $$, esc, icon, modal, toast, basename } from "../ui.js";
-import { S, agentLabel, agentInitial, navigate, defaultModelLabel } from "../state.js";
+import { S, agentLabel, agentInitial, navigate } from "../state.js";
+import { ROLES, roleControlHtml, bindRoleControls, fallbackLabel } from "../rolecontrol.js";
 import { api } from "../api.js";
 import { connectorPicker } from "./connectors.js";
 import { mountTaskTools } from "./tools.js";
 import { mountTeamAdvice, mountRiskCheck } from "./advice.js";
 import { AUTO_FREE, orLabel, orSupported, openOpenRouterBrowser } from "./openrouter.js";
 
-export function workflowEditor(host, wf, { agents, presets, showAdvanced = true, perTask = false, onChange }) {
-  const health = S.agents || {};
-  // On OpenRouter a CLI only has to be installed: its own sign-in is not used.
-  const orReady = (cur, a) => cur.provider === "openrouter" && orSupported(a) && !!health[a]?.installed;
-  const roles = ["supervisor", "worker", "reviewer"];
+export function workflowEditor(host, wf, { agents, presets, showAdvanced = true, perTask = false, scope = "task", orgRoles = null, task = null, fresh = false, onChange }) {
+  const ctx = { scope, agents: agents || S.agentMeta, orgRoles, task, fresh };
   const draw = () => {
     const TEAM_MODES = [["auto", "Auto", "Relay triages: small and moderate tasks run one agent; complex, risky or redesign work gets the team"], ["solo", "Solo", "One agent (the worker) plans, builds and proves it; Relay verifies"], ["team", "Team", "Supervisor plans and judges, worker builds, reviewer gates"]];
     host.innerHTML = `
@@ -19,44 +17,13 @@ export function workflowEditor(host, wf, { agents, presets, showAdvanced = true,
         <div class="seg" role="radiogroup" aria-labelledby="tmLabel">${TEAM_MODES.map(([v, l, h]) => `<button type="button" role="radio" data-team-mode="${v}" aria-checked="${(wf.team_mode || "auto") === v}" class="${(wf.team_mode || "auto") === v ? "active" : ""}" title="${esc(h)}">${esc(l)}</button>`).join("")}</div>
         <div class="help">${esc((TEAM_MODES.find(([v]) => v === (wf.team_mode || "auto")) || TEAM_MODES[0])[2])}. Solo runs need only the worker below.</div></div>
       <div class="presets">${presets.map((p) => `<button type="button" class="preset ${wf.preset === p.id ? "active" : ""}" data-preset="${esc(p.id)}">
-        <div class="flow">${["supervisor", "worker", "reviewer"].filter((r) => p.roles[r]?.agent).map((r) => `<span class="av sm ${esc(p.roles[r].agent)}" title="${r}">${esc(agentInitial(p.roles[r].agent))}</span>`).join(icon("arrowRight"))}</div>
+        <div class="flow">${ROLES.filter((r) => p.roles[r]?.agent).map((r) => `<span class="av sm ${esc(p.roles[r].agent)}" title="${r}">${esc(agentInitial(p.roles[r].agent))}</span>`).join(icon("arrowRight"))}</div>
         <strong>${esc(p.name)}</strong><p>${esc(p.description)}</p></button>`).join("")}
         <button type="button" class="preset ${wf.preset === "custom" ? "active" : ""}" data-preset="custom"><div class="flow">${icon("wand")}</div><strong>Custom</strong><p>Pick any agent for any role below.</p></button>
       </div>
-      <div class="role-grid" style="margin-top:12px">${roles.map((r) => { const cur = wf.roles[r] || { agent: "", model: "" }; return `<div class="role-box">
-        <div class="rt">${r}${r === "reviewer" ? ' <span style="text-transform:none;letter-spacing:0;font-weight:500">(optional)</span>' : ""}</div>
-        <div class="agent-pick">${Object.keys(agents).filter((a) => agents[a].builtin || health[a]?.installed || cur.agent === a).map((a) => `<button type="button" data-role="${r}" data-agent="${a}" class="${cur.agent === a ? "active" : ""}" style="--agent:${esc(agents[a].color)}" title="${esc(orReady(cur, a) ? "ready on OpenRouter" : health[a]?.ok ? "ready" : (health[a]?.error || "not ready"))}"><span class="av sm ${a}">${esc(agentInitial(a))}</span>${esc(agents[a].label)}${health[a] && !health[a].ok && !orReady(cur, a) ? ' <span class="muted">!</span>' : ""}</button>`).join("")}${r === "reviewer" ? `<button type="button" data-role="reviewer" data-agent="" class="${!cur.agent ? "active" : ""}">none</button>` : ""}</div>
-        ${(() => {
-          if (!cur.agent) return '<div class="muted" style="font-size:11px">No agent in this role.</div>';
-          const onOR = cur.provider === "openrouter";
-          const orOk = orSupported(cur.agent);
-          const why = ((S.agentMeta[cur.agent] || {}).openrouter || {}).why || "";
-          const provider = `<label class="rl">Runs on</label><div class="role-provider" role="group" aria-label="${esc(r)} runs on">
-            <button type="button" data-prov-role="${r}" data-prov="" class="${onOR ? "" : "active"}" aria-pressed="${!onOR}">${esc(agentLabel(cur.agent))} sign-in</button>
-            <button type="button" data-prov-role="${r}" data-prov="openrouter" class="${onOR ? "active" : ""}" aria-pressed="${onOR}" ${orOk ? "" : `disabled title="${esc(why)}"`}>OpenRouter</button></div>`;
-          const efforts = (S.agentMeta[cur.agent] || {}).efforts || [];
-          if (onOR) {
-            const def = ((S.providers || {}).openrouter || {}).default_model || AUTO_FREE;
-            const catalog = [...new Set([AUTO_FREE, ...((S.config.models || {}).openrouter || []), ...((S.config.model_recent || {}).openrouter || [])])];
-            const custom = cur.model && !catalog.includes(cur.model);
-            return `${provider}<label class="rl">OpenRouter model</label>
-            <div class="or-model-pick"><select data-model-sel="${r}" aria-label="OpenRouter model for the ${esc(r)}"><option value="">OpenRouter default (${esc(orLabel(def))})</option>${catalog.map((m) => `<option value="${esc(m)}" ${cur.model === m ? "selected" : ""}>${esc(orLabel(m))}</option>`).join("")}<option value="__custom__" ${custom ? "selected" : ""}>Custom…</option></select>
-              <button type="button" class="btn xs" data-or-browse="${r}" title="Browse OpenRouter models">${icon("layers", "sm")}Browse</button></div>
-            <input data-model="${r}" placeholder="OpenRouter model id, e.g. anthropic/claude-sonnet-4.5" value="${esc(custom ? cur.model : "")}" ${custom ? "" : "hidden"}>
-            <label class="rl">Reasoning effort</label>
-            ${efforts.length ? `<select data-effort="${r}"><option value="">CLI default</option>${efforts.map((e) => `<option value="${e}" ${cur.effort === e ? "selected" : ""}>${e}</option>`).join("")}</select>` : '<select disabled><option>not supported by this CLI</option></select>'}`;
-          }
-          const catalog = [...new Set([...((S.config.models || {})[cur.agent] || []), ...((S.config.model_recent || {})[cur.agent] || [])])];
-          const custom = cur.model && !catalog.includes(cur.model);
-          return `${provider}<label class="rl">Model</label>
-          <select data-model-sel="${r}"><option value="">${esc(defaultModelLabel(cur.agent))}</option>${catalog.map((m) => `<option value="${esc(m)}" ${cur.model === m ? "selected" : ""}>${esc(m)}</option>`).join("")}<option value="__custom__" ${custom ? "selected" : ""}>Custom…</option></select>
-          <input data-model="${r}" placeholder="exact model id passed to the CLI" value="${esc(custom ? cur.model : "")}" ${custom ? "" : "hidden"}>
-          <label class="rl">Reasoning effort</label>
-          ${efforts.length ? `<select data-effort="${r}"><option value="">${esc(S.agents?.[cur.agent]?.default_effort ? `CLI default (${S.agents[cur.agent].default_effort})` : "CLI default")}</option>${efforts.map((e) => `<option value="${e}" ${cur.effort === e ? "selected" : ""}>${e}</option>`).join("")}</select>` : '<select disabled><option>not supported by this CLI</option></select>'}`;
-        })()}
-      </div>`; }).join("")}</div>
+      <div class="role-grid" style="margin-top:12px">${ROLES.map((r) => roleControlHtml(r, wf.roles[r] || { agent: "", model: "" }, ctx)).join("")}</div>
       ${showAdvanced ? `<div class="grid3" style="margin-top:6px">
-        <div class="field"><label>Max work packages</label><input type="number" min="1" max="60" data-wf="max_turns" value="${esc(wf.max_turns)}"><div class="help">Turn budget for the supervisor ↔ worker loop.</div></div>
+        <div class="field"><label>Max work packages</label><input type="number" min="1" max="60" data-wf="max_turns" value="${esc(wf.max_turns)}"><div class="help">Turn budget for the supervisor \u2194 worker loop.</div></div>
         <div class="field"><label>Max review rounds</label><input type="number" min="1" max="10" data-wf="max_review_rounds" value="${esc(wf.max_review_rounds)}"></div>
         <div class="field"><label>Verification</label><select data-wf="verify_mode"><option value="each_report" ${wf.verify_mode === "each_report" ? "selected" : ""}>After every worker report</option><option value="before_review" ${wf.verify_mode === "before_review" ? "selected" : ""}>Only before review / delivery</option><option value="off" ${wf.verify_mode === "off" ? "selected" : ""}>Off</option></select></div>
       </div>
@@ -65,46 +32,44 @@ export function workflowEditor(host, wf, { agents, presets, showAdvanced = true,
         <div class="field"><label>Pause for my design approval</label><select data-wf="design_approval">${[["auto", "Auto: complex or multi-repository designs, unless unattended"], ["on", "Always ask me"], ["off", "Never: approve after the design review passes"]].map(([v, l]) => `<option value="${v}" ${(wf.design_approval || "auto") === v ? "selected" : ""}>${l}</option>`).join("")}</select><div class="help">Appears in Needs you with the design and Approve / Request changes. Quiet hours and disabled questions approve automatically.</div></div>
       </div>
       <div class="grid2">
-        <div class="field inline"><label>Require my approval before commit & PR</label><span class="switch ${wf.approval_before_delivery ? "on" : ""}" data-sw="approval_before_delivery"></span></div>
+        <div class="field inline"><label>Require my approval before commit &amp; PR</label><span class="switch ${wf.approval_before_delivery ? "on" : ""}" data-sw="approval_before_delivery"></span></div>
         <div class="field inline"><label>Agents may ask me questions</label><span class="switch ${wf.allow_agent_questions !== false ? "on" : ""}" data-sw="allow_agent_questions"></span></div>
-        <div class="field inline"><label>Redeploy when the pull request is merged<span class="help" style="display:block;margin:2px 0 0">Runs the command set in Settings → Git &amp; GitHub. Nothing runs unless redeploy is enabled there.</span></label><span class="switch ${wf.redeploy_on_merge ? "on" : ""}" data-sw="redeploy_on_merge" role="switch" tabindex="0" aria-checked="${!!wf.redeploy_on_merge}" aria-label="Redeploy when the pull request is merged"></span></div>
+        <div class="field inline"><label>Redeploy when the pull request is merged<span class="help" style="display:block;margin:2px 0 0">Runs the command set in Settings \u2192 Git &amp; GitHub. Nothing runs unless redeploy is enabled there.</span></label><span class="switch ${wf.redeploy_on_merge ? "on" : ""}" data-sw="redeploy_on_merge" role="switch" tabindex="0" aria-checked="${!!wf.redeploy_on_merge}" aria-label="Redeploy when the pull request is merged"></span></div>
       </div>
       ${perTask ? `<div class="field inline"><label>Show me mockups before building<span class="help" style="display:block;margin:2px 0 0">The team explores design directions, then waits for your pick (the focus group's pick after the answer timeout).</span></label><span class="switch ${wf.show_mockups ? "on" : ""}" data-sw="show_mockups" role="switch" tabindex="0" aria-checked="${!!wf.show_mockups}" aria-label="Show me mockups before building"></span></div>` : ""}
-      <div class="field"><label>Verification commands (one per line, optional)</label><textarea data-wf="verification_commands" rows="2" placeholder="npm test&#10;python -m pytest -q">${esc((wf.verification_commands || []).join("\n"))}</textarea><div class="help">Auto-detected commands (npm scripts, pytest, gradle, …) are added too unless disabled. <label style="display:inline-flex;gap:4px;align-items:center"><input type="checkbox" data-cb="auto_detect_verification" ${wf.auto_detect_verification !== false ? "checked" : ""}> auto-detect</label></div></div>` : ""}`;
+      <div class="field"><label>Verification commands (one per line, optional)</label><textarea data-wf="verification_commands" rows="2" placeholder="npm test&#10;python -m pytest -q">${esc((wf.verification_commands || []).join("\n"))}</textarea><div class="help">Auto-detected commands (npm scripts, pytest, gradle, \u2026) are added too unless disabled. <label style="display:inline-flex;gap:4px;align-items:center"><input type="checkbox" data-cb="auto_detect_verification" ${wf.auto_detect_verification !== false ? "checked" : ""}> auto-detect</label></div></div>` : ""}`;
     $$("[data-team-mode]", host).forEach((b) => (b.onclick = () => { wf.team_mode = b.dataset.teamMode; draw(); onChange && onChange(wf); }));
     $$("[data-preset]", host).forEach((b) => (b.onclick = () => {
       wf.preset = b.dataset.preset;
       const p = presets.find((x) => x.id === wf.preset);
-      if (p) for (const r of roles) wf.roles[r] = { agent: p.roles[r]?.agent || "", model: "", effort: "", provider: "" };
+      if (p) for (const r of ROLES) wf.roles[r] = { agent: p.roles[r]?.agent || "", model: "", effort: "", provider: "", account: "" };
       draw(); onChange && onChange(wf);
     }));
-    $$("[data-role][data-agent]", host).forEach((b) => (b.onclick = () => {
-      const prev = wf.roles[b.dataset.role] || {};
-      const same = prev.agent === b.dataset.agent;
-      // Moving a role to another agent keeps it on OpenRouter (same model) when the new agent can run there.
-      const keepOR = prev.provider === "openrouter" && orSupported(b.dataset.agent);
-      wf.roles[b.dataset.role] = { agent: b.dataset.agent, model: same || keepOR ? (prev.model || "") : "", effort: same ? (prev.effort || "") : "", provider: same || keepOR ? (prev.provider || "") : "" };
-      wf.preset = "custom"; draw(); onChange && onChange(wf);
-    }));
-    $$("[data-prov-role]", host).forEach((b) => (b.onclick = () => {
-      const r = b.dataset.provRole, cur = wf.roles[r] || {};
-      if ((cur.provider || "") === b.dataset.prov) return;
-      wf.roles[r] = { ...cur, provider: b.dataset.prov, model: "" };  // model ids differ between a CLI's own login and OpenRouter
-      draw(); onChange && onChange(wf);
-    }));
-    $$("[data-or-browse]", host).forEach((b) => (b.onclick = () => {
-      const r = b.dataset.orBrowse;
-      openOpenRouterBrowser({ pick: true, current: wf.roles[r]?.model || "", onPick: (id) => { wf.roles[r] = { ...wf.roles[r], model: id }; draw(); onChange && onChange(wf); } });
-    }));
-    $$("[data-model-sel]", host).forEach((s) => s.addEventListener("change", () => {
-      const r = s.dataset.modelSel;
-      const input = host.querySelector(`[data-model="${r}"]`);
-      if (s.value === "__custom__") { input.hidden = false; input.focus(); wf.roles[r].model = input.value.trim(); }
-      else { input.hidden = true; wf.roles[r].model = s.value; }
-      onChange && onChange(wf);
-    }));
-    $$("[data-model]", host).forEach((i) => i.addEventListener("input", () => { wf.roles[i.dataset.model].model = i.value.trim(); onChange && onChange(wf); }));
-    $$("[data-effort]", host).forEach((s) => s.addEventListener("change", () => { wf.roles[s.dataset.effort].effort = s.value; onChange && onChange(wf); }));
+    bindRoleControls(host, {
+      roles: ROLES,
+      onAgent: (r, agent) => {
+        const prev = wf.roles[r] || {};
+        const same = prev.agent === agent;
+        // Moving a role to another agent keeps it on OpenRouter (same model) when the new agent can run there.
+        const keepOR = prev.provider === "openrouter" && orSupported(agent);
+        wf.roles[r] = { agent, model: same || keepOR ? (prev.model || "") : "", effort: same ? (prev.effort || "") : "",
+                        provider: same || keepOR ? (prev.provider || "") : "", account: same ? (prev.account || "") : "" };
+        wf.preset = "custom"; draw(); onChange && onChange(wf);
+      },
+      onProvider: (r, prov) => {
+        const cur = wf.roles[r] || {};
+        if ((cur.provider || "") === prov) return;
+        // Model ids differ between a CLI's own login and OpenRouter, and a sign-in is not used on OpenRouter.
+        wf.roles[r] = { ...cur, provider: prov, model: "", account: "" };
+        draw(); onChange && onChange(wf);
+      },
+      onBrowse: (r) => openOpenRouterBrowser({ pick: true, current: wf.roles[r]?.model || "", onPick: (id) => { wf.roles[r] = { ...wf.roles[r], model: id }; draw(); onChange && onChange(wf); } }),
+      onPatch: (r, patch, { redraw = true } = {}) => {
+        wf.roles[r] = { ...(wf.roles[r] || {}), ...patch };
+        if (redraw) draw();
+        onChange && onChange(wf);
+      },
+    });
     $$("[data-wf]", host).forEach((i) => i.addEventListener("change", () => { const k = i.dataset.wf; wf[k] = k === "verification_commands" ? i.value.split("\n").map((x) => x.trim()).filter(Boolean) : (i.type === "number" ? Number(i.value) : i.value); onChange && onChange(wf); }));
     $$("[data-sw]", host).forEach((s) => {
       s.onclick = () => { wf[s.dataset.sw] = !s.classList.contains("on"); s.classList.toggle("on"); if (s.hasAttribute("aria-checked")) s.setAttribute("aria-checked", s.classList.contains("on")); onChange && onChange(wf); };
@@ -123,7 +88,8 @@ export function defaultWorkflow() {
   for (const r of ["supervisor", "worker", "reviewer"]) {
     const agent = p ? (p.roles[r]?.agent || "") : (cfg.roles?.[r]?.agent || "");
     const same = (cfg.roles?.[r]?.agent || "") === agent;
-    roles[r] = { agent, model: cfg.roles?.[r]?.model || "", effort: cfg.roles?.[r]?.effort || "", provider: same ? (cfg.roles?.[r]?.provider || "") : "" };
+    roles[r] = { agent, model: cfg.roles?.[r]?.model || "", effort: cfg.roles?.[r]?.effort || "",
+                 provider: same ? (cfg.roles?.[r]?.provider || "") : "", account: same ? (cfg.roles?.[r]?.account || "") : "" };
   }
   return { preset: cfg.workflow_preset || "custom", roles, max_turns: cfg.max_turns || 12, max_review_rounds: cfg.max_review_rounds || 3, verify_mode: cfg.verify_mode || "each_report",
     approval_before_delivery: !!cfg.approval_before_delivery, allow_agent_questions: cfg.allow_agent_questions !== false, redeploy_on_merge: !!cfg.redeploy_default_on, design_mode: cfg.design_mode || "auto", design_approval: cfg.design_approval || "auto", show_mockups: false, verification_commands: [], auto_detect_verification: cfg.auto_detect_verification !== false, team_mode: cfg.team_mode || "auto" };
@@ -352,7 +318,7 @@ export function openNewTask(prefill = {}) {
       $("#wNext", body).onclick = () => { collect1(); if (!data.requirements.trim() && !data.issue.trim()) { toast("warning", "Describe the task or give an issue number"); return; } go(3); };
     } else if (step === 3) {
       body.innerHTML = `<h2>Team & workflow</h2><p class="hint">One agent supervises: it plans, delegates, verifies and decides. The other implements. Optionally a third reviews independently before delivery.</p><div id="teamAdvice"></div><div id="wfEditor"></div>${nav("Back", "Next: review")}`;
-      const editor = workflowEditor($("#wfEditor", body), data.workflow, { agents: S.agentMeta, presets: S.presets, perTask: true, onChange: (wf) => { const k = JSON.stringify(wf.roles); if (k !== rolesKey) { rolesKey = k; data.teamSource = "manual"; } } });
+      const editor = workflowEditor($("#wfEditor", body), data.workflow, { agents: S.agentMeta, presets: S.presets, perTask: true, scope: "task", task: edit || parent || null, fresh: !edit && !parent, onChange: (wf) => { const k = JSON.stringify(wf.roles); if (k !== rolesKey) { rolesKey = k; data.teamSource = "manual"; } } });
       let rolesKey = JSON.stringify(data.workflow.roles);
       const advice = mountTeamAdvice($("#teamAdvice", body), adviceDraft, { onUse: (roles) => {
         Object.assign(data.workflow.roles, roles); data.workflow.preset = "custom"; data.teamSource = "recommended"; rolesKey = JSON.stringify(data.workflow.roles);
@@ -372,7 +338,7 @@ export function openNewTask(prefill = {}) {
           ${checkedRelated().length ? `<div><b>Also changes</b>${checkedRelated().map((r) => esc(r.name)).join(", ")} <span class="muted">(same branch in each, one pull request per repository)</span></div>` : ""}
           ${parent ? `<div><b>Follows up</b>${esc(parent.name)}</div>` : ""}
           <div><b>Request</b>${esc((data.requirements || `Issue #${data.issue}`).slice(0, 400))}${data.requirements.length > 400 ? "…" : ""}</div>
-          <div><b>Team</b>${["supervisor", "worker", "reviewer"].filter((x) => r[x].agent).map((x) => `${esc(agentLabel(r[x].agent))}${onOR(x) ? " via OpenRouter" : ""} (${x}${onOR(x) ? `, ${esc(orLabel(r[x].model || ((S.providers || {}).openrouter || {}).default_model || AUTO_FREE))}` : r[x].model ? `, ${esc(r[x].model)}` : ", CLI default model"}${r[x].effort ? `, ${esc(r[x].effort)} effort` : ""})`).join(" · ")}</div>
+          <div><b>Team</b>${ROLES.filter((x) => r[x].agent).map((x) => `${esc(agentLabel(r[x].agent))} <span class="muted">(${x}${onOR(x) ? ` · ${esc(orLabel(r[x].model || ((S.providers || {}).openrouter || {}).default_model || AUTO_FREE))} via OpenRouter` : ` · ${esc(r[x].model || fallbackLabel("model", x, r[x].agent, "task"))} · ${esc(r[x].effort || fallbackLabel("effort", x, r[x].agent, "task"))}`})</span>`).join(" · ")}</div>
           <div><b>Budget</b>${data.workflow.max_turns} work packages · ${data.workflow.max_review_rounds} review rounds · verification ${esc(data.workflow.verify_mode)}${data.workflow.approval_before_delivery ? " · approval gate on" : ""}</div>
           <div><b>Team mode</b>${esc({ auto: "auto (triage decides solo or team)", solo: "solo: one agent", team: "team: supervisor, worker, reviewer" }[data.workflow.team_mode || "auto"])}</div>
           <div><b>Design first</b>${esc({ auto: "auto", always: "always", never: "never" }[data.workflow.design_mode || "auto"])}${checkedRelated().length && (data.workflow.design_mode || "auto") === "auto" ? " · this multi-repository task gets a reviewed design before implementation" : ""} · design approval ${esc(data.workflow.design_approval || "auto")}</div>

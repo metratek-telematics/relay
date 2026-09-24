@@ -1,6 +1,7 @@
 // Settings: workflow defaults, agents, verification, git/github, appearance, rules, about.
 import { $, $$, esc, icon, toast, confirm, debounce } from "../ui.js";
-import { S, agentLabel, agentInitial, agentIds, bus } from "../state.js";
+import { S, agentLabel, agentInitial, agentIds, bus, ROLE_LABEL } from "../state.js";
+import { ROLES, resolvedLabel } from "../rolecontrol.js";
 import { api } from "../api.js";
 import { workflowEditor } from "./newtask.js";
 import { NOTIFY_EVENTS, chime, permission, requestPermission, showDesktop } from "../notify.js";
@@ -116,7 +117,8 @@ export function mountSettings(main, section) {
   // Personal settings (orchestrator/personal.py): what this person overrides, what the organisation
   // would give them, and what is in effect. The server resolves it; nothing here re-derives it.
   let ps = null, scope = "mine";
-  const applyPersonal = (r) => { ps = r.settings; if (r.config) { S.config = r.config; bus.emit("config"); } return ps; };
+  // Every page that names a source reads S.personal (web/js/rolecontrol.js), so it moves with ps.
+  const applyPersonal = (r) => { ps = r.settings; S.personal = ps; if (r.config) { S.config = r.config; bus.emit("config"); } return ps; };
   const loadPersonal = async () => {
     try {
       if (!ORG.me) await loadMe();
@@ -235,7 +237,8 @@ export function mountSettings(main, section) {
         }
         renderScopeCard();
       }, 400);
-      workflowEditor($("#wfEd", body), wf, { agents: S.agentMeta, presets: S.presets, onChange: persist });
+      workflowEditor($("#wfEd", body), wf, { agents: S.agentMeta, presets: S.presets, scope: scope === "org" ? "org" : "mine",
+                                             orgRoles: (ps.organisation || {}).roles || null, onChange: persist });
       bindScope();
       bindAuto();
       // The model catalogue and efforts depend on the agent, so redraw once the new agent is saved.
@@ -247,36 +250,29 @@ export function mountSettings(main, section) {
     } else if (cur === "agents") {
       const env = c.agent_env || {};
       const envRows = (a) => Object.entries(env[a] || {}).concat([["", ""]]).map(([k, v]) => `<div class="env-row"><input placeholder="VARIABLE" value="${esc(k)}" data-env-k="${a}"><input placeholder="value" value="${esc(v)}" data-env-v="${a}"><button type="button" class="btn xs" data-env-del="${a}" title="Remove">${icon("x")}</button></div>`).join("");
-      // Model / effort / subagent model for one agent, in one place.
+      // Advanced, per CLI. The everyday choice \u2014 which model, which effort \u2014 is not repeated here:
+      // it belongs to the role control (web/js/rolecontrol.js), which this card links to.
       const catalogField = (a) => {
         const cat = (c.models || {})[a] || [];
-        const d = (c.agent_defaults || {})[a] || {};
-        const efforts = (S.agentMeta[a] || {}).efforts || [];
-        const cliModel = S.agents?.[a]?.default_model;
-        const cliEffort = S.agents?.[a]?.default_effort;
-        const custom = d.model && !cat.includes(d.model);
         const subs = (c.subagent_models || {})[a] || "";
-        return `<div class="grid3">
-          <div class="field"><label>Default model</label>
-            <select data-adef="${a}.model"><option value="">${esc(cliModel ? `CLI default (${cliModel})` : "CLI default")}</option>${cat.map((m) => `<option value="${esc(m)}" ${d.model === m ? "selected" : ""}>${esc(m)}</option>`).join("")}<option value="__custom__" ${custom ? "selected" : ""}>Custom&hellip;</option></select>
-            <input data-adef-custom="${a}" value="${esc(custom ? d.model : "")}" placeholder="exact model id" ${custom ? "" : "hidden"} style="margin-top:6px">
-            <div class="help">Used whenever a role leaves its model blank.</div></div>
-          <div class="field"><label>Default reasoning effort</label>
-            ${efforts.length
-              ? `<select data-adef="${a}.effort"><option value="">${esc(cliEffort ? `CLI default (${cliEffort})` : "CLI default")}</option>${efforts.map((e) => `<option value="${e}" ${d.effort === e ? "selected" : ""}>${e}</option>`).join("")}</select><div class="help">Lower effort spends fewer output tokens.</div>`
-              : `<select disabled><option>not supported by this CLI</option></select>`}</div>
+        const mine = ROLES.filter((r) => ((c.roles || {})[r] || {}).agent === a);
+        return `<div class="rc-elsewhere">
+          <p>${mine.length ? `What ${esc(agentLabel(a))} runs in your team today:` : `No role runs ${esc(agentLabel(a))} today.`}</p>
+          ${mine.length ? `<ul>${mine.map((r) => `<li><b>${esc(ROLE_LABEL[r])}</b><span>${esc(resolvedLabel("model", r, a))}</span><span>${esc(resolvedLabel("effort", r, a))}</span></li>`).join("")}</ul>` : ""}
+          <a class="btn xs" href="#/settings/workflow">${icon("layers", "sm")}Change the model and effort in Team and workflow</a>
+        </div>
+        <div class="grid2">
           <div class="field"><label>Subagent model <span class="badge green">saves tokens</span></label>
             ${a !== "claude"
-              ? `<input disabled placeholder="not supported"><div class="help">${a === "codex" ? "Codex has no setting for its helpers' model." : "Gemini has no subagent model setting."}</div>`
-              : `<input list="subcat-${a}" data-sub="${a}" value="${esc(subs)}" placeholder="${a === "codex" ? "gpt-5.1-codex-mini" : "haiku"}"><datalist id="subcat-${a}">${cat.map((m) => `<option value="${esc(m)}">`).join("")}</datalist><div class="help">Helper agents spawned mid-turn use this cheaper model.</div>`}</div>
-        </div>
-        <div class="field"><label>Model catalog (one per line)</label><textarea data-models="${a}" rows="3" style="font-family:var(--mono);font-size:12px">${esc(cat.join("\n"))}</textarea><div class="help">Options offered in every model picker.</div></div>`;
+              ? `<input disabled placeholder="not supported"><div class="help">${a === "codex" ? "Codex has no setting for its helpers' model." : `${esc(agentLabel(a))} has no subagent model setting.`}</div>`
+              : `<input list="subcat-${a}" data-sub="${a}" value="${esc(subs)}" placeholder="haiku"><datalist id="subcat-${a}">${cat.map((m) => `<option value="${esc(m)}">`).join("")}</datalist><div class="help">Helper agents spawned mid-turn use this cheaper model.</div>`}</div>
+          <div class="field"><label>Model catalog (one per line)</label><textarea data-models="${a}" rows="3" style="font-family:var(--mono);font-size:12px">${esc(cat.join("\n"))}</textarea><div class="help">The options offered in every model picker.</div></div>
+        </div>`;
       };
       body.innerHTML = `
         <div class="card"><div class="card-head"><h3><span class="av sm codex">Cx</span> Codex</h3><span class="badge ${agentTone("codex")}">${esc(agentWord("codex"))}</span></div><div class="card-body">
           <div class="grid2"><div class="field"><label>Sandbox</label><select data-cfg="codex_sandbox"><option value="workspace-write" ${c.codex_sandbox === "workspace-write" ? "selected" : ""}>workspace-write (recommended)</option><option value="danger-full-access" ${c.codex_sandbox === "danger-full-access" ? "selected" : ""}>danger-full-access (no sandbox)</option></select><div class="help">workspace-write lets Codex edit the worktree and run commands there without approvals.</div></div>
-          <div class="field"><label>Reasoning effort</label><select data-cfg="codex_reasoning_effort"><option value="" ${!c.codex_reasoning_effort ? "selected" : ""}>CLI default</option>${["low", "medium", "high", "xhigh"].map((x) => `<option ${c.codex_reasoning_effort === x ? "selected" : ""}>${x}</option>`).join("")}</select></div></div>
-          <div class="field"><label>Extra CLI arguments</label><input data-cfg="codex_extra_args" data-args="1" value="${esc((c.codex_extra_args || []).join(" "))}" placeholder="-c key=value"></div>
+          <div class="field"><label>Extra CLI arguments</label><input data-cfg="codex_extra_args" data-args="1" value="${esc((c.codex_extra_args || []).join(" "))}" placeholder="-c key=value"></div></div>
           ${catalogField("codex")}
           <div class="field"><label>Environment variables for Codex</label><div class="env-table" id="env-codex">${envRows("codex")}</div></div>
         </div></div>
@@ -326,26 +322,6 @@ export function mountSettings(main, section) {
         save({ models });
       }, 500);
       $$("[data-models]", body).forEach((t) => t.addEventListener("input", saveModels));
-      const saveDefaults = debounce(() => {
-        const agent_defaults = JSON.parse(JSON.stringify(S.config.agent_defaults || {}));
-        $$("[data-adef]", body).forEach((el) => {
-          const [a, key] = el.dataset.adef.split(".");
-          agent_defaults[a] = agent_defaults[a] || { model: "", effort: "" };
-          agent_defaults[a][key] = el.value === "__custom__"
-            ? (body.querySelector(`[data-adef-custom="${a}"]`)?.value || "").trim()
-            : el.value;
-        });
-        save({ agent_defaults });
-      }, 400);
-      $$("[data-adef]", body).forEach((el) => el.addEventListener("change", () => {
-        if (el.dataset.adef.endsWith(".model")) {
-          const a = el.dataset.adef.split(".")[0];
-          const ci = body.querySelector(`[data-adef-custom="${a}"]`);
-          if (ci) { ci.hidden = el.value !== "__custom__"; if (!ci.hidden) ci.focus(); }
-        }
-        saveDefaults();
-      }));
-      $$("[data-adef-custom]", body).forEach((i) => i.addEventListener("input", saveDefaults));
       const saveSubsAgents = debounce(() => {
         const subagent_models = { ...(S.config.subagent_models || {}) };
         $$("[data-sub]", body).forEach((i) => { subagent_models[i.dataset.sub] = i.value.trim(); });

@@ -192,9 +192,9 @@ DEFAULTS = {
     # An independent reviewer by default: a gate that checks the result against the request, not a second designer.
     "workflow_preset": "codex-claude-independent-review",
     "roles": {
-        "supervisor": {"agent": "codex", "model": "", "effort": "", "provider": ""},
-        "worker": {"agent": "claude", "model": "", "effort": "", "provider": ""},
-        "reviewer": {"agent": "codex", "model": "", "effort": "", "provider": ""},
+        "supervisor": {"agent": "codex", "model": "", "effort": "", "provider": "", "account": ""},
+        "worker": {"agent": "claude", "model": "", "effort": "", "provider": "", "account": ""},
+        "reviewer": {"agent": "codex", "model": "", "effort": "", "provider": "", "account": ""},
     },
     "models": copy.deepcopy(DEFAULT_MODELS),
     "max_turns": 12,
@@ -438,6 +438,7 @@ def _migrate(cfg: dict) -> dict:
         out["roles"][r].setdefault("model", "")
         out["roles"][r].setdefault("effort", "")
         out["roles"][r].setdefault("provider", "")  # "" = the agent's own sign-in · "openrouter"
+        out["roles"][r].setdefault("account", "")   # "" = whichever sign-in has capacity (accounts.py)
     out.setdefault("models", {})
     if isinstance(out.get("subagent_models"), dict):
         out["subagent_models"]["codex"] = ""

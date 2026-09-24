@@ -96,6 +96,9 @@ class ResolverTests(unittest.TestCase):
             P.clean({"roles": {"worker": {"agent": "nonesuch"}}})
         with self.assertRaises(ValueError):
             P.clean({"workflow_preset": "not-a-preset"})
+        with self.assertRaises(ValueError):
+            P.clean({"roles": {"worker": {"agent": "claude", "account": "../elsewhere"}}})
+        self.assertEqual(P.clean({"roles": {"worker": {"agent": "claude", "account": "work"}}})["roles"]["worker"]["account"], "work")
         self.assertEqual(P.clean({"max_review_rounds": 999})["max_review_rounds"], 20)  # clamped, not stored raw
         self.assertEqual(P.clean({"max_review_rounds": None})["max_review_rounds"], None)  # None clears
 

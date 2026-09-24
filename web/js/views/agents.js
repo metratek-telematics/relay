@@ -130,7 +130,6 @@ export function openModels(name) {
   const label = meta.label || name;
   const cfg = S.config || {};
   let picked = [...((cfg.models || {})[name] || [])];
-  let def = ((cfg.agent_defaults || {})[name] || {}).model || "";
   let res = {}, rows = [], freeOnly = false, query = "";
   const m = modal(`<h2><span class="av sm ${esc(name)}">${esc(agentInitial(name))}</span> ${esc(label)}: models &amp; usage</h2>
     <div id="mAcct" class="acct"><span class="muted">Reading the plan, the limits and what has been used…</span></div>
@@ -142,6 +141,7 @@ export function openModels(name) {
     <p class="hint" id="mHint">Loading models…</p>
     <div class="model-list" id="mList"></div>
     <p class="hint" id="mFoot">★ adds a model to the pickers when you build a team.</p>
+    <p class="hint">Which model a role runs is chosen with the role, in <a href="#/settings/workflow">Team and workflow</a> — the same control as the New task wizard and a task's own team.</p>
     <div class="modal-actions"><button class="btn primary" data-close>Done</button></div>`, { wide: true });
   const list = $("#mList", m.body);
   const save = async (patch) => { try { S.config = await api.saveSettings(patch); } catch (e) { toast("error", "Could not save", e.message); } };
@@ -153,22 +153,15 @@ export function openModels(name) {
       : res.source === "settings" ? `${label} does not list its models here, so these are the ones saved in settings.${res.hint ? ` (${res.hint})` : ""} Type any model id under Configure.`
       : [`${shown.length} of ${rows.length} models`, free ? `${free} free` : "", inPlan ? `${inPlan} in your plan` : "", res.source_label ? `from ${res.source_label}` : ""].filter(Boolean).join(" · ");
     $("#mFoot", m.body).textContent = `★ adds a model to the pickers when you build a team. ${res.plan_note || "Prices are USD per million tokens, input / output."}`;
-    list.innerHTML = shown.slice(0, 400).map((r) => `<div class="model-row ${def === r.id ? "is-default" : ""} ${r.available === false ? "is-off" : ""}">
+    list.innerHTML = shown.slice(0, 400).map((r) => `<div class="model-row ${r.available === false ? "is-off" : ""}">
       <button class="btn xs ghost star ${picked.includes(r.id) ? "on" : ""}" data-star="${esc(r.id)}" title="${picked.includes(r.id) ? "Remove from pickers" : "Add to pickers"}">${picked.includes(r.id) ? "★" : "☆"}</button>
       <div class="mr-name"><code>${esc(r.id)}</code>${r.name && r.name !== r.id ? `<span class="muted">${esc(r.name)}</span>` : ""}</div>
-      <div class="mr-meta">${modelBadges(r)}</div>
-      <button class="btn xs ${def === r.id ? "primary" : ""}" data-def="${esc(r.id)}">${def === r.id ? "Default" : "Set default"}</button></div>`).join("")
+      <div class="mr-meta">${modelBadges(r)}</div></div>`).join("")
       + (shown.length > 400 ? `<div class="empty small">${shown.length - 400} more; search to narrow the list.</div>` : "") || '<div class="empty small">No models match.</div>';
     $$("[data-star]", list).forEach((b) => (b.onclick = async () => {
       const id = b.dataset.star;
       picked = picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id];
       await save({ models: { [name]: picked } }); draw();
-    }));
-    $$("[data-def]", list).forEach((b) => (b.onclick = async () => {
-      def = def === b.dataset.def ? "" : b.dataset.def;
-      if (def && !picked.includes(def)) picked = [...picked, def];
-      await save({ agent_defaults: { [name]: { model: def } }, models: { [name]: picked } }); draw();
-      toast("success", def ? `${label} now defaults to ${def}` : "Default cleared");
     }));
   };
   const loadModels = async (refresh) => {
@@ -195,11 +188,8 @@ function openConfigure(name, onSaved) {
   const rows = [...new Set([...suggested, ...Object.keys(env)])];
   const secret = (k) => /KEY|TOKEN|SECRET|PASSWORD/i.test(k);
   const row = (k, v = "") => `<div class="env-row"><input data-k value="${esc(k)}" placeholder="NAME" spellcheck="false"><input data-v type="${secret(k) ? "password" : "text"}" value="${esc(v)}" placeholder="${suggested.includes(k) ? "not set" : "value"}" spellcheck="false" autocomplete="off"><button class="btn xs ghost" data-del title="Remove">${icon("x", "sm")}</button></div>`;
-  const models = (cfg.models || {})[name] || [];
-  const def = ((cfg.agent_defaults || {})[name] || {}).model || "";
   const m = modal(`<h2><span class="av sm ${esc(name)}">${esc(agentInitial(name))}</span> Configure ${esc(meta.label || name)}</h2>
-    <div class="field"><label>Default model</label><input id="cfgModel" list="cfgModels" value="${esc(def)}" placeholder="${esc(meta.models_hint || "CLI default")}"><datalist id="cfgModels">${models.map((x) => `<option value="${esc(x)}">`).join("")}</datalist>
-      <span class="hint">Used when a team role leaves the model blank. ${esc(meta.models_hint || "")}</span></div>
+    <p class="hint">The model and effort this agent runs are chosen with the role, in <a href="#/settings/workflow">Team and workflow</a>.${meta.models_hint ? ` ${esc(meta.models_hint)}.` : ""}</p>
     <div class="field"><label>Environment variables</label><div class="env-table" id="cfgEnv">${rows.map((k) => row(k, env[k] || "")).join("")}</div>
       <button class="btn xs" id="cfgAdd">${icon("plus", "sm")}Add variable</button>
       <span class="hint">Only set what you use; empty rows are ignored. Keys stay on this server.</span></div>
@@ -214,7 +204,7 @@ function openConfigure(name, onSaved) {
     // Settings merge per key, so a removed variable is saved as empty, which the agent treats as unset.
     for (const k of Object.keys(env)) if (!(k in next)) next[k] = "";
     try {
-      S.config = await api.saveSettings({ agent_env: { [name]: next }, agent_defaults: { [name]: { model: $("#cfgModel", m.body).value.trim() } } });
+      S.config = await api.saveSettings({ agent_env: { [name]: next } });
       toast("success", `${meta.label || name} saved`);
       m.close();
       onSaved && onSaved();

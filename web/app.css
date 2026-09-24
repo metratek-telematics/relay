@@ -592,12 +592,19 @@ a.meta-fact:hover { color: var(--accent); text-decoration: none; }
   .jn-banner-go { width: 100%; justify-content: center; }
 }
 
-.team-flow { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
-.team-pill { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px 0 5px; border-radius: 99px; background: var(--panel-2); border: 1px solid transparent; font-size: var(--fs-xs); }
-.team-pill.on { background: var(--green-soft); border-color: color-mix(in srgb, var(--green) 35%, transparent); }
-.tpl-role { color: var(--text-3); }
-.tpl-agent { font-weight: 650; color: var(--text); }
-.team-arrow { color: var(--text-3); display: inline-grid; }
+/* The task roster (web/js/rolecontrol.js): who is on this task, on which sign-in, model and effort,
+   and the turn it is on \u2014 the same four values, in the same order, as the team editor sets. */
+.tp-roster { display: flex; align-items: stretch; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; min-width: 0; }
+.tp-roster .rc-edit { align-self: center; }
+.rc-now { display: inline-flex; align-items: flex-start; gap: 7px; padding: 5px 10px 5px 6px; border-radius: var(--r); background: var(--panel-2); border: 1px solid transparent; font-size: var(--fs-xs); min-width: 0; }
+.rc-now.on { background: var(--green-soft); border-color: color-mix(in srgb, var(--green) 35%, transparent); }
+.rc-now .av { margin-top: 1px; flex: none; }
+.rcn-text { display: grid; gap: 1px; min-width: 0; }
+.rcn-head { display: inline-flex; align-items: center; gap: 5px; font-weight: 650; color: var(--text); }
+.rcn-facts { display: flex; flex-wrap: wrap; gap: 4px 6px; color: var(--text-2); min-width: 0; }
+.rcn-facts span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 24ch; }
+.rcn-facts span + span::before { content: "\00b7"; color: var(--text-3); margin-right: 6px; }
+.card-body > .rc-now { background: transparent; padding: 4px 0; }
 .pr-pill { height: 26px; }
 .tp-views { display: flex; align-items: stretch; gap: 2px; margin: 0 -8px; overflow-x: auto; scrollbar-width: none; }
 .tp-views::-webkit-scrollbar { display: none; }
@@ -1010,7 +1017,7 @@ html.bare .main { overflow: visible; }
   .tp-head { padding: 10px 14px 0; }
   .tp-title { font-size: 17px; flex-basis: 100%; flex-wrap: wrap; }
   .tp-name { white-space: normal; }
-  .team-pill .tpl-role { display: none; }
+  .rcn-facts span { white-space: normal; max-width: none; }
   .tp-rail-toggle span { display: none; }
   .convo { padding: 14px 12px 24px; }
   .composer { padding: 8px 10px; }
@@ -1093,7 +1100,6 @@ html.nav-rail .nav-user .org-setup-pill { display: none; }
 .org-person span.org-av, .org-av { display: inline-grid; place-items: center; }
 .org-person span.org-av > span { display: block; }
 .ring-score b { color: var(--text); }
-.tpl-role { color: var(--text-2); }
 .feed-row time { color: var(--text-2); }
 .live-dot, .live-dot::after, .dot.ok, .dot.on { background: var(--ok-fill); }
 .dot.warn { background: var(--warn-fill); }

@@ -247,12 +247,15 @@ def candidates(account_rows: list[dict]) -> list[dict]:
     return [r for r in account_rows if r.get("enabled") and r.get("signed_in")]
 
 
-def choose(account_rows: list[dict], state_of, session_account: str = "") -> dict:
+def choose(account_rows: list[dict], state_of, session_account: str = "", prefer: str = "") -> dict:
     """Which account runs the next turn.
 
     account_rows: rows() output, default first.
     state_of:     fn(account_id) -> limit_state dict ({"ok", "reason", "resets_at", "kind"}).
     session_account: the account this role's session already runs on, if any.
+    prefer:       the sign-in the role is pinned to in its team. It is tried before anything else;
+                  when it cannot run, the next account with capacity takes the turn instead of the
+                  task stopping, and `switched` tells the caller to say so.
 
     Returns {"account": row|None, "switched": bool, "skipped": [{"id","name","reason"}], "reason": str}.
     `reason` is why nothing could run, when nothing could.
@@ -264,11 +267,14 @@ def choose(account_rows: list[dict], state_of, session_account: str = "") -> dic
             continue
         why = "paused" if not r.get("enabled") else "not signed in"
         skipped.append({"id": r["id"], "name": r["name"], "reason": why})
-    # The session's own account first: its conversation only exists inside that config folder.
+    # The pinned account first, then the session's own: a CLI session only exists inside the config
+    # folder that created it.
     order = []
+    if prefer:
+        order += [r for r in usable if r["id"] == prefer]
     if session_account:
-        order += [r for r in usable if r["id"] == session_account]
-    order += [r for r in usable if r["id"] != session_account]
+        order += [r for r in usable if r["id"] == session_account and r["id"] != prefer]
+    order += [r for r in usable if r["id"] != session_account and r["id"] != prefer]
     free = [r for r in order if not r.get("busy")]
     for pool in (free, order):  # a folder is only shared when no free account has capacity
         for r in pool:

@@ -402,6 +402,7 @@ async function bootstrap() {
   try { st = await api.state(); } catch (e) { main.innerHTML = `<div class="page"><div class="empty-state">${icon("alert", "lg")}<h3>Relay's server is unreachable</h3><p>${esc(e.message)}</p><p class="muted">Retrying every few seconds.</p></div></div>`; renderConn(); setTimeout(bootstrap, 3000); return; }
   S.build = st.build; S.config = st.config || {}; S.agents = st.agents || {}; S.agentMeta = st.agent_meta || {};
   paintAgentColors(); S.presets = st.presets || []; S.templates = st.templates || []; S.providers = st.providers || {};
+  S.accounts = st.accounts || {}; S.personal = st.personal || null;
   S.github = st.github || {}; S.queue = st.queue || {}; S.autopilot = st.autopilot || null; S.notifications = st.notifications || []; S.lessonsPending = st.lessons_pending || 0;
   S.tasks = new Map((st.tasks || []).map((t) => [t.id, t]));
   applyTheme(S.config.ui_theme, S.config.ui_density);

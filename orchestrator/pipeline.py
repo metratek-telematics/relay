@@ -185,6 +185,40 @@ class Pipeline(solo.SoloFlow, exploration.ExplorationFlow, design.DesignFlow, mu
         allowed = C.AGENTS.get(agent, {}).get("efforts") or []
         return eff if eff in allowed else ""
 
+    def role_account(self, role):
+        """The sign-in this role is pinned to, or "" for the automatic pick (orchestrator/accounts.py)."""
+        r = self.roles.get(role) or {}
+        agent = (r.get("agent") or "").strip()
+        glob = self.cfg.get("roles", {}).get(role, {}) or {}
+        return ((r.get("account") or "").strip()
+                or ((glob.get("account") or "").strip() if (glob.get("agent") or "").strip() == agent else ""))
+
+    def role_sources(self, role):
+        """Which layer decided each value: the task itself, the role default, the agent default, or the CLI.
+
+        The page says whose value is in effect, so the answer has to come from the one place that
+        resolves it rather than being guessed again in the browser.
+        """
+        r = self.roles.get(role) or {}
+        agent = (r.get("agent") or "").strip()
+        glob = self.cfg.get("roles", {}).get(role, {}) or {}
+        same = (glob.get("agent") or "").strip() == agent
+        d = self.cfg.get("agent_defaults", {}).get(agent) or {}
+
+        def layer(key, value):
+            if not value:
+                return "cli"
+            if (r.get(key) or "").strip() == value:
+                return "task"
+            if same and (glob.get(key) or "").strip() == value:
+                return "role"
+            if (d.get(key) or "").strip() == value:
+                return "agent"
+            return "cli"
+        return {"model": layer("model", self.role_agent(role)[1]),
+                "effort": layer("effort", self.role_effort(role)),
+                "account": "task" if (r.get("account") or "").strip() else ("role" if self.role_account(role) else "auto")}
+
     def handoff(self, frm, to, title, content, **extra):
         return self.r.msg(role=frm, agent=self.role_agent(frm)[0] if frm in self.roles else None, kind="handoff",
                           to=to, title=title, content=content or "", turn=self.state.get("turn"), **extra)
@@ -244,6 +278,9 @@ class Pipeline(solo.SoloFlow, exploration.ExplorationFlow, design.DesignFlow, mu
                 acfg = {**self.agent_cfg(), "attach_images": list(images)} if images else self.agent_cfg()
                 if provider:
                     acfg = {**acfg, "_provider": provider}
+                pinned = self.role_account(role)
+                if pinned:
+                    acfg = {**acfg, "_account": pinned}
                 res = self.r.run_agent(role, agent, prompt, self.wt, acfg, model, sess, self.run_dir, label, turn,
                                        effort=self.role_effort(role))
             except Interrupted as e:
@@ -1829,7 +1866,8 @@ class Pipeline(solo.SoloFlow, exploration.ExplorationFlow, design.DesignFlow, mu
 
         The model and effort a role ends up with come from the task's team, the global role settings and the
         agent defaults, in that order, and an effort the CLI does not offer is dropped. The task page shows this,
-        so it has to be the same answer the runner uses.
+        so it has to be the same answer the runner uses — including which of those layers decided it (`sources`)
+        and the sign-in the role is pinned to, so the page can name the source instead of inferring it.
         """
         plan = {}
         for r in ("supervisor", "worker", "reviewer"):
@@ -1838,7 +1876,9 @@ class Pipeline(solo.SoloFlow, exploration.ExplorationFlow, design.DesignFlow, mu
                 continue
             plan[r] = {"agent": agent, "model": model, "effort": self.role_effort(r),
                        "provider": self.role_provider(r),
-                       "supports_effort": bool(C.AGENTS.get(agent, {}).get("efforts"))}
+                       "supports_effort": bool(C.AGENTS.get(agent, {}).get("efforts")),
+                       "account": self.role_account(r),
+                       "sources": self.role_sources(r)}
         self.m.set_meta(self.tid, role_plan=plan)
         return plan
 

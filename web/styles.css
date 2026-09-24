@@ -817,10 +817,33 @@ kbd { font-size: 10px; padding: 1px 5px; border-radius: 4px; background: var(--p
 .env-chip { text-transform: none; letter-spacing: 0; font-weight: 600; color: var(--text-3); gap: 5px; }
 .typing-caret { color: var(--accent); animation: blink 1s infinite; }
 
-/* role model / effort pickers */
-.role-box .rl { font-size: 10px; color: var(--text-3); font-weight: 600; margin-top: 2px; }
+/* The role control (web/js/rolecontrol.js): agent \u00b7 account \u00b7 model \u00b7 effort, in that order and with
+   the same words in Settings, the New task wizard and a task's own team editor. Every picker says what
+   its fallback really is, and the line under it says whose value is in effect. */
+.role-box .rl { font-size: 10px; color: var(--text-3); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
 .role-box select { width: 100%; border: 1px solid var(--border); background: var(--panel); border-radius: 6px; padding: 6px 8px; font-size: var(--fs-xs); color: var(--text); }
 .role-box select:disabled { opacity: .55; }
+.rc { gap: 10px; }
+.rc .rt-opt { text-transform: none; letter-spacing: 0; font-weight: 500; }
+.rc-slot { display: grid; gap: 3px; min-width: 0; }
+.rc-slot .role-provider { margin: 0; }
+.rc-row { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.rc-row select { flex: 1; min-width: 0; }
+.rc-src { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; margin: 1px 0 0; font-size: 10.5px; line-height: 1.4; color: var(--text-3); }
+.rc-owner { font-weight: 650; color: var(--text-2); }
+.rc-eff b { color: var(--text); font-weight: 650; }
+.rc-back { display: inline-flex; align-items: center; gap: 3px; border: 0; background: transparent; padding: 0; font: inherit; font-weight: 600; color: var(--accent-ink); cursor: pointer; text-align: left; }
+.rc-back:hover { text-decoration: underline; }
+.rc-back .ic { width: 11px; height: 11px; }
+.rc-ran { display: flex; align-items: flex-start; gap: 5px; margin: 2px 0 0; padding-top: 7px; border-top: 1px solid var(--border); font-size: 10.5px; color: var(--text-2); }
+.rc-ran .ic { width: 12px; height: 12px; margin-top: 1px; flex: none; color: var(--text-3); }
+/* Settings \u2192 Agents and models keeps the advanced per-CLI settings, and points at the one control
+   instead of offering the everyday model and effort a second time. */
+.rc-elsewhere { border: 1px solid var(--border); border-radius: var(--r); padding: 10px 12px; margin-bottom: 12px; background: var(--panel-2); display: grid; gap: 7px; justify-items: start; }
+.rc-elsewhere p { margin: 0; font-size: var(--fs-sm); color: var(--text-2); }
+.rc-elsewhere ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 3px; font-size: var(--fs-xs); width: 100%; }
+.rc-elsewhere li { display: flex; flex-wrap: wrap; gap: 4px 10px; color: var(--text-2); }
+.rc-elsewhere li b { color: var(--text); min-width: 76px; }
 
 /* files edited chip + edit rows */
 .files-chip { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text-2); border-radius: 99px; padding: 1px 9px; font-size: 10.5px; font-weight: 600; text-transform: none; letter-spacing: 0; cursor: pointer; }

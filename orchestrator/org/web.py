@@ -477,6 +477,10 @@ def _scope_response(path, resp, manager):
         data = json.loads(resp.get_data(as_text=True))
         if path == "/api/state":
             data["config"] = _config_for(u, data.get("config") or {})
+            # Whose value is in effect for each personal setting (orchestrator/personal.py). Every page
+            # that shows a default says where it comes from, so this travels with the state itself
+            # rather than each page asking again.
+            data["personal"] = personal.view(C.public_view(manager.cfg()), u or {})
         else:
             data = _config_for(u, data)
         resp.set_data(json.dumps(data, ensure_ascii=False))

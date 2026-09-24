@@ -72,6 +72,34 @@ class RolePlanTests(unittest.TestCase):
         self.assertEqual(sorted(plan), ["supervisor", "worker"])
         self.assertEqual(p.m.meta["role_plan"], plan)
 
+    def test_the_plan_names_which_layer_decided_each_value(self):
+        """The control says whose value is in effect, so the plan has to carry the answer."""
+        p = pipeline({"worker": {"agent": "claude", "effort": "high"}},
+                     {"roles": {"worker": {"agent": "claude", "model": "claude-sonnet-4.5"}},
+                      "agent_defaults": {"claude": {"model": "claude-opus-5"}}})
+        plan = p.publish_role_plan()
+        self.assertEqual(plan["worker"]["model"], "claude-sonnet-4.5")
+        self.assertEqual(plan["worker"]["sources"], {"model": "role", "effort": "task", "account": "auto"})
+
+    def test_a_value_nobody_set_is_the_clis_own(self):
+        plan = pipeline({"worker": {"agent": "claude"}}).publish_role_plan()
+        self.assertEqual(plan["worker"]["sources"]["model"], "cli")
+        self.assertEqual(plan["worker"]["sources"]["effort"], "cli")
+
+    def test_the_agent_default_is_named_as_the_source(self):
+        p = pipeline({"worker": {"agent": "claude"}}, {"agent_defaults": {"claude": {"model": "claude-opus-5"}}})
+        self.assertEqual(p.publish_role_plan()["worker"]["sources"]["model"], "agent")
+
+    def test_a_role_can_be_pinned_to_one_sign_in(self):
+        p = pipeline({"worker": {"agent": "claude", "account": "work"}})
+        self.assertEqual(p.role_account("worker"), "work")
+        self.assertEqual(p.publish_role_plan()["worker"]["account"], "work")
+
+    def test_the_role_default_pins_the_account_for_the_same_agent_only(self):
+        cfg = {"roles": {"worker": {"agent": "claude", "account": "work"}}}
+        self.assertEqual(pipeline({"worker": {"agent": "claude"}}, cfg).role_account("worker"), "work")
+        self.assertEqual(pipeline({"worker": {"agent": "codex"}}, cfg).role_account("worker"), "")
+
     def test_openrouter_role_reports_its_provider(self):
         p = pipeline({"worker": {"agent": "cline", "provider": "openrouter", "model": "qwen/qwen3-coder:free"}})
         plan = p.publish_role_plan()

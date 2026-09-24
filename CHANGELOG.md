@@ -19,6 +19,23 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Model, effort and account: one control, in plain sight** (`web/js/rolecontrol.js`,
+  `orchestrator/pipeline.py`, `orchestrator/accounts.py`, Settings → Team and workflow, the New task
+  wizard, a task's own team, the task roster). Who runs the work is now set in one place and described
+  the same way everywhere. A role is one control — **agent · account · model · effort**, in that order —
+  drawn by the same component in your defaults, in a new task and in a running task's team, so changing
+  it in one place feels identical to changing it in another. No value reads "CLI default" any more: every
+  picker's fallback carries its real content and whose it is ("CLI default — gpt-5.6-luna", "Your default
+  — claude-sonnet-4.5", "Organisation default — high"), the line under it says what is in effect and who
+  decided it, and one click falls back to the layer underneath. A CLI with no reasoning-effort setting says
+  so instead of offering an empty picker, and a CLI Relay has not read says that rather than implying a
+  default it does not know. The task page gained a roster under the title: agent, sign-in, model, effort and
+  the turn each role is on, from the record of what actually ran, with the team editor one click away.
+  A role can now be pinned to one sign-in of its CLI; the pin is a preference, so if that account has no
+  capacity the turn still goes to one that does and the timeline says so.
+- **The four agent-account endpoints are back** (`web_app.py`). `GET /api/agents/accounts` and the add,
+  update and remove routes were dropped by an unrelated merge, which left the Agents page's accounts card
+  loading forever and made adding a second sign-in impossible.
 - **The interface explains itself: one story per change, and every waiting state says what happens next**
   (`web/js/waiting.js`, `web/js/views/journey.js`, task page → Delivery, Work, Agents, Connectors,
   Settings → Deploy). A new **Delivery** tab on the task page tells the whole story of a change in order —
@@ -133,6 +150,15 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   editing the organisation default itself. A task records who created it and which defaults it started from, so
   it does not change meaning when somebody else looks at it. An installation where nobody has personal settings
   behaves exactly as before.
+
+### Removed
+
+- **The duplicate model and effort pickers** (Settings → Agents and models, the Agents page's Configure
+  and Models dialogs). The same three values used to be settable in four places with four different
+  wordings. Per-CLI advanced settings — sandbox, permissions, extra arguments, environment variables,
+  the model catalogue, the subagent model — stay where they are, and now link to the one control instead
+  of competing with it, above a line saying what each agent runs in your team today. Codex's separate
+  "Reasoning effort" setting is gone for the same reason.
 
 ### Fixed
 
