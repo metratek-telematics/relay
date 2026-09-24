@@ -500,6 +500,9 @@ a.metric:hover { background: color-mix(in srgb, var(--panel) 94%, var(--text)); 
 .wc-note .ic { vertical-align: -2px; margin-right: 4px; }
 .wc-note.attn { color: var(--text); padding-left: 8px; border-left: 2px solid var(--amber); }
 .wc-note.err { color: var(--red); font-family: var(--mono); font-size: 11px; }
+.wc-note.bad { border-left-color: var(--red); }
+.wc-note b { color: var(--text); font-weight: 650; }
+.wc-note b::after { content: " · "; color: var(--text-3); font-weight: 400; }
 .wc-review { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .wc-labels { display: flex; gap: 4px; flex-wrap: wrap; font-size: 10.5px; }
 .wc-foot, .wc-foot2 { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 11px; }
@@ -532,6 +535,63 @@ a.meta-fact:hover { color: var(--accent); text-decoration: none; }
 .redeploy-fact.tone-red .ic { color: var(--red); }
 .redeploy-fact.tone-amber { color: var(--amber); }
 .redeploy-fact.tone-amber .ic { color: var(--amber); }
+/* What the task is waiting for: one line under the header on every view, and the same banner at the
+   top of Delivery (web/js/waiting.js). Silent while the team is working. */
+.tp-waiting { margin: 0 0 10px; min-width: 0; }
+.tp-waiting[hidden] { display: none; }
+.jn-banner { display: flex; align-items: flex-start; gap: 10px; padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--r); background: var(--bg-elev); min-width: 0; }
+.jn-banner-ic { display: grid; place-items: center; width: 24px; height: 24px; border-radius: var(--r-sm); flex: none; background: var(--panel-2); color: var(--text-2); }
+.jn-banner-copy { display: grid; gap: 1px; min-width: 0; flex: 1 1 auto; }
+.jn-banner-copy strong { font-size: var(--fs); font-weight: 650; }
+.jn-banner-copy > span { color: var(--text-2); font-size: var(--fs-sm); line-height: 1.5; overflow-wrap: anywhere; }
+.jn-banner-go { flex: none; align-self: center; }
+.jn-banner[data-tone="amber"] { border-color: color-mix(in srgb, var(--amber) 45%, var(--border)); background: var(--amber-soft); }
+.jn-banner[data-tone="amber"] .jn-banner-ic { background: var(--amber-soft); color: var(--amber); }
+.jn-banner[data-tone="red"] { border-color: color-mix(in srgb, var(--red) 45%, var(--border)); background: var(--red-soft); }
+.jn-banner[data-tone="red"] .jn-banner-ic { background: var(--red-soft); color: var(--red); }
+.jn-banner[data-tone="green"] { border-color: color-mix(in srgb, var(--green) 45%, var(--border)); background: var(--green-soft); }
+.jn-banner[data-tone="green"] .jn-banner-ic { background: var(--green-soft); color: var(--green); }
+
+/* Delivery: request → plan → work → pull requests → merge → deployment per host → live. */
+.jn { display: grid; gap: 14px; align-content: start; }
+.jn-steps { list-style: none; margin: 0; padding: 0; display: grid; }
+.jn-step { position: relative; display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 12px; padding: 0 0 16px; }
+.jn-step:not(:last-child)::before { content: ""; position: absolute; left: 12px; top: 26px; bottom: 0; width: 2px; background: var(--border); border-radius: 2px; }
+.jn-step.st-done:not(:last-child)::before { background: var(--green); }
+.jn-dot { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; flex: none; border: 2px solid var(--border-strong); background: var(--panel); color: var(--text-3); z-index: 1; }
+.jn-step.st-done .jn-dot { background: var(--green); border-color: var(--green); color: var(--on-accent); }
+.jn-step.st-cur .jn-dot { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+.jn-step.st-wait .jn-dot { border-color: var(--amber); color: var(--amber); }
+.jn-step.st-fail .jn-dot { background: var(--red); border-color: var(--red); color: var(--on-accent); }
+.jn-step.st-todo .jn-dot { opacity: .6; }
+.jn-body { min-width: 0; padding-top: 2px; }
+.jn-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.jn-head h3 { margin: 0; font-size: var(--t-h3); font-weight: 700; letter-spacing: -.01em; }
+.jn-step.st-todo .jn-head h3 { color: var(--text-3); }
+.jn-when { color: var(--text-3); font-size: var(--fs-xs); }
+.jn-note { margin: 3px 0 0; color: var(--text-2); font-size: var(--fs-sm); line-height: 1.55; overflow-wrap: anywhere; }
+.jn-facts { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 6px; font-size: var(--fs-xs); }
+.jn-fact > span { color: var(--text-3); margin-right: 5px; }
+.jn-fact b { font-weight: 650; }
+.jn-unknown { color: var(--text-3); font-style: italic; font-weight: 400; }
+.jn-rows { display: grid; gap: 6px; margin-top: 8px; }
+.jn-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; align-items: baseline; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--panel); }
+.jn-row-main { display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; min-width: 0; font-size: var(--fs-sm); }
+.jn-row-main strong { font-weight: 650; overflow-wrap: anywhere; }
+.jn-row-word { justify-self: end; }
+.jn-row-sub { grid-column: 1 / -1; color: var(--text-3); font-size: var(--fs-xs); line-height: 1.5; overflow-wrap: anywhere; }
+.jn-foot { margin: 0; color: var(--text-3); }
+@media (max-width: 700px) {
+  .jn-step { grid-template-columns: 20px minmax(0, 1fr); gap: 10px; padding-bottom: 14px; }
+  .jn-step:not(:last-child)::before { left: 9px; top: 22px; }
+  .jn-dot { width: 20px; height: 20px; }
+  .jn-dot .ic { width: 11px; height: 11px; }
+  .jn-row { grid-template-columns: minmax(0, 1fr); }
+  .jn-row-word { justify-self: start; }
+  .jn-banner { flex-wrap: wrap; }
+  .jn-banner-go { width: 100%; justify-content: center; }
+}
+
 .team-flow { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .team-pill { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px 0 5px; border-radius: 99px; background: var(--panel-2); border: 1px solid transparent; font-size: var(--fs-xs); }
 .team-pill.on { background: var(--green-soft); border-color: color-mix(in srgb, var(--green) 35%, transparent); }
@@ -1109,6 +1169,7 @@ time, .badge, .count-pill, .nav-count, .ql-pos, .ac-clock, .m-value, .trend-figs
   padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--r); background: var(--panel-2); }
 .dep-main { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .dep-switches { display: flex; flex-direction: column; gap: 6px; }
+.dep-what { color: var(--text-2); font-size: var(--fs-xs); line-height: 1.5; overflow-wrap: anywhere; }
 .dep-cmds pre { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-2); }
 .dep-row .switch.disabled { opacity: .45; pointer-events: none; }
 @media (max-width: 900px) {

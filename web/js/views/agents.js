@@ -12,7 +12,7 @@ function statusBadge(h, job) {
   const signedOut = h.installed && h.signed_in === false;
   if (h.ok) return `<span class="badge green">ready</span>`;
   if (signedOut) return `<span class="badge amber" ${h.hint ? `title="${esc(h.hint)}"` : ""}>not signed in</span>`;
-  if (h.installed) return `<span class="badge amber">check</span>`;
+  if (h.installed) return `<span class="badge amber" title="${esc(h.error || h.hint || "Relay could not confirm this CLI runs. Press Test to see what it says.")}">cannot run</span>`;
   return `<span class="badge ${isPack(h.agent) ? "" : "red"}">${isPack(h.agent) ? "not installed" : "missing"}</span>`;
 }
 
@@ -35,7 +35,7 @@ export function agentHealthRow(name, h, { compact = false, job = null } = {}) {
     : `<button class="btn sm" data-models="${esc(name)}" ${h.installed ? "" : "disabled"}>${icon("layers")}Models</button><button class="btn sm" data-test="${esc(name)}" ${h.installed ? "" : "disabled"}>${icon("zap")}Test</button>`;
   return `<div class="ah ${pack && !compact ? "ah-pack" : ""} ${pack && !h.installed ? "ah-off" : ""}" data-agent="${esc(name)}">
     <span class="av lg ${esc(name)}">${esc(agentInitial(name))}</span>
-    <div class="who"><strong>${esc(agentLabel(name))} <span class="muted" style="font-weight:500">· ${esc(meta.vendor || "")}</span>${meta.edit_only ? ` <span class="badge" title="Edits files but cannot run commands or tests">edits only</span>` : ""}</strong>
+    <div class="who"><strong>${esc(agentLabel(name))}${meta.vendor ? ` <span class="muted" style="font-weight:500">· ${esc(meta.vendor)}</span>` : ""}${meta.edit_only ? ` <span class="badge" title="Edits files but cannot run commands or tests">edits only</span>` : ""}</strong>
       <span>${version}</span>
       ${h.error && !signedOut && h.installed ? `<span class="err">${esc(h.error)}</span>` : ""}${h.hint && !compact && h.installed ? `<span class="hint">${esc(h.hint)}</span>` : ""}
       ${failed ? `<span class="err">${esc(job.action)} failed: ${esc(job.error || "")} · <a href="#" data-log="${esc(name)}">show log</a></span>` : ""}
@@ -68,13 +68,15 @@ function openSignIn(name) {
   if (go) go.onclick = () => { m.close(); openConfigure(name); };
 }
 
-const fmtPrice = (v) => (v == null ? "?" : `$${Number(v) < 1 ? Number(v).toFixed(2) : Number(v).toFixed(Number(v) % 1 ? 2 : 0)}`);
+const fmtPrice = (v) => (v == null ? "not published" : `$${Number(v) < 1 ? Number(v).toFixed(2) : Number(v).toFixed(Number(v) % 1 ? 2 : 0)}`);
 const fmtCtx = (n) => (!n ? "" : n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : `${Math.round(n / 1000)}k`);
 
+// When a window resets, in words. An unreported reset time is said out loud: it is not the same as
+// "no limit", and it is what decides whether a waiting task ever starts on its own.
 function fmtReset(ts) {
-  if (!ts) return "";
+  if (!ts) return "reset time not reported";
   const s = ts - Date.now() / 1000;
-  if (s <= 0) return "reset due";
+  if (s <= 0) return "the window should have reset; the next reading confirms it";
   const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
   const when = new Date(ts * 1000).toLocaleString([], d >= 1 ? { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" } : { hour: "2-digit", minute: "2-digit" });
   return `resets in ${d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`} (${when})`;
@@ -102,11 +104,12 @@ function accountHtml(a, label) {
     parts.push(`<div class="acct-row acct-top"><span class="acct-h">Limits</span><div class="quota-list">${a.windows.map((w) => {
       const pct = w.used == null ? null : Math.max(0, Math.min(100, Number(w.used)));
       const tone = pct == null ? "" : pct >= 90 ? "red" : pct >= 70 ? "amber" : "green";
-      const bits = [pct == null ? "" : `${+pct.toFixed(1)}% used`, w.detail || "", fmtReset(w.resets_at)].filter(Boolean).join(" · ");
+      const bits = [pct == null ? "how much is used is not reported" : `${+pct.toFixed(1)}% used`, w.detail || "", fmtReset(w.resets_at)].filter(Boolean).join(" · ");
       return `<div class="quota"><div class="quota-head"><strong>${esc(w.label)}</strong><span class="muted">${esc(bits)}</span></div>
         ${pct == null ? "" : `<div class="quota-bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100" aria-label="${esc(w.label)}"><span class="${tone}" style="width:${pct}%"></span></div>`}
-        ${w.as_of ? `<span class="muted quota-asof">as of ${esc(timeAgo(w.as_of))}</span>` : ""}</div>`;
-    }).join("")}</div></div>`);
+        <span class="muted quota-asof">${w.as_of ? `as of ${esc(timeAgo(w.as_of))}` : "Relay has not read this since it started; it refreshes on the next turn"}</span></div>`;
+    }).join("")}</div>
+      <p class="hint acct-consequence">When a window is at or over the threshold (90% unless you changed it), a role on this agent switches to its fallback chain; with no fallback the task waits in the queue and its card says which limit it is waiting for and when that resets. Both are set under <a href="#/settings/autopilot">Settings → Autopilot</a>.</p></div>`);
   }
   if ((a.usage || []).length) parts.push(`<div class="acct-row"><span class="acct-h">${esc(label)} reports</span>${chips(a.usage)}</div>`);
   const periods = ((a.relay || {}).periods || []);
@@ -130,7 +133,7 @@ export function openModels(name) {
   let def = ((cfg.agent_defaults || {})[name] || {}).model || "";
   let res = {}, rows = [], freeOnly = false, query = "";
   const m = modal(`<h2><span class="av sm ${esc(name)}">${esc(agentInitial(name))}</span> ${esc(label)}: models &amp; usage</h2>
-    <div id="mAcct" class="acct"><span class="muted">Loading plan and usage…</span></div>
+    <div id="mAcct" class="acct"><span class="muted">Reading the plan, the limits and what has been used…</span></div>
     <div class="row" style="gap:8px;margin:12px 0 8px;flex-wrap:wrap">
       <input id="mQ" placeholder="Search models" style="flex:1;min-width:160px">
       <label class="row" style="gap:6px"><input type="checkbox" id="mFree"> Free or in plan</label>
@@ -174,8 +177,8 @@ export function openModels(name) {
     catch (e) { $("#mHint", m.body).textContent = e.message; }
   };
   const loadAccount = (refresh) => api.agentAccount(name, refresh)
-    .then((a) => { $("#mAcct", m.body).innerHTML = accountHtml(a, label) || `<span class="muted">${esc(label)} does not report plan or usage.</span>`; })
-    .catch(() => { $("#mAcct", m.body).innerHTML = '<span class="muted">Plan and usage are unavailable right now.</span>'; });
+    .then((a) => { $("#mAcct", m.body).innerHTML = accountHtml(a, label) || `<span class="muted">${esc(label)} reported no plan, limit or usage of its own. Relay's own record of what this agent used is under Relay usage once it has run a turn.</span>`; })
+    .catch((e) => { $("#mAcct", m.body).innerHTML = `<span class="muted">Relay could not read ${esc(label)}'s plan and limits: ${esc(e.message)}. Press Refresh to try again; until then treat the limits below as not known.</span>`; });
   $("#mQ", m.body).oninput = (e) => { query = e.target.value; draw(); };
   $("#mFree", m.body).onchange = (e) => { freeOnly = e.target.checked; draw(); };
   $("#mRefresh", m.body).onclick = () => { loadModels(true); loadAccount(true); };

@@ -19,6 +19,23 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The interface explains itself: one story per change, and every waiting state says what happens next**
+  (`web/js/waiting.js`, `web/js/views/journey.js`, task page → Delivery, Work, Agents, Connectors,
+  Settings → Deploy). A new **Delivery** tab on the task page tells the whole story of a change in order —
+  request → plan → work per repository → pull requests → merge → deployment per host → live — with what
+  failed and what that blocks, and, before anything has run, what a merge *will* deploy for that repository
+  (read from the deployment map, read-only). One shared answer, `waitingFor(task)`, now decides the words
+  for every parked state, so the task header, the Work board cards and the Delivery panel say the same
+  thing: what it is waiting for and who or what moves it on — your answer, your approval, a pick between
+  design directions, an agent's usage limit and when it resets (or that nothing will reset it), a task
+  ahead of it, the queue, a pull request that is not merged, a deployment that needs a person. Nothing
+  shows a blank or a zero where the truth is "not known yet": a pull request whose state Relay has not
+  read says so instead of being guessed as open, an unreported usage window says the reset time was not
+  reported, a target that has never run says "not run yet" rather than "never", and a connector list that
+  could not be read is no longer indistinguishable from an empty one. Connectors now say on the row itself
+  what each one is allowed to do (methods and paths, schemas and row limits, which containers, which
+  allow-listed commands), the Agents page says what Relay does when a limit is reached, and Settings →
+  Deploy says, per target, exactly what a merge does to it.
 - **From merge to deployed, everywhere, without a person** (`orchestrator/delivery.py`,
   `orchestrator/manager.py`, `web_app.py`, settings `merge_watch_enabled` / `merge_poll_seconds`).
   The deploy recipes now join up into one pipeline, and one structure tells its story.
