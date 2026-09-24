@@ -7,12 +7,13 @@ import { NOTIFY_EVENTS, chime, permission, requestPermission, showDesktop } from
 import { openShortcuts, keysFor } from "../shortcuts.js";
 import { mountConnectors } from "./connectors.js";
 import { mountTools } from "./tools.js";
+import { mountDeploy } from "./deploy.js";
 import { mountTokens } from "./tokens.js";
 import { mountProviders } from "./openrouter.js";
 import { ORG, loadMe, can } from "./org/org.js";
 
-const SECTIONS = [["workflow", "Team and workflow", "layers"], ["agents", "Agents and models", "bot"], ["verification", "Verification", "shield"], ["prompts", "Saved prompts", "message"], ["rules", "Rules", "docs"], ["autopilot", "Autopilot", "clock"], ["budget", "Usage and budget", "gauge"], ["notifications", "Notifications", "bell"], ["git", "Git and GitHub", "github"], ["providers", "Model providers", "layers"], ["tools", "Agent tools", "package"], ["tokens", "Token efficiency", "gauge"], ["workspace", "Workspace and access", "user"], ["appearance", "Appearance", "sun"], ["about", "About", "info"]];
-const GROUPS = [["Team", ["workflow", "agents", "tools", "verification", "prompts", "rules"]], ["Automation", ["autopilot", "budget", "tokens", "notifications"]], ["Integrations", ["providers", "git", "workspace"]], ["You", ["appearance", "about"]]];
+const SECTIONS = [["workflow", "Team and workflow", "layers"], ["agents", "Agents and models", "bot"], ["verification", "Verification", "shield"], ["prompts", "Saved prompts", "message"], ["rules", "Rules", "docs"], ["autopilot", "Autopilot", "clock"], ["budget", "Usage and budget", "gauge"], ["notifications", "Notifications", "bell"], ["git", "Git and GitHub", "github"], ["deploy", "Deploy", "package"], ["providers", "Model providers", "layers"], ["tools", "Agent tools", "package"], ["tokens", "Token efficiency", "gauge"], ["workspace", "Workspace and access", "user"], ["appearance", "Appearance", "sun"], ["about", "About", "info"]];
+const GROUPS = [["Team", ["workflow", "agents", "tools", "verification", "prompts", "rules"]], ["Automation", ["autopilot", "budget", "tokens", "notifications"]], ["Integrations", ["providers", "git", "deploy", "workspace"]], ["You", ["appearance", "about"]]];
 // Words each section answers to, so the search finds "quiet hours" under Autopilot.
 const KEYWORDS = {
   workflow: "preset supervisor worker reviewer team max turns review rounds approval questions design step learning retrospective lessons scorecard parallel exploration mockups focus group personas directions",
@@ -24,6 +25,7 @@ const KEYWORDS = {
   budget: "cost pricing tokens usage spend subagent model cheap",
   notifications: "desktop sound alerts delivered failed questions",
   git: "github pull request pr draft branch push label intake watch issues commit",
+  deploy: "deploy deployment recipe redeploy merge targets hosts edge z2 image pull compose build workflow dispatch actions critical never pull",
   appearance: "theme dark light density compact keyboard shortcuts",
   about: "version data folder archive",
   tools: "toolbox mcp servers cli tools requests install catalog",
@@ -430,7 +432,7 @@ export function mountSettings(main, section) {
         <div class="grid2"><div class="field"><label>Base branch (blank = repository default)</label><input data-cfg="github_pr_base" value="${esc(c.github_pr_base)}"></div><div class="field"><label>Default agent label</label><input data-cfg="github_default_label" value="${esc(c.github_default_label)}"></div></div>
         <div class="field"><label>PR body template</label><textarea data-cfg="github_pr_body_template" rows="5">${esc(c.github_pr_body_template)}</textarea><div class="help">Placeholders: <code>{summary}</code> <code>{details}</code> <code>{issue_close}</code></div></div>
       </div></div>
-      <div class="card"><div class="card-head"><div><h3>Redeploy after merge</h3><p class="card-sub">For delivered tasks whose workflow opted in. Nothing runs while this is off.</p></div><span class="badge outline">owner configured</span></div><div class="card-body">
+      <div class="card"><div class="card-head"><div><h3>Redeploy after merge</h3><p class="card-sub">One command, for delivered tasks whose workflow opted in. Nothing runs while this is off. Per-repository deploy recipes live in <a href="#/settings/deploy">Deploy</a>.</p></div><span class="badge outline">owner configured</span></div><div class="card-body">
         <div class="field inline"><label>Run the redeploy command for opted-in tasks</label><span class="switch ${c.redeploy_enabled ? "on" : ""}" data-sw-cfg="redeploy_enabled"></span></div>
         <div class="field"><label>Redeploy command</label><input data-cfg="redeploy_command" value="${esc(c.redeploy_command || "")}" placeholder="./deploy.sh"><div class="help">Owner configuration only: agents, task text and API callers cannot set or change it.</div></div>
         <div class="field"><label>Working folder</label><input data-cfg="redeploy_working_dir" value="${esc(c.redeploy_working_dir || "")}" placeholder="Blank = the delivered task worktree"></div>
@@ -477,6 +479,8 @@ export function mountSettings(main, section) {
       mountProviders(body);
     } else if (cur === "tools") {
       mountTools(body);
+    } else if (cur === "deploy") {
+      mountDeploy(body);
     } else if (cur === "tokens") {
       mountTokens(body);
     } else if (cur === "rules") {

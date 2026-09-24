@@ -9,7 +9,7 @@ import time
 import traceback
 from pathlib import Path
 
-from . import agents, config as C, github, gitops, judge, multirepo, personal, redeploy, stacks
+from . import agents, config as C, deploy, github, gitops, judge, multirepo, personal, redeploy, stacks
 from .autopilot import Autopilot
 from .learning import Learning
 from .pipeline import TurnBudget, orchestrate
@@ -45,7 +45,9 @@ class Manager:
         self.github_status = {"last_poll": None, "error": None, "login": None}
         self.redeploy_watcher = False
         self.redeploy_status = {"last_poll": None, "error": None}
-        self.redeploy_lock = threading.Lock()  # one deployment at a time
+        # One deployment at a time across the whole instance: the #50 command and the deploy
+        # recipes (orchestrator/deploy.py) share one re-entrant lock, so they never overlap.
+        self.redeploy_lock = deploy.LOCK
         self._cfg = None
         self._cfg_at = 0
         self.notifications: list[dict] = []
@@ -1049,6 +1051,100 @@ class Manager:
         """Run the configured command now, whatever the pull request state is."""
         return self._run_redeploy(tid, trigger="manual", pr_state=None)
 
+    # ------------------------------------------------------------ deploy recipes (#53)
+    def _deploy_candidate(self, task, cfg=None):
+        """(trigger, pr_state, targets) for a merged task whose repository has enabled targets.
+
+        The gate is the deployment map, not the task: only targets the owner enabled *and* marked
+        automatic, and never a critical one, run by themselves. A task that already carries a deploy
+        record is never picked up again, so a failing recipe cannot loop.
+        """
+        if task.get("deploy") is not None or task.get("status") != "done":
+            return None
+        targets = deploy.auto_targets_for_repo(task.get("github_repo") or "")
+        if not targets:
+            return None
+        state = redeploy.merged_state(task)
+        if not state or str(state.get("state") or "").upper() != "MERGED":
+            return None
+        return "pr_merged", state, targets
+
+    def _run_deploy(self, tid, targets, trigger="pr_merged", pr_state=None, automatic=True):
+        """Run targets in order, one deployment at a time, and record every one on the task."""
+        with deploy.LOCK:
+            task = self.store.get(tid)
+            if not task:
+                raise KeyError("Task not found")
+            if (task.get("deploy") or {}).get("status") == "running":
+                raise ValueError("A deployment is already running for this task.")
+            self.store.update(tid, immediate=True, deploy={
+                "status": "running", "trigger": trigger, "pr_state": pr_state,
+                "started_at": now(), "finished_at": None, "targets": []})
+            self.emit_task(tid)
+            records = [deploy.run_target(t, trigger=trigger, task=task, automatic=automatic) for t in targets]
+            ran = [r for r in records if r["status"] != "skipped"]
+            status = ("failed" if any(r["status"] == "failed" for r in ran)
+                      else "blocked" if any(r["status"] in ("refused", "blocked") for r in ran)
+                      else "manual" if ran and all(r["status"] == "manual" for r in ran)
+                      else "succeeded" if ran else "skipped")
+            record = {"status": status, "trigger": trigger, "pr_state": pr_state,
+                      "started_at": records[0]["started_at"] if records else now(),
+                      "finished_at": now(), "targets": records}
+            self.store.update(tid, immediate=True, deploy=record)
+            title = {"succeeded": "Deploy succeeded", "failed": "Deploy failed",
+                     "blocked": "Deploy needs a person", "manual": "Deploy is manual",
+                     "skipped": "Deploy skipped"}[status]
+            detail = " · ".join(f"{r['target']}: {r['status']}" for r in records) or "no targets"
+            self.timeline(tid, "system", title, detail)
+            self.notify("success" if status in ("succeeded", "manual") else "error", title, task.get("name", ""), tid)
+            self.emit("deploy", {"task_id": tid, "record": record})
+            self.emit_task(tid)
+            return record
+
+    def deploy_now(self, tid, target_id=None):
+        """The Run now button on a task: one target, or every enabled target of its repository.
+
+        Enabled is still required - the button cannot run a target the owner switched off - but a
+        critical target may run here, because a person pressed it.
+        """
+        task = self.store.get(tid)
+        if not task:
+            raise KeyError("Task not found")
+        if target_id:
+            target = deploy.get_target(target_id)
+            if not target:
+                raise ValueError("No such deploy target.")
+            targets = [target]
+        else:
+            targets = [t for t in deploy.targets_for_repo(task.get("github_repo") or "") if t.get("enabled")]
+        if not targets:
+            raise ValueError("No enabled deploy target for this repository. Enable one in Settings → Deploy.")
+        return self._run_deploy(tid, targets, trigger="manual", pr_state=None, automatic=False)
+
+    def deploy_target_now(self, target_id):
+        """Run one target from the Deploy page, with no task attached."""
+        target = deploy.get_target(target_id)
+        if not target:
+            raise ValueError("No such deploy target.")
+        return deploy.run_target(target, trigger="manual", task=None, automatic=False)
+
+    def _deploy_sweep(self):
+        """One pass of the merge hook: the first merged task with enabled targets deploys.
+
+        This runs inside the #50 watcher rather than a second one, and needs no setting of its own:
+        an installation with no enabled target does nothing here.
+        """
+        for task in self.store.list():
+            candidate = self._deploy_candidate(task)
+            if not candidate:
+                continue
+            trigger, state, targets = candidate
+            try:
+                self._run_deploy(task["id"], targets, trigger=trigger, pr_state=state, automatic=True)
+            except Exception as exc:
+                self.redeploy_status = {"last_poll": now(), "error": str(exc)}
+            return  # one deployment per sweep, one at a time
+
     def _redeploy_loop(self):
         while self.redeploy_watcher:
             cfg = self.cfg()
@@ -1068,6 +1164,7 @@ class Manager:
                         self.redeploy_status = {"last_poll": now(), "error": None}
                 else:
                     self.redeploy_status = {"last_poll": now(), "error": None}
+                self._deploy_sweep()
             except Exception as e:
                 self.redeploy_status = {"last_poll": now(), "error": str(e)}
             self.emit("redeploy_status", self.redeploy_status)
