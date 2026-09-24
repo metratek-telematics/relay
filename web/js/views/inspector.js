@@ -1,6 +1,6 @@
 // Inspector tabs: overview, try it, history, timeline, changes, design, checks, review, repository, logs, sessions.
 import { $, $$, el, esc, icon, md, fmtTime, fmtDateTime, fmtDur, fmtNum, fmtCost, timeAgo, diffHtml, copyText, toast, confirm, prompt, debounce, basename } from "../ui.js";
-import { S, agentLabel, agentInitial, ROLE_LABEL, roleAgent, roleModelText, roleEffortText, statusOf, taskElapsed } from "../state.js";
+import { S, agentLabel, agentInitial, ROLE_LABEL, roleAgent, roleModelText, roleEffortText, roleAccountText, statusOf, taskElapsed } from "../state.js";
 import { api } from "../api.js";
 import { prStatus, prCached, PR_STATE, REVIEW_LABEL, checksDetail } from "../prstatus.js";
 import { packetHtml, blockedHtml } from "../packet.js";
@@ -130,7 +130,7 @@ export function mountInspector(container, getTask, opts = {}) {
         ${changeSetCard(t)}
         ${reposCard(t)}
         <div class="card"><div class="card-head"><h3>Team</h3><span class="row" style="gap:6px">${(t.triage || t.triage_hint) ? `<span class="badge ${(t.triage || t.triage_hint).mode === "solo" ? "green" : "purple"}" title="${esc((t.triage || t.triage_hint).why || "")}">${(t.triage || t.triage_hint).mode === "solo" ? "Solo" : "Team"}${t.triage ? "" : " (expected)"}</span>` : ""}<span class="badge outline">${esc(wf.preset || "custom")}</span></span></div><div class="card-body stack">
-          ${roles.map((role) => `<div class="row between"><span class="row"><span class="av sm ${esc(roleAgent(t, role))}">${esc(agentInitial(roleAgent(t, role)))}</span><strong>${esc(agentLabel(roleAgent(t, role)))}</strong><span class="muted">${esc(ROLE_LABEL[role])}</span></span><span class="mono muted">model: ${esc(roleModelText(t, role))} · effort: ${esc(roleEffortText(t, role))}</span></div>`).join("")}
+          ${roles.map((role) => `<div class="row between"><span class="row"><span class="av sm ${esc(roleAgent(t, role))}">${esc(agentInitial(roleAgent(t, role)))}</span><strong>${esc(agentLabel(roleAgent(t, role)))}</strong><span class="muted">${esc(ROLE_LABEL[role])}</span></span><span class="mono muted">model: ${esc(roleModelText(t, role))} · effort: ${esc(roleEffortText(t, role))}${roleAccountText(t, role) ? ` · account: ${esc(roleAccountText(t, role))}` : ""}</span></div>`).join("")}
           <div class="kv" style="margin-top:6px"><dt>Verification</dt><dd>${esc(wf.verify_mode || "each_report")}${(t.verify_commands || []).length ? ` · ${t.verify_commands.length} command(s)` : ""}</dd><dt>Approval gate</dt><dd>${wf.approval_before_delivery ? "before delivery" : "off"}</dd><dt>Agent questions</dt><dd>${wf.allow_agent_questions === false ? "disabled" : "allowed"}</dd><dt>Review rounds</dt><dd>${wf.max_review_rounds || "—"}</dd><dt>Team mode</dt><dd>${esc(wf.team_mode || "auto")}${t.triage ? ` → ${esc(t.triage.mode)} (${esc(t.triage.level)})` : ""}</dd></div>
         </div></div>
         ${autopilotCard(t)}

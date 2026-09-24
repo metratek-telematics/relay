@@ -305,8 +305,10 @@ export function prompt(title, body, { placeholder = "", value = "", okLabel = "O
       <div class="modal-actions"><button class="btn" data-close>Cancel</button><button class="btn primary" id="okBtn">${esc(okLabel)}</button></div>`,
       { onClose: () => resolve(null) });
     const input = $("#pInput", m.body);
-    $("#okBtn", m.body).onclick = () => { const v = input.value; m.close(); resolve(v); };
-    input.addEventListener("keydown", (e) => { if (e.key === "Enter" && (!multiline || e.ctrlKey || e.metaKey)) { e.preventDefault(); const v = input.value; m.close(); resolve(v); } });
+    // Resolve before closing: close() runs onClose, which would otherwise settle the promise with null first.
+    const done = () => { const v = input.value; resolve(v); m.close(); };
+    $("#okBtn", m.body).onclick = done;
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter" && (!multiline || e.ctrlKey || e.metaKey)) { e.preventDefault(); done(); } });
   });
 }
 
