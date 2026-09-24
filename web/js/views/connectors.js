@@ -1,16 +1,17 @@
 // Connectors: named ways for agents to look at the real environments behind the code
-// (HTTP APIs, PostgreSQL, logs, containers, the running app in a browser). See orchestrator/connectors.py.
+// (HTTP APIs, PostgreSQL, logs, containers, hosts over SSH, the running app in a browser). See orchestrator/connectors.py.
 import { $, $$, esc, icon, toast, modal, confirm, timeAgo, basename, skeleton } from "../ui.js";
 import { api } from "../api.js";
 
 const MASK = "●●●●";
-const TYPE_LABEL = { http: "HTTP API", postgres: "PostgreSQL", logs: "Logs", docker: "Docker", browser: "Browser" };
-const TYPE_ICON = { http: "globe", postgres: "layers", logs: "list", docker: "package", browser: "eye" };
+const TYPE_LABEL = { http: "HTTP API", postgres: "PostgreSQL", logs: "Logs", docker: "Docker", ssh: "SSH", browser: "Browser" };
+const TYPE_ICON = { http: "globe", postgres: "layers", logs: "list", docker: "package", ssh: "terminal", browser: "eye" };
 const TYPE_HELP = {
   http: "Agents call the API with relay-connect http. Relay adds the credentials; read access allows GET and HEAD only.",
   postgres: "Agents run SQL with relay-connect sql. Read access runs every statement in a read-only transaction with a timeout and a row limit. Use a database role with SELECT grants only as well.",
   logs: "Agents read recent log lines with relay-connect logs, from containers through the Docker socket or from Loki.",
   docker: "Agents check container state with relay-connect docker. Restarting needs write access and the restart switch.",
+  ssh: "Agents run one allow-listed command per call with relay-connect ssh. Chaining, pipes and redirection are refused; the key stays a file on this server and never reaches the agent.",
   browser: "Agents open the running app with relay-connect browser: navigation, screenshots and console errors. Relay performs the login steps; the password never leaves Relay.",
 };
 
@@ -54,6 +55,17 @@ const FIELDS = {
   docker: [
     ["containers", "Containers", "lines", "api\nworker", "Only these containers can be inspected."],
     ["allow_restart", "Allow restarting these containers (needs write access)", "bool"],
+  ],
+  ssh: [
+    ["host", "Host", "text", "10.0.0.2"], ["port", "Port", "number"], ["user", "User", "text", "deploy"],
+    ["key_path", "Private key path on this server", "text", "/root/.ssh/id_ed25519", "The key file Relay reads. Its contents are never stored here and never leave this server."],
+    ["known_hosts", "known_hosts file (optional)", "text", "/root/.ssh/known_hosts"],
+    ["strict_host_key", "Refuse an unknown host key", "bool"],
+    ["allowed_commands", "Allowed commands", "lines", "docker ps*\nuptime", "One glob pattern per line; * matches anything. A command matching none of them is refused."],
+    ["write_commands", "Commands that need write access", "lines", "docker compose up -d*", "Only a connector with write access may run these, and on production each one also needs --confirm-prod."],
+    ["allow_shell_operators", "Allow ; && || | > < in commands", "bool", "", "Off by default: with it off a command can never chain a second one or redirect its output."],
+    ["timeout", "Timeout (seconds)", "number"],
+    ["workdir", "Working directory (optional)", "text", "/opt/stack"],
   ],
   browser: [
     ["base_url", "Base URL", "text", "http://web.internal:3000"],

@@ -17,6 +17,21 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **SSH connectors** (`orchestrator/connectors.py`, `tools/bin/relay-connect`, `web/js/views/connectors.js`).
+  A sixth connector type puts a host itself behind the same window as an API or a database: an agent asks
+  `relay-connect ssh <name> "docker ps"` and Relay runs it, so it can answer what is really running on a machine
+  and whether it matches the compose file without a person opening a terminal. The key never leaves this server:
+  the connector stores a path to a key file on the Relay host, never key material, and the agent never sees either.
+  Before anything is sent, a command must be a single command — chaining, pipes and redirection (`;` `&&` `||` `|`
+  `>` `<` backticks `$(` and newlines) are refused unless the connector deliberately allows shell operators — and it
+  must match a glob pattern the connector allows; patterns listed as write commands need a connector with write
+  access, and on production each one also needs `--confirm-prod`, as everywhere else. New connectors start with a
+  read-only inspection allowlist (`docker ps*`, `docker inspect*`, `docker logs*`, `docker compose config*`, `cat *`,
+  `tail *`, `df*`, `systemctl status*`, `git -C * status*` and the like) and no write commands at all. The command
+  travels to `ssh -o BatchMode=yes` as one argument and never through a local shell; output is truncated, masked and
+  recorded on the task like every other connector call, and Test proves the connection by printing the remote
+  hostname and uptime, nothing more.
+
 - **Personal settings, on top of the organisation's** (`orchestrator/personal.py`, `orchestrator/org/identity.py`,
   `orchestrator/manager.py`, `web/js/views/settings.js`). Each person can keep their own default team and workflow
   — agent, model and effort per role, team mode, turn budget, review rounds, verification, the approval gate,
