@@ -680,38 +680,48 @@ class Autopilot:
         return {"ok": True, "state": "running", "label": "Running", "until": None}
 
     # ------------------------------------------------------------ limits
-    def _account(self, agent: str) -> dict:
+    def _account(self, agent: str, account_id: str = "default") -> dict:
         if self._account_fn:
-            return self._account_fn(agent)
-        hit = self._acc_cache.get(agent)
+            try:
+                return self._account_fn(agent, account_id)
+            except TypeError:  # tests may replace this with a one-argument function
+                return self._account_fn(agent)
+        key = self._acc_key(agent, account_id)
+        hit = self._acc_cache.get(key)
         if hit:
             if time.time() - hit[0] > 120:
                 # Reading an account runs CLIs; the scheduler keeps the last reading and refreshes in the background.
-                self._refresh_async(agent)
+                self._refresh_async(agent, account_id)
             return hit[1]
-        return self.refresh_account(agent)
+        return self.refresh_account(agent, account_id=account_id)
 
-    def refresh_account(self, agent: str, force: bool = False) -> dict:
+    @staticmethod
+    def _acc_key(agent: str, account_id: str = "default") -> str:
+        return agent if account_id in ("", "default", None) else f"{agent}@{account_id}"
+
+    def refresh_account(self, agent: str, force: bool = False, account_id: str = "default") -> dict:
         from . import agent_info
         try:
-            acc = agent_info.account(agent, self.m.cfg(), None, refresh=force)
+            with agent_info.bind(agent, account_id):
+                acc = agent_info.account(agent, self.m.cfg(), None, refresh=force)
         except Exception as e:  # an unreadable account never blocks a task
             acc = {"error": str(e)}
-        self._acc_cache[agent] = (time.time(), acc)
+        self._acc_cache[self._acc_key(agent, account_id)] = (time.time(), acc)
         return acc
 
-    def _refresh_async(self, agent: str):
+    def _refresh_async(self, agent: str, account_id: str = "default"):
+        key = (agent, account_id)
         with self._acc_lock:
-            if agent in self._refreshing:
+            if key in self._refreshing:
                 return
-            self._refreshing.add(agent)
+            self._refreshing.add(key)
 
         def run():
             try:
-                self.refresh_account(agent)
+                self.refresh_account(agent, account_id=account_id)
             finally:
                 with self._acc_lock:
-                    self._refreshing.discard(agent)
+                    self._refreshing.discard(key)
         threading.Thread(target=run, daemon=True).start()
 
     def refresh_limits(self) -> list[dict]:
@@ -719,8 +729,10 @@ class Autopilot:
         from . import agents
         agents.invalidate_health()
         rows = self.m.store.list()
+        from . import accounts
         for a in {r.get("agent") for t in rows for r in ((t.get("workflow") or {}).get("roles") or {}).values() if (r or {}).get("agent")}:
-            self.refresh_account(a, force=True)
+            for acc in (accounts.rows(a, self.m.cfg()) if accounts.multiple(a) else [{"id": "default"}]):
+                self.refresh_account(a, force=True, account_id=acc["id"])
         return self.limits_snapshot(rows)
 
     def _health(self, agent: str) -> dict | None:
@@ -756,14 +768,55 @@ class Autopilot:
             return False
         return any(r.get("id") == model and (r.get("free") or r.get("included")) for r in rows)
 
+    def account_state(self, agent: str, account_id: str = "default", model: str = "", role: str = "",
+                      free: bool | None = None, reading: dict | None = None) -> dict:
+        """Can this one account of the agent take a turn now?
+
+        reading: an account reading already in hand (the Agents page passes its cached one, so drawing
+        the page never starts a CLI); without it the scheduler's own cached reading is used."""
+        from . import accounts
+        s = self.settings()
+        model = self.resolve_model(role, agent, model) if role else model
+        if free is None:
+            free = self.model_is_free(agent, model)
+        st = limit_state(agent, model, reading if reading is not None else self._account(agent, account_id), self._health(agent),
+                         float(s.get("limit_threshold_percent") or 90), time.time(), free=free)
+        if account_id != accounts.DEFAULT_ID:
+            row = accounts.get(agent, account_id, self.m.cfg()) or {}
+            name = row.get("name") or account_id
+            if not row.get("enabled", True):
+                return {"ok": False, "reason": f"{name} is paused", "resets_at": None, "kind": "unavailable", "account": account_id}
+            if not row.get("signed_in"):
+                return {"ok": False, "reason": f"{name} is not signed in", "resets_at": None, "kind": "unavailable", "account": account_id}
+            if not st.get("ok") and st.get("reason"):
+                st = {**st, "reason": f"{name}: {st['reason']}"}
+        return {**st, "account": account_id}
+
     def agent_state(self, agent: str, model: str = "", role: str = "", provider: str = "", project: str | None = None) -> dict:
+        from . import accounts
         s = self.settings()
         if provider == "openrouter":
             return self.openrouter_state(agent, model, role, project)
         model = self.resolve_model(role, agent, model) if role else model
         free = self.model_is_free(agent, model)
-        return limit_state(agent, model, self._account(agent), self._health(agent),
-                           float(s.get("limit_threshold_percent") or 90), time.time(), free=free)
+        if not accounts.multiple(agent):
+            # One account, as every installation starts: the reading and the answer are exactly what they were.
+            return limit_state(agent, model, self._account(agent), self._health(agent),
+                               float(s.get("limit_threshold_percent") or 90), time.time(), free=free)
+        # Several accounts: the agent can run while any enabled, signed-in account still has capacity.
+        rows = accounts.rows(agent, self.m.cfg())
+        pick = accounts.choose(rows, lambda aid: self.account_state(agent, aid, model, role, free))
+        if pick["account"]:
+            return {**(pick["state"] or {"ok": True, "reason": "", "resets_at": None, "kind": ""}),
+                    "account": pick["account"]["id"]}
+        blocked = [self.account_state(agent, r["id"], model, role, free) for r in rows if r.get("enabled")]
+        limits = [b for b in blocked if b.get("resets_at")]
+        # A wait only ends when an account comes back, so the earliest reset decides — and only when
+        # every blocked account has one; anything else (paused, signed out) never clears on its own.
+        soonest = min(limits, key=lambda b: b["resets_at"]) if limits and len(limits) == len(blocked) else None
+        first = soonest or (blocked[0] if blocked else {})
+        return {"ok": False, "reason": pick["reason"], "resets_at": (soonest or {}).get("resets_at"),
+                "kind": first.get("kind") or "limit", "account": None}
 
     def openrouter_state(self, agent: str, model: str, role: str = "", project: str | None = None) -> dict:
         """A role on OpenRouter: the CLI must be installed (its own sign-in does not matter), OpenRouter must have a key,

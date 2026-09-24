@@ -45,6 +45,11 @@ export const api = {
   agentJobs: () => get("/api/agents/jobs"),
   agentModels: (name, refresh) => get(`/api/agents/${name}/models${refresh ? "?refresh=1" : ""}`),
   agentAccount: (name, refresh) => get(`/api/agents/${name}/account${refresh ? "?refresh=1" : ""}`),
+  // Several sign-ins per CLI: their plan, limits and state, and adding, pausing or removing one.
+  agentAccounts: (refresh, agent) => get(`/api/agents/accounts?${refresh ? "refresh=1" : ""}${agent ? `&agent=${encodeURIComponent(agent)}` : ""}`),
+  addAgentAccount: (name, label) => post(`/api/agents/${name}/accounts`, { name: label }),
+  updateAgentAccount: (name, id, patch) => post(`/api/agents/${name}/accounts/${encodeURIComponent(id)}`, patch),
+  removeAgentAccount: (name, id) => del(`/api/agents/${name}/accounts/${encodeURIComponent(id)}`),
   openrouterModels: (refresh) => get(`/api/openrouter/models${refresh ? "?refresh=1" : ""}`),
   openrouterAccount: (refresh) => get(`/api/openrouter/account${refresh ? "?refresh=1" : ""}`),
   openrouterSettings: () => get("/api/org/providers/openrouter"),

@@ -29,6 +29,7 @@ import subprocess
 import threading
 import time
 import urllib.request
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -58,16 +59,48 @@ PROVIDER_ALIAS = {"cline": {"google": "gemini"}}
 _account_cache: dict[str, tuple[float, dict]] = {}
 _status_cache: dict[str, tuple[float, dict]] = {}
 _catalog_lock = threading.Lock()
+# Which account's config folder this thread reads (orchestrator/accounts.py). Unset means the default
+# account, which is Relay's own home folder: exactly what every reading used before accounts existed.
+_bound = threading.local()
+
+
+@contextmanager
+def bind(agent: str, account_id: str):
+    """Read one account of an agent: its folder stands in for HOME while this block runs, and every
+    cache key is that account's own, so two accounts never read each other's plan or limits."""
+    from . import accounts
+    prev = (getattr(_bound, "id", None), getattr(_bound, "env", None))
+    aid = account_id or accounts.DEFAULT_ID
+    _bound.id, _bound.env = aid, accounts.env_for(agent, aid)
+    try:
+        yield
+    finally:
+        _bound.id, _bound.env = prev
+
+
+def bound_id() -> str:
+    return getattr(_bound, "id", None) or "default"
+
+
+def _key(name: str) -> str:
+    """Cache key of the account being read; the default account keeps the plain agent name it always had."""
+    aid = bound_id()
+    return name if aid == "default" else f"{name}@{aid}"
 
 
 # ----------------------------------------------------------------------------- helpers
 def _home(env: dict | None = None) -> Path:
+    if env is None:
+        overlay = getattr(_bound, "env", None) or {}
+        if overlay.get("HOME"):
+            return Path(overlay["HOME"])
     return Path((env or os.environ).get("HOME") or Path.home())
 
 
 def _env(name: str, cfg: dict) -> dict:
     from .agents import adapter
     env = adapter(name).env(cfg)
+    env.update(getattr(_bound, "env", None) or {})
     # Never wait for a login prompt or open a browser from a web request.
     env.update({"CI": "1", "NO_BROWSER": "1", "NO_OPEN_BROWSER": "1", "BROWSER": "true", "TERM": "dumb",
                 "NO_COLOR": "1", "FORCE_COLOR": "0", "GIT_TERMINAL_PROMPT": "0"})
@@ -317,8 +350,15 @@ def _claude_status(cfg) -> dict:
 
 
 def _claude_rate_limits() -> dict | None:
-    """The newest rate_limit_event Claude Code streamed in any task: utilization and reset per window."""
+    """The newest rate_limit_event Claude Code streamed in any task: utilization and reset per window.
+
+    A run notes which account took its turns (accounts.mark_run), so a reading only counts for the
+    account it was measured on; runs from before accounts existed all used the default one."""
+    from . import accounts
+    want = bound_id()
     for log in _raw_logs():
+        if accounts.run_account(log.parent, "claude") != want:
+            continue
         text = _tail(log)
         idx = text.rfind('"rate_limit_event"')
         if idx < 0:
@@ -335,7 +375,7 @@ def _claude_rate_limits() -> dict | None:
 
 
 def _claude_models(cfg, refresh=False) -> dict:
-    status = _cached_status("claude", lambda: _claude_status(cfg), refresh)
+    status = _cached_status(_key("claude"), lambda: _claude_status(cfg), refresh)
     sub = status.get("authMethod") == "claude.ai" or bool(status.get("subscriptionType"))
     rows = _catalog_rows(["anthropic"], "{id}", keep=lambda mid: mid.startswith("claude-") and not re.search(r"-\d{8}$", mid))
     for alias in ("fable", "opus", "sonnet", "haiku"):
@@ -353,7 +393,7 @@ def _claude_models(cfg, refresh=False) -> dict:
 
 
 def _claude_account(cfg, out, refresh=False):
-    status = _cached_status("claude", lambda: _claude_status(cfg), refresh)
+    status = _cached_status(_key("claude"), lambda: _claude_status(cfg), refresh)
     if status.get("loggedIn"):
         method = {"claude.ai": "Claude account", "console": "Anthropic Console", "apiKey": "API key"}.get(status.get("authMethod"), status.get("authMethod") or "")
         out["plan"] = [p for p in (
@@ -391,7 +431,7 @@ def _codex_home(env) -> Path:
 
 
 def _codex_chatgpt(cfg, refresh=False) -> bool | None:
-    text = _cached_status("codex", lambda: {"text": _run("codex", ["login", "status"], cfg, timeout=20)}, refresh).get("text", "")
+    text = _cached_status(_key("codex"), lambda: {"text": _run("codex", ["login", "status"], cfg, timeout=20)}, refresh).get("text", "")
     if "ChatGPT" in text:
         return True
     return False if re.search(r"API key", text, re.I) else None
@@ -447,7 +487,7 @@ def _codex_rate_limits(env) -> dict | None:
 
 def _codex_account(cfg, out, refresh=False):
     chatgpt = _codex_chatgpt(cfg, refresh)
-    status_text = _cached_status("codex", lambda: {"text": _run("codex", ["login", "status"], cfg, timeout=20)}, refresh).get("text", "")
+    status_text = _cached_status(_key("codex"), lambda: {"text": _run("codex", ["login", "status"], cfg, timeout=20)}, refresh).get("text", "")
     if re.search(r"not logged in", status_text, re.I):
         out["plan"].append({"label": "Status", "value": "Not signed in"})
     rl = _codex_rate_limits(_env("codex", cfg))
@@ -515,7 +555,7 @@ def _copilot_models(cfg, refresh=False) -> dict:
     token = _gh_token(cfg)
     if not token:
         return {"source": "settings", "error": "GitHub Copilot is not signed in, so its model list is unavailable."}
-    user = _cached_status("copilot-user", lambda: _copilot_user(cfg), refresh)
+    user = _cached_status(_key("copilot-user"), lambda: _copilot_user(cfg), refresh)
     api = ((user.get("endpoints") or {}).get("api")) or "https://api.githubcopilot.com"
     data, at = _cached("copilot-models", MODELS_TTL, lambda: _http_json(
         f"{api}/models", {"Authorization": f"Bearer {token}", "Copilot-Integration-Id": "copilot-developer-cli",
@@ -850,10 +890,19 @@ def _pack_account(name, cfg, out, refresh=False):
 ACCOUNT = {"claude": _claude_account, "codex": _codex_account, "copilot": _copilot_account, "gemini": _gemini_account}
 
 
-def account(name: str, cfg: dict, tasks: list[dict] | None = None, refresh: bool = False) -> dict:
-    hit = _account_cache.get(name)
+def account(name: str, cfg: dict, tasks: list[dict] | None = None, refresh: bool = False,
+            cached_only: bool = False) -> dict:
+    """Plan, limits and usage of one agent — of the account bound with bind(), when one is.
+
+    cached_only: never run a CLI; return the last reading, or one that says plainly it is not known
+    yet (the Agents page loads this way, so opening it never waits on a CLI)."""
+    key = _key(name)
+    hit = _account_cache.get(key)
     if hit and not refresh and time.time() - hit[0] < ACCOUNT_TTL:
         out = dict(hit[1])
+    elif cached_only:
+        out = dict(hit[1]) if hit else {"agent": name, "plan": [], "windows": [], "usage": [],
+                                        "notes": ["Not read yet: use Check limits to ask the CLI."], "unread": True}
     else:
         spec = C.AGENTS.get(name) or {}
         out = {"agent": name, "plan": [], "windows": [], "usage": [], "notes": []}
@@ -871,8 +920,9 @@ def account(name: str, cfg: dict, tasks: list[dict] | None = None, refresh: bool
             if not (out["plan"] or out["windows"] or out["usage"] or out["notes"]):
                 out["notes"].append(f"{spec.get('label', name)} does not report plan, balance or quota through its CLI.")
         out["fetched"] = time.time()
-        _account_cache[name] = (out["fetched"], out)
+        _account_cache[key] = (out["fetched"], out)
         out = dict(out)
+    out["account_id"] = bound_id()
     # Relay's own records change with every turn and are cheap to count, so they are never cached.
     out["relay"] = relay_usage(name, tasks)
     out["profile"] = out["plan"]  # older pages read `profile`

@@ -294,6 +294,45 @@ class Runner:
             raise TurnTimeout(f"{label or role} exceeded the {int(timeout // 60)} minute turn timeout")
         return rc, time.time() - started
 
+    # ------------------------------------------------------------------ accounts
+    def _choose_account(self, role, agent_name, cfg, session, model):
+        """Which sign-in of this CLI runs the turn (orchestrator/accounts.py).
+
+        None when the CLI has the single account every installation starts with, or when no account
+        can run: the turn then goes exactly where it went before, and the queue's own limit handling
+        (wait, fallback agent, OpenRouter) decides what happens next.
+        """
+        from . import accounts
+        try:
+            if not (accounts.supports(agent_name) and accounts.multiple(agent_name)):
+                return None
+            rows = accounts.rows(agent_name, cfg)
+            auto = getattr(self.m, "autopilot", None)
+
+            def state_of(aid):
+                if auto is None:
+                    return {"ok": True}
+                try:
+                    return auto.account_state(agent_name, aid, model, role)
+                except Exception:
+                    return {"ok": True}
+            on = (session or {}).get("account") or ""
+            pick = accounts.choose(rows, state_of, on)
+            row = pick["account"]
+            if not row:
+                self.timeline(role, f"No {agent_name} account has capacity", pick["reason"])
+                return None
+            switched = bool(on and row["id"] != on and int((session or {}).get("turns") or 0) > 0)
+            if switched:
+                # A CLI session id only exists inside the config folder that created it, so moving to
+                # another account starts that role's conversation again on the new sign-in.
+                self.timeline(role, f"Switched to the {row['name']} account", pick["reason"] or "the previous account has no capacity left")
+            return {"id": row["id"], "name": row["name"], "env": accounts.env_for(agent_name, row["id"]),
+                    "reset_session": switched, "skipped": pick["skipped"]}
+        except Exception as e:
+            self.rawlog(f"choosing an account for {agent_name}: {e}", "system")
+            return None
+
     # ------------------------------------------------------------------ agent turn
     def run_agent(self, role, agent_name, prompt, cwd, cfg, model, session, run_dir, label="", turn=None, effort="") -> dict:
         holder: dict = {}
@@ -323,7 +362,19 @@ class Runner:
             orp = self._openrouter_begin(role, agent_name, model, cfg, run_dir, session, ad)
             holder.update(orp=orp, t0=time.time())
             cfg, model = orp.cfg, orp.model_arg
+        # Which sign-in of this CLI takes the turn (orchestrator/accounts.py). With one account — what
+        # every installation starts with — this is None and nothing below changes.
+        from . import accounts
+        acct = None if orp is not None else self._choose_account(role, agent_name, cfg, session, model)
+        if acct and acct.get("reset_session"):
+            session = {k: v for k, v in (session or {}).items() if k in ("agent", "provider", "transcript")}
+            session["turns"] = 0
         args, env, stdin_text, session = ad.build(sent_prompt, Path(cwd), cfg, model, session, Path(run_dir), role, effort=effort or "")
+        if acct:
+            env.update(acct["env"])
+            session["account"] = acct["id"]
+            # Beside the run's raw log, so a limit reading scraped from it later belongs to this account.
+            accounts.mark_run(run_dir, agent_name, acct["id"])
         if orp is not None:
             args = orp.apply(env, args)
         _with_repo_env(env, cwd, override=False)
@@ -422,7 +473,11 @@ class Runner:
 
         timeout = float(cfg.get("agent_turn_timeout_minutes") or 0) * 60 or None
         self.m.turn_started(self.tid, role, agent_name, label, turn)
-        rc, elapsed = self._spawn(args, cwd, env, stdin_text, on_line, timeout, role, agent_name, label)
+        if acct:
+            with accounts.hold(agent_name, acct["id"]):
+                rc, elapsed = self._spawn(args, cwd, env, stdin_text, on_line, timeout, role, agent_name, label)
+        else:
+            rc, elapsed = self._spawn(args, cwd, env, stdin_text, on_line, timeout, role, agent_name, label)
         flush_delta(final=delta_msg["buf"]) if delta_msg["id"] else None
         res = ad.finalize(ctx, rc, Path(run_dir), session)
         or_info = None
@@ -439,7 +494,8 @@ class Runner:
                           "turns": int(session.get("turns", 0)) + 1, "agent": agent_name,
                           # What this turn actually ran on, so the task shows the truth rather than re-deriving
                           # the settings: blank model means the CLI's own default was left in place.
-                          "model": model or "", "effort": effort or ""}
+                          "model": model or "", "effort": effort or "",
+                          **({"account": acct["id"], "account_name": acct["name"]} if acct else {})}
         if or_info is not None:
             res["session"]["provider"] = "openrouter"
             if or_info.get("auto"):

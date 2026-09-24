@@ -3,6 +3,7 @@ import { $, $$, esc, icon, toast, modal, confirm, copyText, menu, fmtNum, fmtCos
 import { S, agentLabel, agentInitial, agentIds } from "../state.js";
 import { api } from "../api.js";
 import { openRouterCard, bindOpenRouterCard, openOpenRouterBrowser, orSupported } from "./openrouter.js";
+import { accountsCard, bindAccountsCard } from "./accounts.js";
 
 const isPack = (a) => !!(S.agentMeta[a] || {}).install;
 
@@ -227,11 +228,13 @@ export function mountAgents(main) {
   const tests = {};
   let jobs = {};
   let poll = null;
+  let accounts = null;   // sign-ins per CLI, their plans and limits (views/accounts.js)
   async function render(force = false) {
     let h;
     try {
-      const [a, j] = await Promise.all([api.agents(force), api.agentJobs().catch(() => ({}))]);
-      h = a.health; S.agents = h; jobs = j || {};
+      const [a, j, acc] = await Promise.all([api.agents(force), api.agentJobs().catch(() => ({})),
+                                            api.agentAccounts(false).catch(() => null)]);
+      h = a.health; S.agents = h; jobs = j || {}; accounts = acc;
     } catch (e) { $("#agentsPage", main).innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
     if (!alive) return;
     for (const k of Object.keys(tests)) if (h[k]) h[k].test = tests[k];
@@ -252,6 +255,7 @@ export function mountAgents(main) {
           <div class="card"><div class="card-head"><h3>Agent pack <span class="muted" style="font-weight:500">· ${installed} of ${pack.length} installed</span></h3>
             <button class="btn sm" id="installAll" ${missing.length ? "" : "disabled"}>${icon(anyRunning ? "spinner" : "download", anyRunning ? "spin" : "")}${missing.length ? `Install all (${missing.length})` : "All installed"}</button></div>
             <div class="card-body agent-health">${pack.map((a) => agentHealthRow(a, h[a], { job: jobs[a] })).join("")}</div></div>
+          ${accountsCard(accounts)}
           <div class="card"><div class="card-head"><h3>Tooling</h3></div><div class="card-body agent-health">
             <div class="ah"><span class="av lg git">G</span><div class="who"><strong>Git</strong><span>${esc(h.git?.path || "not found")}</span></div><span class="badge ${h.git?.ok ? "green" : "red"}">${h.git?.ok ? "ready" : "missing"}</span></div>
             <div class="ah"><span class="av lg github">GH</span><div class="who"><strong>GitHub CLI</strong><span>${esc(h.gh?.path || "not found")}${S.github?.login ? ` · signed in as @${esc(S.github.login)}` : ""}</span>${S.github?.error ? `<span class="err">${esc(S.github.error)}</span>` : ""}</div><span class="badge ${h.gh?.ok ? "green" : "amber"}">${h.gh?.ok ? "ready" : "optional"}</span></div>
@@ -277,6 +281,7 @@ export function mountAgents(main) {
       </div>`;
     $("#recheck", main).onclick = () => render(true);
     bindOpenRouterCard(main);
+    if (accounts) bindAccountsCard(main, accounts, () => render(true));
     $$("[data-test]", main).forEach((b) => (b.onclick = () => runTest(b.dataset.test)));
     $$("[data-install]", main).forEach((b) => (b.onclick = () => runJob(b.dataset.install, "install")));
     $$("[data-signin]", main).forEach((b) => (b.onclick = () => openSignIn(b.dataset.signin)));

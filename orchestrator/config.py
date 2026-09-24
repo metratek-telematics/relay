@@ -365,6 +365,11 @@ DEFAULTS = {
     "redeploy_trigger": "pr_merged",    # pr_merged | delivered
     "redeploy_timeout_minutes": 10,
     "redeploy_poll_seconds": 120,
+    # The merge watcher (#60): notice merges made anywhere, not only on pull requests Relay opened.
+    # It polls only repositories that have an enabled, automatic deploy target, so an installation
+    # that enabled nothing makes no GitHub calls at all.
+    "merge_watch_enabled": True,
+    "merge_poll_seconds": 180,
     # learning: scorecards, retrospectives, lessons (orchestrator/learning.py)
     "retro_enabled": True,             # one short agent turn after each task ends, proposing lessons for review
     "retro_agent": "",                 # "" = the task's supervisor agent

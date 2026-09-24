@@ -63,6 +63,22 @@ function deployPill(t) {
   return `<span class="meta-fact redeploy-fact tone-${esc(DP_TONE[st] || "none")}" title="${esc(tip)}">${icon(DP_ICON[st] || "info", st === "running" ? "sm spin" : "sm")}<span>${esc(word)}</span><span class="redeploy-detail muted">${esc(detail)}</span></span>`;
 }
 
+// The deploy record (orchestrator/deploy.py): the per-repository recipes that ran after the merge,
+// shown beside the redeploy pill with one line per target.
+const DP_TONE = { succeeded: "green", failed: "red", running: "amber", blocked: "amber", manual: "none", skipped: "none" };
+const DP_ICON = { succeeded: "check", failed: "alert", running: "spinner", blocked: "alert", manual: "info", skipped: "info" };
+function deployPill(t) {
+  const dp = t.deploy;
+  if (!dp) return "";
+  const st = String(dp.status || "");
+  const targets = dp.targets || [];
+  const ran = targets.filter((x) => x.status !== "skipped");
+  const when = dp.finished_at || dp.started_at;
+  const detail = `${ran.length || targets.length} target${(ran.length || targets.length) === 1 ? "" : "s"}${when ? ` · ${timeAgo(when)}` : ""}`;
+  const tip = targets.map((x) => `${x.target}: ${x.status}${x.detail ? ` — ${x.detail}` : ""}`).join("\n");
+  return `<span class="meta-fact redeploy-fact tone-${esc(DP_TONE[st] || "none")}" title="${esc(tip)}">${icon(DP_ICON[st] || "info", st === "running" ? "sm spin" : "sm")}<span>Deploy ${esc(st || "unknown")}</span><span class="redeploy-detail muted">${esc(detail)}</span></span>`;
+}
+
 export function mountTask(main, id) {
   const getTask = () => S.tasks.get(id);
   let t = getTask();
