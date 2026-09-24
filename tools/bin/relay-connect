@@ -11,6 +11,7 @@ RELAY_CONNECT_URL and RELAY_CONNECT_TOKEN, which Relay exports for the task's ag
   relay-connect sql <name> "select …" [--limit 50] [--write] [--confirm-prod]
   relay-connect logs <name> [--container c] [--since 10m] [--tail 200] [--grep error]
   relay-connect docker <name> status|inspect|restart [--container c] [--confirm-prod]
+  relay-connect ssh <name> "<command>" [--confirm-prod]     one allow-listed command, no chaining, pipes or redirection
   relay-connect browser <name> [--goto /path] [--screenshot out.png] [--click sel] [--fill 'sel=value']
                               [--text sel] [--width 1440] [--height 900] [--theme light|dark] [--wait ms] [--no-login]
 
@@ -77,6 +78,9 @@ def main():
     d.add_argument("name"); d.add_argument("action", choices=["status", "inspect", "restart"])
     d.add_argument("--container"); d.add_argument("--confirm-prod", action="store_true")
 
+    sh = sub.add_parser("ssh")
+    sh.add_argument("name"); sh.add_argument("command"); sh.add_argument("--confirm-prod", action="store_true")
+
     b = sub.add_parser("browser")
     b.add_argument("name"); b.add_argument("--goto", default="/"); b.add_argument("--screenshot")
     b.add_argument("--click", action="append", default=[]); b.add_argument("--fill", action="append", default=[])
@@ -122,6 +126,8 @@ def main():
         payload = {"container": a.container, "since": a.since, "tail": a.tail, "grep": a.grep}
     elif a.cmd == "docker":
         payload = {"action": a.action, "container": a.container, "confirm_prod": a.confirm_prod}
+    elif a.cmd == "ssh":
+        payload = {"command": a.command, "confirm_prod": a.confirm_prod}
     elif a.cmd == "browser":
         actions = [{"action": "click", "selector": s} for s in a.click]
         for f in a.fill:

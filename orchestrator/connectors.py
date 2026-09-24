@@ -1,8 +1,8 @@
 """Connectors: named, typed windows onto the real environments behind the code.
 
 Agents only see a repository. A connector lets them look at (and, when allowed, change) the service
-the code talks to: an HTTP API, a PostgreSQL database, container logs, container state, or the running
-web app in a headless browser. Definitions and their credentials live in DATA_DIR/connectors.json.
+the code talks to: an HTTP API, a PostgreSQL database, container logs, container state, a host over SSH,
+or the running web app in a headless browser. Definitions and their credentials live in DATA_DIR/connectors.json.
 
 The agent never receives a credential. For a task Relay issues a short-lived token scoped to the
 connectors that task may use and exports RELAY_CONNECT_URL + RELAY_CONNECT_TOKEN; the `relay-connect`
@@ -10,7 +10,8 @@ CLI sends each call to /api/connect/<name>/<op>, Relay performs it server side, 
 rules, masks secrets, truncates output and records the call in the task.
 
 Access rules
-  * access "read" (default): only safe operations (GET/HEAD, read-only SQL, logs, status, navigation).
+  * access "read" (default): only safe operations (GET/HEAD, read-only SQL, logs, status, navigation,
+    SSH commands on the connector's read allowlist).
   * access "write": also unsafe operations, still limited by the connector's own allowlists.
   * prod: a write connector must be explicitly write-enabled with a confirmation when saved, and every
     write call must carry confirm_prod. Prod connectors are never in a task's default scope.
@@ -25,6 +26,7 @@ import os
 import posixpath
 import re
 import secrets as _secrets
+import shlex
 import shutil
 import socket
 import ssl
@@ -41,7 +43,7 @@ from .util import APP_DIR, DATA_DIR, now, read_json, write_json
 PATH = DATA_DIR / "connectors.json"
 CALLS = DATA_DIR / "connector_calls.jsonl"
 MASK = "●●●●"
-TYPES = ("http", "postgres", "logs", "docker", "browser")
+TYPES = ("http", "postgres", "logs", "docker", "ssh", "browser")
 ENVIRONMENTS = ("dev", "staging", "prod")
 BIN_DIR = APP_DIR / "tools" / "bin"
 _NAME = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,62}$")
@@ -52,8 +54,15 @@ SECRET_KEYS = {
     "postgres": ("password",),
     "logs": ("loki_token", "loki_password"),
     "docker": (),
+    "ssh": (),  # the key stays a path on the Relay host: no key material is ever stored here
     "browser": ("password",),
 }
+# Useful and safe out of the box: inspection only. Writes go in write_commands, which starts empty.
+SSH_READ_COMMANDS = ("docker ps*", "docker images*", "docker inspect*", "docker logs*", "docker compose config*",
+                     "cat *", "head *", "tail *", "ls *", "df*", "free*", "uptime", "systemctl status*",
+                     "git -C * status*", "git -C * log*")
+# Anything that could chain a second command onto an allowed one, or redirect its output.
+SSH_OPERATORS = (";", "&&", "||", "|", ">", "<", "`", "$(", "&", "\n", "\r")
 DEFAULTS = {
     "http": {"base_url": "", "auth_type": "none", "auth_token": "", "auth_user": "", "auth_password": "", "auth_header": "",
              "auth_value": "", "headers": [], "allowed_methods": ["GET", "HEAD"], "path_allowlist": [], "health_path": "/",
@@ -63,6 +72,9 @@ DEFAULTS = {
     "logs": {"source": "docker", "containers": [], "loki_url": "", "loki_query": "", "loki_token": "", "loki_user": "",
              "loki_password": "", "max_lines": 500},
     "docker": {"containers": [], "allow_restart": False},
+    "ssh": {"host": "", "port": 22, "user": "", "key_path": "", "known_hosts": "", "strict_host_key": True,
+            "allowed_commands": list(SSH_READ_COMMANDS), "write_commands": [], "allow_shell_operators": False,
+            "timeout": 30, "workdir": ""},
     "browser": {"base_url": "", "username": "", "password": "", "login_steps": "", "width": 1440, "height": 900},
 }
 MAX_OUTPUT = 16000
@@ -160,6 +172,19 @@ def _clean_config(ctype: str, incoming: dict, old: dict) -> dict:
     elif ctype == "docker":
         cfg["containers"] = _list(cfg["containers"])
         cfg["allow_restart"] = bool(cfg["allow_restart"])
+    elif ctype == "ssh":
+        for k in ("host", "user", "key_path", "known_hosts", "workdir"):
+            cfg[k] = str(cfg[k] or "").strip()
+        if cfg["host"] and not re.match(r"^[A-Za-z0-9._:\[\]-]+$", cfg["host"]):
+            raise ValueError("Host must be a hostname or an IP address")
+        if cfg["user"] and not re.match(r"^[A-Za-z0-9._-]+$", cfg["user"]):
+            raise ValueError("User must be a plain user name")
+        cfg["port"] = max(1, min(65535, int(cfg["port"] or 22)))
+        cfg["strict_host_key"] = bool(cfg["strict_host_key"])
+        cfg["allow_shell_operators"] = bool(cfg["allow_shell_operators"])
+        cfg["allowed_commands"] = _list(cfg["allowed_commands"])
+        cfg["write_commands"] = _list(cfg["write_commands"])
+        cfg["timeout"] = max(1, min(300, int(cfg["timeout"] or 30)))
     elif ctype == "browser":
         cfg["base_url"] = str(cfg["base_url"]).strip().rstrip("/")
         if cfg["base_url"] and not re.match(r"^https?://[^/\s]+", cfg["base_url"]):
@@ -251,6 +276,8 @@ def target(c: dict) -> str:
             else "containers " + ", ".join(cfg.get("containers") or [])
     if t == "docker":
         return "containers " + ", ".join(cfg.get("containers") or [])
+    if t == "ssh":
+        return f"{cfg.get('user') or '?'}@{cfg.get('host') or '?'}" + (f":{cfg.get('port')}" if int(cfg.get("port") or 22) != 22 else "")
     return ""
 
 
@@ -853,6 +880,79 @@ def docker_call(c: dict, action: str, container: str | None, confirm_prod: bool 
     raise Refused(f"Unknown docker action {action}: use status, inspect or restart")
 
 
+# ============================================================================ ssh
+def _ssh_normalise(command: str) -> str:
+    return re.sub(r"\s+", " ", str(command or "").strip())
+
+
+def _ssh_matches(command: str, patterns: list[str]) -> bool:
+    return any(fnmatch.fnmatchcase(command, _ssh_normalise(p)) for p in patterns or [])
+
+
+def check_ssh(c: dict, command: str, confirm_prod: bool = False) -> str:
+    """Refuse anything but one allow-listed command. Nothing is sent to the host until this returns."""
+    cfg = c["config"]
+    raw = str(command or "")
+    cmd = _ssh_normalise(raw)
+    if not cmd:
+        raise Refused("Empty command")
+    if not cfg.get("allow_shell_operators"):
+        found = next((op for op in SSH_OPERATORS if op in raw), "")
+        if found:
+            shown = "a newline" if found in ("\n", "\r") else f"`{found}`"
+            raise Refused(f"Refused: the command contains {shown}. One command per call: chaining, pipes and "
+                          f"redirection are not allowed for {c['name']}")
+    if _ssh_matches(cmd, cfg.get("write_commands") or []):
+        _guard_write(c, f"`{cmd}`", confirm_prod)
+    elif not _ssh_matches(cmd, cfg.get("allowed_commands") or []):
+        allowed = ", ".join(cfg.get("allowed_commands") or []) or "none"
+        raise Refused(f"Refused: `{cmd}` matches no command allowed for {c['name']} (allowed: {allowed})")
+    return cmd
+
+
+def ssh_argv(c: dict, command: str) -> list[str]:
+    """The exact argv run: the command travels as one argument and never through a local shell."""
+    cfg = c["config"]
+    exe = shutil.which("ssh") or "ssh"
+    timeout = int(cfg.get("timeout") or 30)
+    argv = [exe, "-o", "BatchMode=yes", "-o", f"ConnectTimeout={max(1, min(timeout, 30))}",
+            "-o", f"StrictHostKeyChecking={'yes' if cfg.get('strict_host_key', True) else 'accept-new'}",
+            "-o", "LogLevel=ERROR", "-p", str(int(cfg.get("port") or 22))]
+    if cfg.get("known_hosts"):
+        argv += ["-o", f"UserKnownHostsFile={cfg['known_hosts']}"]
+    if cfg.get("key_path"):
+        argv += ["-i", cfg["key_path"], "-o", "IdentitiesOnly=yes"]
+    remote = f"cd {shlex.quote(cfg['workdir'])} && {command}" if cfg.get("workdir") else command
+    return argv + [f"{cfg.get('user') or 'root'}@{cfg.get('host')}", remote]
+
+
+def ssh_call(c: dict, command: str, confirm_prod: bool = False) -> dict:
+    cfg = c["config"]
+    cmd = check_ssh(c, command, confirm_prod)  # before anything is sent
+    if not cfg.get("host") or not cfg.get("user"):
+        raise Unavailable(f"Connector {c['name']} needs a host and a user")
+    if not shutil.which("ssh"):
+        raise Unavailable("ssh connectors need the OpenSSH client in Relay's image")
+    if cfg.get("key_path") and not os.path.exists(cfg["key_path"]):
+        raise Unavailable(f"No key file at {cfg['key_path']} on the Relay host: mount the key into Relay to use {c['name']}")
+    timeout = int(cfg.get("timeout") or 30)
+    started = time.time()
+    try:
+        r = subprocess.run(ssh_argv(c, cmd), capture_output=True, text=True, timeout=timeout + 10, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "exit_code": None, "summary": f"{cmd[:120]} timed out", "output": f"No answer within {timeout} s"}
+    ms = int((time.time() - started) * 1000)
+    err = (r.stderr or "").strip()
+    if r.returncode == 255 and not (r.stdout or "").strip():
+        raise Unavailable(f"ssh to {target(c)} failed: {err.splitlines()[0] if err else 'connection refused'}")
+    text = (r.stdout or "").rstrip()
+    if err:
+        text = (text + "\n" if text else "") + err
+    out, cut = _truncate(text)
+    return {"ok": r.returncode == 0, "exit_code": r.returncode, "summary": f"{cmd[:120]} → exit {r.returncode} · {ms} ms",
+            "output": out or "(no output)", "truncated": cut}
+
+
 # ============================================================================ browser
 _STEP = re.compile(r"^(goto|fill|click|press|wait|waitfor)\s*(.*)$", re.I)
 
@@ -967,6 +1067,10 @@ def execute(c: dict, op: str, args: dict) -> dict:
         if t != "docker":
             raise Refused(f"{c['name']} is a {t} connector, not docker")
         return docker_call(c, args.get("action") or "status", args.get("container"), confirm)
+    if op == "ssh":
+        if t != "ssh":
+            raise Refused(f"{c['name']} is a {t} connector, not ssh")
+        return ssh_call(c, args.get("command") or "", confirm)
     if op == "browser":
         if t != "browser":
             raise Refused(f"{c['name']} is a {t} connector, not browser")
@@ -986,6 +1090,8 @@ def operation_label(op: str, args: dict) -> str:
         return "logs" + "".join(f" --{k} {args[k]}" for k in ("container", "since", "tail", "grep") if args.get(k))
     if op == "docker":
         return f"docker {args.get('action') or 'status'}" + (f" {args['container']}" if args.get("container") else "")
+    if op == "ssh":
+        return "ssh " + re.sub(r"\s+", " ", str(args.get("command") or ""))[:160]
     if op == "browser":
         return f"browser {args.get('goto') or '/'}" + (" + screenshot" if args.get("screenshot") else "")
     return op
@@ -1038,6 +1144,10 @@ def test(c: dict) -> dict:
             ok = bool(rows) and all(r.get("running") for r in rows)
             return {"ok": ok, "call_status": "ok" if ok else "error", "summary": ", ".join(f"{r['name']} {r.get('status')}" for r in rows) or "no containers listed",
                     "output": json.dumps(rows, indent=2), "duration": 0}
+        if t == "ssh":
+            # The health check proves the connection and says which host answered: hostname and uptime, nothing else.
+            probe = dict(c, config={**cfg, "allow_shell_operators": True, "allowed_commands": ["hostname; uptime"], "write_commands": []})
+            return run(probe, "ssh", {"command": "hostname; uptime"})
         if t == "browser":
             res = run(c, "browser", {"goto": "/", "screenshot": False})
             res.pop("screenshot_png_base64", None)
@@ -1096,6 +1206,10 @@ def describe(names: list[str], screenshots_dir=None) -> str:
             extra = f" · schemas {', '.join(cfg['allowed_schemas'])}"
         elif c["type"] == "docker" and cfg.get("allow_restart") and c["access"] == "write":
             extra = " · restart allowed"
+        elif c["type"] == "ssh":
+            extra = f" · commands {', '.join(cfg.get('allowed_commands') or []) or 'none'}"
+            if cfg.get("write_commands") and c["access"] == "write":
+                extra += f" · writes {', '.join(cfg['write_commands'])}"
         env = c["environment"].upper() if c["environment"] == "prod" else c["environment"]
         rows.append(f"  - `{c['name']}` · {c['type']} · {env} · {c['access']} · {target(c)}{extra}"
                     + (f" — {c['description']}" if c.get("description") else ""))
@@ -1109,6 +1223,8 @@ def describe(names: list[str], screenshots_dir=None) -> str:
         cmds.append("`relay-connect logs <name> --since 10m --grep error`")
     if "docker" in types:
         cmds.append("`relay-connect docker <name> status`")
+    if "ssh" in types:
+        cmds.append("`relay-connect ssh <name> \"docker ps\"` (one allow-listed command per call, no pipes or chaining)")
     if "browser" in types:
         shot = f"{screenshots_dir}/page.png" if screenshots_dir else "out.png"
         cmds.append(f"`relay-connect browser <name> --goto /path --screenshot {shot}` (prints console errors)")
