@@ -18,6 +18,39 @@ const TYPE_HELP = {
 export const envBadge = (e) => `<span class="badge ${e === "prod" ? "red" : e === "staging" ? "amber" : "green"}" title="Environment">${esc(e)}</span>`;
 export const accessBadge = (a) => `<span class="badge ${a === "write" ? "amber" : "outline"}" title="Access level">${a === "write" ? "read + write" : "read only"}</span>`;
 
+// What this connector is allowed to do, in one sentence, on the row itself rather than only inside
+// the editor. Read straight from the saved configuration, so it cannot drift from what Relay enforces.
+const list = (xs) => (xs || []).filter(Boolean);
+export function permissionText(c) {
+  const cfg = c.config || {};
+  const write = c.access === "write";
+  if (!c.config) return "What this connector may do is not known here: open Edit to see its rules.";
+  if (c.type === "http") {
+    const methods = list(cfg.allowed_methods).length ? list(cfg.allowed_methods) : ["GET", "HEAD", "OPTIONS"];
+    const paths = list(cfg.path_allowlist);
+    return `May call ${methods.join(", ")} on ${paths.length ? `${paths.length} allowed path pattern${paths.length === 1 ? "" : "s"}` : "any path under the base URL"}. Anything else is refused.`;
+  }
+  if (c.type === "postgres") {
+    const schemas = list(cfg.allowed_schemas);
+    return `May run SQL ${write ? "including writes" : "in a read-only transaction"} on ${schemas.length ? `the ${schemas.join(", ")} schema${schemas.length === 1 ? "" : "s"}` : "any schema the database role can reach"}, at most ${cfg.row_limit || 1000} rows per query, ${cfg.statement_timeout_ms || 5000} ms per statement.`;
+  }
+  if (c.type === "logs") {
+    if (cfg.source === "loki") return "May read log lines from Loki with the saved selector. Agents can filter the result but cannot change the selector.";
+    const containers = list(cfg.containers);
+    return `May read recent log lines from ${containers.length ? containers.join(", ") : "any container on this host"}. Nothing is started, stopped or changed.`;
+  }
+  if (c.type === "docker") {
+    const containers = list(cfg.containers);
+    return `May inspect ${containers.length ? containers.join(", ") : "any container on this host"}.${cfg.allow_restart && write ? " May also restart them." : " Restarting is refused."}`;
+  }
+  if (c.type === "ssh") {
+    const allowed = list(cfg.allowed_commands), writes = list(cfg.write_commands);
+    return `May run ${allowed.length ? `${allowed.length} allow-listed command${allowed.length === 1 ? "" : "s"}` : "no command yet: the allow-list is empty"}${writes.length && write ? `, and ${writes.length} that change things${c.environment === "prod" ? " (each needs --confirm-prod on production)" : ""}` : ""}. ${cfg.allow_shell_operators ? "Shell operators are allowed." : "Chaining, pipes and redirection are refused."}`;
+  }
+  if (c.type === "browser") return "May open the app, follow links, take screenshots and read console errors. Relay performs the login steps; the password never reaches the agent.";
+  return "What this connector may do is not known here: open Edit to see its rules.";
+}
+
 // [key, label, kind, placeholder|options, help, showWhen]
 const FIELDS = {
   http: [
@@ -205,6 +238,14 @@ export async function openConnectorEditor(existing, { onSaved, defaults } = {}) 
   };
 }
 
+// What each recorded status means. The refusal reason itself goes back to the agent that asked;
+// it is not kept in the call log, so this says where to look rather than inventing one.
+const CALL_HELP = {
+  ok: "Relay made the call and gave the agent the answer.",
+  refused: "Relay's rules for this connector did not allow it. The agent was told why; the reason is in that task's conversation.",
+  error: "The call was allowed but the other side failed. The agent was given the error.",
+};
+
 function resultHtml(r) {
   if (!r) return "";
   const cls = r.call_status === "refused" ? "amber" : r.ok ? "green" : "red";
@@ -212,10 +253,11 @@ function resultHtml(r) {
 }
 
 export function mountConnectors(body) {
-  let data = { connectors: [], docker: {} }, calls = [];
+  let data = { connectors: [], docker: {} }, calls = [], loadError = "";
   const results = {};
   const load = async () => {
-    try { [data, calls] = await Promise.all([api.connectors(), api.connectorCalls().then((r) => r.calls)]); } catch (e) { toast("error", "Could not load connectors", e.message); }
+    try { [data, calls] = await Promise.all([api.connectors(), api.connectorCalls().then((r) => r.calls)]); loadError = ""; }
+    catch (e) { loadError = e.message; toast("error", "Could not load connectors", e.message); }
     draw();
   };
   const draw = () => {
@@ -229,7 +271,8 @@ export function mountConnectors(body) {
               <span class="conn-ic ${esc(c.type)}">${icon(TYPE_ICON[c.type] || "zap")}</span>
               <div class="conn-text">
                 <div class="row wrap" style="gap:6px"><strong class="mono-strong">${esc(c.name)}</strong><span class="badge outline">${esc(TYPE_LABEL[c.type] || c.type)}</span>${envBadge(c.environment)}${accessBadge(c.access)}${c.environment === "prod" && c.access === "write" && c.prod_write_enabled ? '<span class="badge red">prod writes on</span>' : ""}</div>
-                <div class="conn-target mono truncate" title="${esc(c.target)}">${esc(c.target || "not configured")}</div>
+                <div class="conn-target mono truncate" title="${esc(c.target || "")}">${esc(c.target || "target not set: open Edit and point it somewhere")}</div>
+                <div class="conn-may">${icon("shield", "sm")}${esc(permissionText(c))}</div>
                 ${c.description ? `<div class="muted conn-desc">${esc(c.description)}</div>` : ""}
                 ${(c.repos || []).length ? `<div class="row wrap conn-links">${c.repos.map((r) => `<span class="badge outline" title="${esc(r)}">${icon("folder", "sm")}${esc(basename(r))}</span>`).join("")}</div>` : ""}
               </div>
@@ -237,15 +280,17 @@ export function mountConnectors(body) {
             <div class="conn-actions"><button type="button" class="btn sm" data-test>${icon("activity")}<span>Test</span></button><button type="button" class="btn sm" data-edit>${icon("edit")}<span>Edit</span></button><button type="button" class="btn sm danger" data-del title="Delete">${icon("trash")}</button></div>
             <div class="conn-res" ${results[c.name] ? "" : "hidden"}>${resultHtml(results[c.name])}</div>
           </div>`).join("")}</div>`
+          : loadError ? `<div class="empty small">${icon("alert", "lg")}<p>Relay could not read the connector list: ${esc(loadError)}. Whether any connector exists is not known; press Refresh above the recent calls to try again.</p></div>`
           : `<div class="empty small">${icon("zap", "lg")}<p>No connectors yet. Add one for the API, database or app your repositories talk to, starting with a read-only dev or staging environment.</p></div>`}
       </div></div>
       <div class="card"><div class="card-head"><div><h3>Recent calls</h3><p class="card-sub">Every agent call and test, newest first.</p></div><button type="button" class="btn sm" id="cnRefresh">${icon("refresh")}Refresh</button></div><div class="card-body">
         ${calls.length ? `<div class="conn-calls">${calls.slice(0, 40).map((x) => `<div class="conn-call ${esc(x.status || "")}">
-            <span class="badge ${x.status === "ok" ? "green" : x.status === "refused" ? "amber" : "red"}">${esc(x.status || "?")}</span>
+            <span class="badge ${x.status === "ok" ? "green" : x.status === "refused" ? "amber" : x.status ? "red" : "outline"}" title="${esc(CALL_HELP[x.status] || "Relay did not record how this call ended.")}">${esc({ ok: "done", refused: "refused", error: "failed" }[x.status] || "not recorded")}</span>
             <span class="mono-strong truncate">${esc(x.connector)}</span>
             <span class="mono truncate conn-op" title="${esc(x.operation)}">${esc(x.operation)}</span>
             <span class="muted conn-when">${x.task ? `<a href="#/task/${esc(x.task)}">task</a> · ` : x.source === "settings" ? "test · " : ""}${esc(timeAgo(x.time))}</span>
-          </div>`).join("")}</div>` : '<div class="empty small"><p>No calls yet.</p></div>'}
+          </div>`).join("")}</div>` : loadError ? `<div class="empty small"><p>The call log could not be read: ${esc(loadError)}. Whether any call has been made is not known.</p></div>`
+          : '<div class="empty small"><p>No call has been made yet. Every agent call and every test from this page lands here.</p></div>'}
       </div></div>`;
     $("#cnAdd", body).onclick = () => openConnectorEditor(null, { defaults: data.defaults, onSaved: load });
     $("#cnRefresh", body).onclick = load;

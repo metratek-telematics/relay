@@ -20,10 +20,24 @@ const TONE = { succeeded: "green", failed: "red", refused: "amber", blocked: "am
 
 const when = (s) => (s ? String(s).replace("T", " ").slice(0, 16) : "");
 
+// What happened the last time, in words. "Not run yet" is said out loud: it is not the same as a run
+// that failed, and it is the usual state of a target nobody has switched on.
+const RUN_WORD = {
+  succeeded: "deployed", failed: "failed", running: "running now", refused: "refused by the rules",
+  blocked: "needs a person", manual: "done by hand", skipped: "not run",
+};
 function lastRun(t) {
   const r = t.last_run;
-  if (!r) return `<span class="muted">never run</span>`;
-  return `<span class="badge ${TONE[r.status] || "outline"}">${esc(r.status)}</span> <span class="muted">${esc(when(r.finished_at || r.started_at))}${r.duration ? ` · ${Math.round(r.duration)}s` : ""}</span>`;
+  if (!r) return `<span class="muted">Not run yet from Relay${t.enabled ? "" : " — this target is switched off"}</span>`;
+  return `<span class="badge ${TONE[r.status] || "outline"}">${esc(RUN_WORD[r.status] || r.status)}</span> <span class="muted">${esc(when(r.finished_at || r.started_at))}${r.duration ? ` · ${Math.round(r.duration)}s` : ""}${r.detail ? ` · ${esc(r.detail)}` : ""}</span>`;
+}
+
+// One line per target saying what a merge does to it, so "deployed" is never left to be inferred.
+function whatHappens(t) {
+  if (!t.enabled) return "Switched off: a merge does nothing here, and Run now is unavailable until you switch it on.";
+  if (t.critical) return "Critical: a merge never touches it. It only runs when a person presses Run now and confirms.";
+  if (t.auto_on_merge) return "A merged pull request for this repository deploys it on its own, one deployment at a time.";
+  return "Ready, but a merge does not run it. Press Run now when you want it live.";
 }
 
 function flags(t) {
@@ -40,13 +54,14 @@ function targetRow(t) {
       <div class="row" style="gap:8px;align-items:baseline"><strong class="truncate">${esc(t.service || t.workflow || t.site || t.id)}</strong>
         <span class="badge outline" title="${esc(METHOD_LABEL[t.method] || t.method)}">${esc(METHOD_SHORT[t.method] || t.method)}</span>
         <span class="badge outline">${esc(t.host)}</span>${flags(t)}</div>
-      <div class="muted small truncate" title="${esc(t.risk || t.note || "")}">${esc(t.risk || t.note || "")}</div>
+      <div class="dep-what">${esc(whatHappens(t))}</div>
+      ${t.risk || t.note ? `<div class="muted small truncate" title="${esc(t.risk || t.note || "")}">${esc(t.risk || t.note)}</div>` : ""}
       ${(t.commands || []).length ? `<details class="dep-cmds"><summary class="muted small">${(t.commands || []).length} command(s)</summary><pre class="mono small">${esc((t.commands || []).join("\n"))}</pre></details>` : ""}
     </div>
     <div class="dep-run">${lastRun(t)}</div>
     <div class="dep-switches">
-      <label class="row" style="gap:6px"><span class="switch ${t.enabled ? "on" : ""}" data-sw="enabled" role="switch" tabindex="0" aria-checked="${!!t.enabled}" aria-label="Enabled"></span><span class="muted small">enabled</span></label>
-      <label class="row" style="gap:6px"><span class="switch ${auto ? "on" : ""} ${t.critical ? "disabled" : ""}" data-sw="auto_on_merge" role="switch" tabindex="0" aria-checked="${auto}" aria-label="Automatic on merge"></span><span class="muted small">${t.critical ? "automatic (blocked: critical)" : "on merge"}</span></label>
+      <label class="row" style="gap:6px"><span class="switch ${t.enabled ? "on" : ""}" data-sw="enabled" role="switch" tabindex="0" aria-checked="${!!t.enabled}" aria-label="Enabled"></span><span class="muted small">Relay may run it</span></label>
+      <label class="row" style="gap:6px"><span class="switch ${auto ? "on" : ""} ${t.critical ? "disabled" : ""}" data-sw="auto_on_merge" role="switch" tabindex="0" aria-checked="${auto}" aria-label="Automatic on merge"></span><span class="muted small">${t.critical ? "never automatic: critical" : "runs on merge"}</span></label>
     </div>
     <div class="dep-actions"><button type="button" class="btn sm" data-run ${t.enabled ? "" : "disabled"} title="${t.enabled ? "Run this recipe now" : "Enable this target first"}">${icon("play", "sm")}Run now</button></div>
   </div>`;

@@ -13,6 +13,8 @@ import { mountTheatre } from "./theatre.js";
 import { mountChanges } from "./changes.js";
 import { mountMockups } from "./mockups.js";
 import { phases, packages, repoChips } from "../live.js";
+import { mountJourney, bannerHtml } from "./journey.js";
+import { waitingFor } from "../waiting.js";
 
 const hasTab = (k) => TABS.some(([x]) => x === k);
 // Design exploration (orchestrator/exploration.py) adds a Mockups view once a task has explored directions.
@@ -22,6 +24,7 @@ const VIEWS = (t) => [
   ["live", "Live", "monitor"],
   ...(hasTab("design") ? [["design", "Design", "layers"]] : []),
   ...(hasMockups(t) ? [["mockups", "Mockups", "image"]] : []),
+  ["delivery", "Delivery", "package"],
   ["changes", "Changes", "branch"],
   ["checks", "Checks", "shield"],
   ["logs", "Logs", "terminal"],
@@ -39,7 +42,8 @@ function redeployPill(t) {
   const exit = rd.exit_code === null || rd.exit_code === undefined ? "" : ` · exit ${esc(rd.exit_code)}`;
   const when = rd.finished_at || rd.started_at;
   const parts = `${esc(RD_TRIGGER[rd.trigger] || rd.trigger || "manual")}${exit}${when ? ` · ${timeAgo(when)}` : ""}`;
-  return `<span class="meta-fact redeploy-fact tone-${esc(RD_TONE[st] || "none")}" title="${esc(rd.command || "")}">${icon(RD_ICON[st] || "info", st === "running" ? "sm spin" : "sm")}<span>Redeploy ${esc(st || "unknown")}</span><span class="redeploy-detail muted">${parts}</span></span>`;
+  const word = { succeeded: "Redeploy succeeded", failed: "Redeploy failed", running: "Redeploying" }[st] || "Redeploy state not known yet";
+  return `<span class="meta-fact redeploy-fact tone-${esc(RD_TONE[st] || "none")}" title="${esc(rd.command || "")}">${icon(RD_ICON[st] || "info", st === "running" ? "sm spin" : "sm")}<span>${esc(word)}</span><span class="redeploy-detail muted">${parts}</span></span>`;
 }
 
 // The deploy record (orchestrator/deploy.py): the per-repository recipes that ran after the merge,
@@ -55,7 +59,8 @@ function deployPill(t) {
   const when = dp.finished_at || dp.started_at;
   const detail = `${ran.length || targets.length} target${(ran.length || targets.length) === 1 ? "" : "s"}${when ? ` · ${timeAgo(when)}` : ""}`;
   const tip = targets.map((x) => `${x.target}: ${x.status}${x.detail ? ` — ${x.detail}` : ""}`).join("\n");
-  return `<span class="meta-fact redeploy-fact tone-${esc(DP_TONE[st] || "none")}" title="${esc(tip)}">${icon(DP_ICON[st] || "info", st === "running" ? "sm spin" : "sm")}<span>Deploy ${esc(st || "unknown")}</span><span class="redeploy-detail muted">${esc(detail)}</span></span>`;
+  const word = { succeeded: "Deployed", failed: "Deploy failed", running: "Deploying", blocked: "Deploy needs a person", manual: "Deployed by hand", skipped: "Nothing deployed" }[st] || "Deploy state not known yet";
+  return `<span class="meta-fact redeploy-fact tone-${esc(DP_TONE[st] || "none")}" title="${esc(tip)}">${icon(DP_ICON[st] || "info", st === "running" ? "sm spin" : "sm")}<span>${esc(word)}</span><span class="redeploy-detail muted">${esc(detail)}</span></span>`;
 }
 
 export function mountTask(main, id) {
@@ -80,6 +85,7 @@ export function mountTask(main, id) {
         <div class="tp-actions" id="tpActions"></div>
       </div>
       <div class="tp-meta" id="tpMeta"></div>
+      <div class="tp-waiting" id="tpWaiting"></div>
       <nav class="tp-views" role="tablist" aria-label="Task views">${views.map(([k, l, i], n) => `<button type="button" role="tab" id="tv-${k}" aria-controls="tvp-${k}" data-view="${k}" aria-selected="${k === view}" class="${k === view ? "active" : ""}" title="${esc(l)} (${n + 1})">${icon(i, "sm")}<span>${esc(l)}</span><span class="tv-badge" data-vbadge="${k}" hidden></span></button>`).join("")}
         <span class="tp-views-spacer"></span>
         <button type="button" class="btn xs ghost tp-rail-toggle" id="tpRailToggle" aria-pressed="${railOpen}" title="Show or hide details (I)">${icon("panel", "sm")}<span>Details</span></button>
@@ -137,6 +143,7 @@ export function mountTask(main, id) {
     $$(".tp-view", page).forEach((v) => (v.hidden = v.id !== `tvp-${k}`));
     const hostEl = $(`#tvp-${k}`, page);
     if (k === "live" && !mounted.live) mounted.live = mountTheatre(hostEl, getTask);
+    if (k === "delivery" && !mounted.delivery) mounted.delivery = mountJourney(hostEl, getTask, { onGo: (to) => goWaiting(to), banner: false });
     if (k === "changes") { if (!mounted.changes) mounted.changes = mountChanges(hostEl, getTask, sub || "diff"); else if (sub) mounted.changes.show(sub, { push: false }); }
     if (k === "checks") { if (!mounted.checks) mounted.checks = mountInspector(hostEl, getTask, { tabs: CHECK_TABS, initial: sub || "checks", onTab: (x) => push && history.replaceState(null, "", `#/task/${encodeURIComponent(id)}/checks${x === "checks" ? "" : `/${x}`}`) }); else if (sub) mounted.checks.setTab(sub); }
     if (k === "logs") { if (!mounted.logs) mounted.logs = mountInspector(hostEl, getTask, { tabs: ["logs", "sessions"], initial: sub || "logs" }); else if (sub) mounted.logs.setTab(sub); }
@@ -151,7 +158,7 @@ export function mountTask(main, id) {
     const b = e.target.closest("[data-open-tab]");
     if (!b) return;
     const tab = b.dataset.openTab;
-    const map = { result: ["changes", "try"], changes: ["changes", "diff"], history: ["changes", "commits"], repository: ["changes", "edit"], checks: ["checks", "checks"], review: ["checks", "review"], timeline: ["checks", "timeline"], logs: ["logs", "logs"], sessions: ["logs", "sessions"], design: ["design"] }[tab];
+    const map = { result: ["changes", "try"], changes: ["changes", "diff"], history: ["changes", "commits"], repository: ["changes", "edit"], checks: ["checks", "checks"], review: ["checks", "review"], timeline: ["checks", "timeline"], logs: ["logs", "logs"], sessions: ["logs", "sessions"], design: ["design"], delivery: ["delivery"] }[tab];
     if (map) showView(map[0], map[1]);
   });
 
@@ -220,9 +227,32 @@ export function mountTask(main, id) {
       ${lineage(t)}
       ${t.github_issue_url ? `<a class="meta-fact" href="${esc(t.github_issue_url)}" target="_blank" rel="noopener">${icon("issue", "sm")}Issue #${esc(t.github_issue_number)}</a>` : ""}
       <span class="meta-fact muted" title="${esc(t.created_at)}">created ${timeAgo(t.created_at)}</span>`;
+    renderWaiting();
     const liveBadge = $('[data-vbadge="live"]', page); if (liveBadge) { liveBadge.hidden = !live; liveBadge.className = "tv-badge live-dot sm"; }
     const pendBadge = $('[data-vbadge="conversation"]', page); if (pendBadge) { pendBadge.hidden = !t.pending; pendBadge.className = "tv-badge attn"; pendBadge.textContent = t.pending ? "1" : ""; }
     const chBadge = $('[data-vbadge="changes"]', page); if (chBadge) { chBadge.hidden = !t.changed_count; chBadge.className = "tv-badge"; chBadge.textContent = t.changed_count || ""; }
+  }
+
+  // One line under the header, on every view: what this task is waiting for and what moves it on.
+  // Silent while the team is working, so it only ever appears when something is actually blocked.
+  function renderWaiting() {
+    const host = $("#tpWaiting", page);
+    if (!host) return;
+    const w = waitingFor(getTask());
+    host.innerHTML = w ? bannerHtml(w) : "";
+    host.hidden = !w;
+    const go = $("[data-go]", host);
+    if (go) go.onclick = () => goWaiting(go.dataset.go);
+  }
+
+  // Where "Take me there" goes for each waiting state.
+  function goWaiting(to) {
+    if (to === "conversation") {
+      showView("conversation");
+      requestAnimationFrame(() => { const card = $(".qcard.pending", page); card?.scrollIntoView({ block: "center", behavior: "smooth" }); ($("[data-answer]", card || page) || $("#guidance", page))?.focus({ preventScroll: true }); });
+      return;
+    }
+    showView(views.some(([k]) => k === to) ? to : "delivery");
   }
 
   function lineage(t) {
@@ -408,7 +438,7 @@ export function mountTask(main, id) {
   renderHeader(); renderComposer(); renderOutline(); loadMessages();
   showView(view, S.route.section, { push: false });
   if (t.pr_url || t.pr_number) prStatus(id);
-  const offPr = bus.on("pr", (tid) => { if (tid === id) renderHeader(); });
+  const offPr = bus.on("pr", (tid) => { if (tid === id) { renderHeader(); mounted.delivery?.update("pr"); } });
   const prTimer = setInterval(() => { const x = getTask(); const st = prCached(id)?.state; if (x && (x.pr_url || x.pr_number) && st !== "merged" && st !== "closed") prStatus(id); }, 60000);
   const timer = setInterval(() => {
     t = getTask();
@@ -431,6 +461,7 @@ export function mountTask(main, id) {
         mounted.checks?.refresh("task"); mounted.logs?.refresh("task"); mounted.design?.refresh("task");
         mounted.changes?.update("task");
         mounted.live?.update("task");
+        mounted.delivery?.update("task");
         mounted.mockups?.update("task");
       } else if (reason === "message") { convo.append(payload); convo.updateTyping(); renderFilesChip(); mounted.live?.update("message", payload); if (payload.kind === "handoff" || payload.kind === "plan") renderOutline(); }
       else if (reason === "message_update") { convo.patch(payload); convo.updateTyping(); renderFilesChip(); mounted.live?.update("message_update", payload); }

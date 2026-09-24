@@ -11,6 +11,9 @@
 .conn-text { min-width: 0; display: grid; gap: 4px; }
 .conn-target { color: var(--text-2); }
 .conn-desc { font-size: var(--fs-xs); }
+/* What a connector is allowed to do, on the row itself (web/js/views/connectors.js permissionText). */
+.conn-may { display: flex; align-items: flex-start; gap: 6px; margin-top: 3px; color: var(--text-2); font-size: var(--fs-xs); line-height: 1.5; overflow-wrap: anywhere; }
+.conn-may .ic { color: var(--text-3); flex: none; margin-top: 2px; }
 .conn-links { gap: 4px; }
 .conn-links .badge { text-transform: none; letter-spacing: 0; font-weight: 600; }
 .conn-actions { display: flex; gap: 6px; }

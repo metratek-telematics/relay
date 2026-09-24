@@ -12,6 +12,20 @@ import { mountTokens } from "./tokens.js";
 import { mountProviders } from "./openrouter.js";
 import { ORG, loadMe, can } from "./org/org.js";
 
+// The badge on an agent card. Before Relay has looked at the CLI the truth is "not checked yet",
+// which is not the same as "missing".
+function agentTone(a) {
+  const h = S.agents?.[a];
+  if (!h) return "outline";
+  return h.ok ? "green" : h.signed_in === false ? "amber" : "red";
+}
+function agentWord(a) {
+  const h = S.agents?.[a];
+  if (!h) return "not checked yet";
+  if (h.signed_in === false) return "not signed in";
+  return h.version || (h.installed ? "installed" : "not installed");
+}
+
 const SECTIONS = [["workflow", "Team and workflow", "layers"], ["agents", "Agents and models", "bot"], ["verification", "Verification", "shield"], ["prompts", "Saved prompts", "message"], ["rules", "Rules", "docs"], ["autopilot", "Autopilot", "clock"], ["budget", "Usage and budget", "gauge"], ["notifications", "Notifications", "bell"], ["git", "Git and GitHub", "github"], ["deploy", "Deploy", "package"], ["providers", "Model providers", "layers"], ["tools", "Agent tools", "package"], ["tokens", "Token efficiency", "gauge"], ["workspace", "Workspace and access", "user"], ["appearance", "Appearance", "sun"], ["about", "About", "info"]];
 const GROUPS = [["Team", ["workflow", "agents", "tools", "verification", "prompts", "rules"]], ["Automation", ["autopilot", "budget", "tokens", "notifications"]], ["Integrations", ["providers", "git", "deploy", "workspace"]], ["You", ["appearance", "about"]]];
 // Words each section answers to, so the search finds "quiet hours" under Autopilot.
@@ -259,14 +273,14 @@ export function mountSettings(main, section) {
         <div class="field"><label>Model catalog (one per line)</label><textarea data-models="${a}" rows="3" style="font-family:var(--mono);font-size:12px">${esc(cat.join("\n"))}</textarea><div class="help">Options offered in every model picker.</div></div>`;
       };
       body.innerHTML = `
-        <div class="card"><div class="card-head"><h3><span class="av sm codex">Cx</span> Codex</h3><span class="badge ${S.agents?.codex?.ok ? "green" : "red"}">${esc(S.agents?.codex?.version || "missing")}</span></div><div class="card-body">
+        <div class="card"><div class="card-head"><h3><span class="av sm codex">Cx</span> Codex</h3><span class="badge ${agentTone("codex")}">${esc(agentWord("codex"))}</span></div><div class="card-body">
           <div class="grid2"><div class="field"><label>Sandbox</label><select data-cfg="codex_sandbox"><option value="workspace-write" ${c.codex_sandbox === "workspace-write" ? "selected" : ""}>workspace-write (recommended)</option><option value="danger-full-access" ${c.codex_sandbox === "danger-full-access" ? "selected" : ""}>danger-full-access (no sandbox)</option></select><div class="help">workspace-write lets Codex edit the worktree and run commands there without approvals.</div></div>
           <div class="field"><label>Reasoning effort</label><select data-cfg="codex_reasoning_effort"><option value="" ${!c.codex_reasoning_effort ? "selected" : ""}>CLI default</option>${["low", "medium", "high", "xhigh"].map((x) => `<option ${c.codex_reasoning_effort === x ? "selected" : ""}>${x}</option>`).join("")}</select></div></div>
           <div class="field"><label>Extra CLI arguments</label><input data-cfg="codex_extra_args" data-args="1" value="${esc((c.codex_extra_args || []).join(" "))}" placeholder="-c key=value"></div>
           ${catalogField("codex")}
           <div class="field"><label>Environment variables for Codex</label><div class="env-table" id="env-codex">${envRows("codex")}</div></div>
         </div></div>
-        <div class="card"><div class="card-head"><h3><span class="av sm claude">Cl</span> Claude Code</h3><span class="badge ${S.agents?.claude?.ok ? "green" : "red"}">${esc(S.agents?.claude?.version || "missing")}</span></div><div class="card-body">
+        <div class="card"><div class="card-head"><h3><span class="av sm claude">Cl</span> Claude Code</h3><span class="badge ${agentTone("claude")}">${esc(agentWord("claude"))}</span></div><div class="card-body">
           <div class="grid2"><div class="field"><label>Permissions</label><select data-cfg="claude_permission"><option value="bypass" ${c.claude_permission === "bypass" ? "selected" : ""}>bypass all permission prompts (unattended)</option><option value="acceptEdits" ${c.claude_permission === "acceptEdits" ? "selected" : ""}>acceptEdits (some tools may be denied)</option></select></div>
           <div class="field"><label>Max internal turns per call</label><input type="number" min="10" max="1000" data-cfg="claude_max_turns_per_call" value="${esc(c.claude_max_turns_per_call)}"><div class="help">Safety cap on tool loops inside one work package.</div></div></div>
           <div class="field inline"><label>Prefer Claude subscription login (ignore ANTHROPIC_API_KEY)</label><span class="switch ${c.prefer_claude_subscription_auth ? "on" : ""}" data-sw-cfg="prefer_claude_subscription_auth"></span></div>
@@ -275,7 +289,7 @@ export function mountSettings(main, section) {
           ${catalogField("claude")}
           <div class="field"><label>Environment variables for Claude</label><div class="env-table" id="env-claude">${envRows("claude")}</div></div>
         </div></div>
-        <div class="card"><div class="card-head"><h3><span class="av sm gemini">Ge</span> Gemini CLI</h3><span class="badge ${S.agents?.gemini?.ok ? "green" : S.agents?.gemini?.signed_in === false ? "amber" : "red"}">${esc(S.agents?.gemini?.signed_in === false ? "not signed in" : S.agents?.gemini?.version || "missing")}</span></div><div class="card-body">
+        <div class="card"><div class="card-head"><h3><span class="av sm gemini">Ge</span> Gemini CLI</h3><span class="badge ${agentTone("gemini")}">${esc(agentWord("gemini"))}</span></div><div class="card-body">
           <div class="field"><label>Approval mode</label><select data-cfg="gemini_approval"><option value="yolo" ${c.gemini_approval === "yolo" ? "selected" : ""}>yolo (auto-approve all tools)</option><option value="auto_edit" ${c.gemini_approval === "auto_edit" ? "selected" : ""}>auto_edit (auto-approve edits only)</option></select></div>
           <div class="field"><label>Extra CLI arguments</label><input data-cfg="gemini_extra_args" data-args="1" value="${esc((c.gemini_extra_args || []).join(" "))}"></div>
           ${catalogField("gemini")}
@@ -627,14 +641,14 @@ function autopilotSettings(c) {
       <div class="card-body">
         <div class="grid3">
           <div class="field"><label>Treat a limit as reached at (%)</label><input type="number" min="50" max="100" data-ap="limit_threshold_percent" value="${esc(a.limit_threshold_percent ?? 90)}"></div>
-          <div class="field"><label>When a role's agent is blocked</label><select data-ap="limit_action"><option value="fallback" ${a.limit_action !== "wait" ? "selected" : ""}>Use its fallback chain, else wait</option><option value="wait" ${a.limit_action === "wait" ? "selected" : ""}>Wait for the reset</option></select></div>
+          <div class="field"><label>When a role's agent is blocked</label><select data-ap="limit_action"><option value="fallback" ${a.limit_action !== "wait" ? "selected" : ""}>Use its fallback chain, else wait for the reset</option><option value="wait" ${a.limit_action === "wait" ? "selected" : ""}>Wait for the reset</option></select><div class="help">While it waits the task stays in Queued and its card says which limit it is waiting for and when that resets. If nothing will reset it — no balance, not signed in — Relay tells you once instead of leaving it parked.</div></div>
         </div>
         <datalist id="apAgents">${agentsList}</datalist>
         ${["supervisor", "worker", "reviewer"].map((r) => `<div class="field"><label>${r[0].toUpperCase() + r.slice(1)} fallback chain</label><input data-ap-fb="${r}" list="apAgents" value="${esc((fb[r] || []).join(", "))}" placeholder="e.g. codex, kilo:kilo/some-model:free"><div class="help">Agents tried in order, comma separated; agent:model picks a model.</div></div>`).join("")}
       </div></div>
     <div class="card"><div class="card-head"><div><h3>Cost caps</h3><p class="card-sub">Estimated from token prices (Usage &amp; budget). 0 means no cap.</p></div></div><div class="card-body"><div class="grid3">
-      <div class="field"><label>Per task (USD)</label><input type="number" min="0" step="0.5" data-ap="task_cost_cap_usd" value="${esc(a.task_cost_cap_usd ?? 0)}"><div class="help">The task pauses after the turn that crosses it and appears under Needs you.</div></div>
-      <div class="field"><label>Per day (USD)</label><input type="number" min="0" step="1" data-ap="daily_cost_cap_usd" value="${esc(a.daily_cost_cap_usd ?? 0)}"><div class="help">No new task starts until tomorrow once reached.</div></div>
+      <div class="field"><label>Per task (USD)</label><input type="number" min="0" step="0.5" data-ap="task_cost_cap_usd" value="${esc(a.task_cost_cap_usd ?? 0)}"><div class="help">The task pauses after the turn that crosses it and appears under Needs you. 0 means no cap on a single task.</div></div>
+      <div class="field"><label>Per day (USD)</label><input type="number" min="0" step="1" data-ap="daily_cost_cap_usd" value="${esc(a.daily_cost_cap_usd ?? 0)}"><div class="help">No new task starts until tomorrow once reached; anything running finishes its turn. 0 means no daily cap.</div></div>
     </div></div></div>
     <div class="card"><div class="card-head"><div><h3>Watchdog and digest</h3></div></div><div class="card-body">
       <div class="field inline"><label>Watchdog: resume tasks whose runner died or whose agent process vanished</label>${sw("watchdog", a.watchdog !== false)}</div>

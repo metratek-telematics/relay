@@ -9,6 +9,15 @@ import { prCached } from "../prstatus.js";
 import { activityHtml, teamHtml, repoChips, reposOf, phases } from "../live.js";
 import { scoreRing } from "./mission.js";
 import { inProject } from "./org/org.js";
+import { waitingFor } from "../waiting.js";
+
+// Every card that is not moving says what it is waiting for and what moves it on (web/js/waiting.js),
+// instead of a bare status word.
+function waitNote(t, cls = "") {
+  const w = waitingFor(t);
+  if (!w) return "";
+  return `<p class="wc-note ${cls}" title="${esc(w.next)}">${icon(w.icon === "spinner" ? "clock" : w.icon, "sm")}<b>${esc(w.title)}</b> <span>${esc(w.next)}</span></p>`;
+}
 
 const COLUMNS = [
   { id: "ideas", label: "Ideas", icon: "sparkles", hint: "Drafts and GitHub issues. Drag one to Queued to line it up." },
@@ -20,7 +29,9 @@ const COLUMNS = [
 ];
 const REVIEW_DAYS = 14;
 
-function prStateOf(t) { return prCached(t.id)?.state || t.scorecard?.pr?.state || (t.pr_url ? "open" : null); }
+// The pull request state Relay has actually read. A task with a pull request whose state has not been
+// fetched yet says so instead of being guessed as "open".
+function prStateOf(t) { return prCached(t.id)?.state || t.scorecard?.pr?.state || null; }
 
 export function columnOf(t) {
   if (t.status === "draft") return "ideas";
@@ -106,13 +117,13 @@ export function mountWork(main, tab) {
       const pk = phases(t).packages;
       body = `<div class="wc-activity">${activityHtml(t, { compact: true })}</div>${pk.total ? `<div class="wc-progress" title="${pk.done} of ${pk.total} work packages"><span class="pk-bar"><i style="width:${Math.round((pk.done / pk.total) * 100)}%"></i></span><span class="mono">${esc(phases(t).steps.find((s) => s.state === "cur")?.label || st.label)}</span></div>` : ""}`;
     } else if (col === "needs") {
-      const text = t.pending?.question || (t.pending?.kind === "approval" ? "Waiting for your approval to deliver" : t.pending?.kind === "design_approval" ? "Design waiting for your approval" : "") || t.error || t.detail || "";
-      body = `<p class="wc-note ${t.status === "failed" ? "err" : "attn"}">${esc(String(text).slice(0, 160))}</p>`;
+      body = waitNote(t, t.status === "failed" ? "attn bad" : "attn")
+        || `<p class="wc-note attn">${esc(String(t.error || t.detail || "Relay has not said what this needs yet. Open the task to see where it stopped."))}</p>`;
     } else if (col === "review" || (col === "done" && t.status === "done")) {
       const pr = prStateOf(t);
-      body = `<div class="wc-review">${t.scorecard ? scoreRing(t.scorecard.score, 30) : ""}${t.pr_url ? `<a class="pr-chip state-${esc(pr || "open")}" href="${esc(t.pr_url)}" target="_blank" rel="noopener">${icon("github", "sm")}#${esc(t.pr_number || "")}<span>${esc(pr || "open")}</span></a>` : '<span class="pr-chip state-none">branch only</span>'}${Object.values(t.repo_worktrees || {}).filter((w) => w.pr_url).length ? `<span class="muted small">+${Object.values(t.repo_worktrees).filter((w) => w.pr_url).length} PR</span>` : ""}</div>`;
+      body = `<div class="wc-review">${t.scorecard ? scoreRing(t.scorecard.score, 30) : ""}${t.pr_url || t.pr_number ? `<a class="pr-chip state-${esc(pr || "none")}" href="${esc(t.pr_url || "")}" target="_blank" rel="noopener" title="${esc(pr ? `The pull request is ${pr}` : "Relay has not read this pull request's state yet")}">${icon("github", "sm")}${t.pr_number ? `#${esc(t.pr_number)}` : "pull request"}<span>${esc(pr || "state not read yet")}</span></a>` : '<span class="pr-chip state-none" title="No pull request was opened: the work is only on its branch">branch only</span>'}${Object.values(t.repo_worktrees || {}).filter((w) => w.pr_url).length ? `<span class="muted small">+${Object.values(t.repo_worktrees).filter((w) => w.pr_url).length} PR</span>` : ""}</div>${waitNote(t)}`;
     } else if (col === "queued") {
-      body = t.waiting?.text ? `<p class="wc-note">${icon(t.waiting.kind === "limits" ? "gauge" : t.waiting.kind === "dependency" || t.waiting.kind === "chain" ? "layers" : "clock", "sm")}${esc(t.waiting.text)}</p>` : "";
+      body = waitNote(t);
     }
     const action = col === "needs" ? (t.pending ? `<a class="btn xs primary" href="#/home/needs">${icon("send", "sm")}Answer</a>` : ["failed", "interrupted", "stopped"].includes(t.status) ? `<button type="button" class="btn xs" data-act="retry">${icon("retry", "sm")}Retry</button>` : t.status === "paused" ? `<button type="button" class="btn xs" data-act="resume">${icon("play", "sm")}Resume</button>` : "")
       : col === "review" ? `<a class="btn xs" href="#/review/${esc(t.id)}">${icon("eye", "sm")}Review</a>`
@@ -158,15 +169,19 @@ export function mountWork(main, tab) {
     $("#wkIssueNote", page).innerHTML = ui.issues && issueErrors.length ? `${icon("alert", "sm")} Some issues could not be listed` : ui.issues && issues === null ? "Loading issues…" : "";
     $("#wkIssueNote", page).title = issueErrors.map((e) => `${e.repo}: ${e.error}`).join("\n");
 
+    // Ideas also holds GitHub issues; while those are still being listed the count is not known yet,
+    // so it says so rather than showing a number that is about to change.
+    const loadingIdeas = ui.issues && issues === null;
     const counts = Object.fromEntries(COLUMNS.map((c) => [c.id, byCol[c.id].length + (c.id === "ideas" ? iss.length : 0)]));
-    $("#wkSwitch", page).innerHTML = COLUMNS.map((c) => `<button type="button" data-col-pick="${c.id}" class="${ui.col === c.id ? "active" : ""}" aria-pressed="${ui.col === c.id}">${esc(c.label)} <span class="n">${counts[c.id]}</span></button>`).join("");
+    const countText = (id) => (id === "ideas" && loadingIdeas ? "…" : String(counts[id]));
+    $("#wkSwitch", page).innerHTML = COLUMNS.map((c) => `<button type="button" data-col-pick="${c.id}" class="${ui.col === c.id ? "active" : ""}" aria-pressed="${ui.col === c.id}">${esc(c.label)} <span class="n"${c.id === "ideas" && loadingIdeas ? ' title="Still listing GitHub issues"' : ""}>${countText(c.id)}</span></button>`).join("");
     $$("[data-col-pick]", page).forEach((b) => (b.onclick = () => { ui.col = b.dataset.colPick; save(); draw(); }));
 
     const scroll = new Map($$(".wcol-body", page).map((x) => [x.parentElement.dataset.col, x.scrollTop]));
     $("#wkBoard", page).innerHTML = COLUMNS.map((c) => {
       const cards = byCol[c.id].map((t, i) => taskCard(t, c.id, i)).join("") + (c.id === "ideas" ? iss.map(issueCard).join("") : "");
       return `<section class="wcol ${ui.col === c.id ? "active" : ""} col-${c.id}" data-col="${c.id}" aria-label="${esc(c.label)}">
-        <header class="wcol-head"><span class="wcol-ic">${icon(c.icon, "sm")}</span><h2>${esc(c.label)}</h2><span class="wcol-n">${counts[c.id]}</span>${c.id === "ideas" ? `<button type="button" class="btn xs ghost icon" data-new-draft aria-label="New task" title="New task">${icon("plus")}</button>` : ""}</header>
+        <header class="wcol-head"><span class="wcol-ic">${icon(c.icon, "sm")}</span><h2>${esc(c.label)}</h2><span class="wcol-n"${c.id === "ideas" && loadingIdeas ? ' title="Still listing GitHub issues"' : ""}>${countText(c.id)}</span>${c.id === "ideas" ? `<button type="button" class="btn xs ghost icon" data-new-draft aria-label="New task" title="New task">${icon("plus")}</button>` : ""}</header>
         <div class="wcol-body" data-drop="${c.id}">${cards || `<div class="wcol-empty">${esc(c.hint)}</div>`}</div>
       </section>`;
     }).join("");
