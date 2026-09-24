@@ -17,6 +17,26 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Deploy recipes: a merge redeploys the right thing, everywhere the repository runs**
+  (`orchestrator/deploy.py`, `tools/seed_deploy_map.py`, `orchestrator/manager.py`, `web_app.py`,
+  `web/js/views/deploy.js`, Settings → Deploy). The deployment map is executable configuration in
+  `DATA_DIR/deploy.json`, seeded once from the read-only host and CI scans in `knowledge/deploy/`:
+  per target a repository, a host (edge, Z2 or GitHub), the service or workflow, the method, the exact
+  commands, `never_pull` and `critical` flags, the risk note, and two owner switches that both ship off.
+  Five recipe kinds share one result shape (status, exit code, output tail, log file, duration):
+  `actions_watch` follows the repository's own run with `gh run watch` and never re-triggers it,
+  `actions_dispatch` triggers a `workflow_dispatch` workflow and follows it, `image_pull` pulls and
+  recreates one compose service on a host, `compose_build` builds it there first, and `manual` runs
+  nothing and prints the steps a person must take and why. The rules cannot be bypassed by task text,
+  agent output or a request body: commands come from the map alone and are checked against an
+  allow-list of programs, a target the owner did not enable never runs, a `never_pull` image refuses a
+  pull rather than attempting it, a critical target never runs automatically — only from Run now, and it
+  says so — one deployment runs at a time across the instance, and a host with no SSH alias deploys
+  nothing. The merge hook extends the existing watcher from #50 rather than adding a second one: when a
+  task's pull request is merged, the enabled targets of its repository run in order and every outcome is
+  recorded on the task, beside the existing redeploy pill. #50's single command keeps working unchanged.
+  `knowledge/deploy/DEPLOY-MAP.md` indexes the three scans so agents read one page instead of three.
+
 - **Personal settings, on top of the organisation's** (`orchestrator/personal.py`, `orchestrator/org/identity.py`,
   `orchestrator/manager.py`, `web/js/views/settings.js`). Each person can keep their own default team and workflow
   — agent, model and effort per role, team mode, turn budget, review rounds, verification, the approval gate,
