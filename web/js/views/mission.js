@@ -190,7 +190,14 @@ export function mountMission(main, tab) {
     const focusedId = document.activeElement?.closest?.("[data-inbox]")?.dataset.inbox;
     $("#mcNeedsCount", page).textContent = items.length || "";
     $("#mcNeedsCount", page).hidden = !items.length;
-    host.innerHTML = items.length ? items.map(inboxItemHtml).join("") : `<div class="empty-state compact calm">${icon("checkCircle", "lg")}<h3>You are not blocking anything</h3><p>Questions, approvals and decisions from every task appear here, answerable in place.</p></div>`;
+    // Anything genuinely blocked, in one place, with what it needs (#65) — including a run that carried on
+    // with the work its open question does not block.
+    const blocked = (d.blocked || []).filter((b) => !items.some((x) => x.task_id === b.task_id));
+    const blockedHtml = blocked.length ? `<div class="nx-blocked"><h3>${icon("alert", "sm")}Blocked · ${blocked.length}</h3>${blocked.map((b) => `
+      <a class="nx-blocked-row" href="#/task/${esc(b.task_id)}"><span class="truncate">${b.number ? `#${esc(b.number)} ` : ""}${esc(b.task || "")}</span>
+        <span class="muted truncate">${esc(b.needs || "")}</span>
+        ${b.working_around ? '<span class="badge amber">working around it</span>' : ""}</a>`).join("")}</div>` : "";
+    host.innerHTML = (items.length ? items.map(inboxItemHtml).join("") : `<div class="empty-state compact calm">${icon("checkCircle", "lg")}<h3>You are not blocking anything</h3><p>Questions, approvals and decisions from every task appear here, answerable in place.</p></div>`) + blockedHtml;
     for (const [id, v] of drafts) { const ta = $(`[data-inbox="${CSS.escape(id)}"] [data-answer-text]`, host); if (ta && v) ta.value = v; }
     if (focusedId) $(`[data-inbox="${CSS.escape(focusedId)}"] [data-answer-text]`, host)?.focus();
     bindInbox(host, items, () => setTimeout(load, 500));

@@ -165,6 +165,9 @@ export const api = {
   deleteLesson: (id) => del(`/api/lessons/${encodeURIComponent(id)}`),
   // Learning engine (web_learning.py)
   learning: () => get("/api/learning"),
+  // Honest success (#65): merged, deployed and untouched, computed from facts.
+  shipped: () => get("/api/shipped"),
+  shippedBackfill: () => post("/api/shipped/backfill"),
   learningPreflight: (body) => post("/api/learning/preflight", body),
   learningProposal: (id, action) => post(`/api/learning/proposals/${encodeURIComponent(id)}/${action}`),
   learningRetire: (id, reason) => post(`/api/learning/lessons/${encodeURIComponent(id)}/retire`, { reason }),

@@ -62,6 +62,7 @@ DEFAULTS = {
     "quiet_hours": {"enabled": False, "start": "22:00", "end": "08:00"},
     "park_waiting_tasks": True,           # a task waiting for you frees its parallel slot
     "retry_infra_failures": 1,            # automatic resumes after an agent crash, hang or rate limit
+    "retry_once": 1,                      # any other failed run is retried this many times with what it learned (#65)
     "limit_check": True,
     "limit_threshold_percent": 90,        # a 5-hour or weekly window above this counts as exhausted
     "limit_action": "fallback",           # fallback: switch to the role's fallback chain first · wait: wait for the reset
@@ -538,6 +539,45 @@ def inbox_items(tasks: list, settings: dict | None = None) -> list[dict]:
     return sorted(items, key=lambda x: x.get("time") or "")
 
 
+def blocked_items(tasks: list) -> list[dict]:
+    """Everything genuinely blocked, in one place, with what it needs (#65). Pure.
+
+    One list for the morning: a question nobody answered (whether the run is idling on it or working around
+    it), a task parked by the autopilot, a run that failed even after its one retry, and a queued task whose
+    dependency failed. No new notification channel: this is a section of the digest that already exists.
+    """
+    by_id = {t["id"]: t for t in tasks}
+    out = []
+    for t in tasks:
+        if t.get("archived"):
+            continue
+        base = {"task_id": t["id"], "number": t.get("number"), "task": t.get("name"),
+                "repo": t.get("github_repo") or Path(t.get("repo") or "").name, "status": t.get("status"),
+                "since": t.get("updated_at")}
+        p = t.get("pending") or {}
+        deferred = ((t.get("checkpoint") or {}).get("deferred_questions") or {})
+        if p.get("question") and (t.get("status") == "needs_input" or deferred.get(p.get("id"))):
+            out.append({**base, "kind": "question", "needs": truncate(p.get("question") or "", 300),
+                        "options": list(p.get("options") or []), "since": p.get("time") or base["since"],
+                        "working_around": bool(deferred.get(p.get("id"))) and t.get("status") != "needs_input"})
+            continue
+        ap = t.get("autopilot_parked") or {}
+        if ap and t.get("status") == "paused":
+            out.append({**base, "kind": "parked", "needs": ap.get("reason") or "Paused by the autopilot",
+                        "since": ap.get("time") or base["since"]})
+            continue
+        if t.get("status") == "failed" and int(t.get("honest_retries") or 0) >= 1:
+            out.append({**base, "kind": "failed_twice", "since": t.get("finished_at") or base["since"],
+                        "needs": "It failed again after its one retry: " + truncate(t.get("error") or t.get("detail") or "no error recorded", 300)})
+            continue
+        if t.get("status") == "queued":
+            failed = [b for b in dependency_blockers(t, by_id) if b["status"] in ("failed", "stopped")]
+            if failed:
+                out.append({**base, "kind": "dependency", "needs": f"{failed[0]['label']} {WAIT_WORD.get(failed[0]['status'])}; "
+                                                                   "it cannot start until that is sorted out."})
+    return sorted(out, key=lambda x: x.get("since") or "")
+
+
 # ============================================================================ digest
 def one_line(text: str, n: int = 160) -> str:
     for line in str(text or "").splitlines():
@@ -593,15 +633,17 @@ def build_digest(tasks: list, cards: dict, since_ts: float, now_ts: float, *, qu
                         "waiting": (t.get("waiting") or {}).get("text") or "", "eta_start": e.get("start"), "eta_finish": e.get("finish"),
                         "estimate_seconds": e.get("estimate_seconds"), "basis": e.get("basis")})
     inbox = inbox_items(live, settings)
+    blocked = blocked_items(live)
     scores = [r["score"] for r in delivered if r.get("score") is not None]
     return {
         "since": datetime.fromtimestamp(since_ts).isoformat(timespec="seconds"),
         "until": datetime.fromtimestamp(now_ts).isoformat(timespec="seconds"),
         "hours": round((now_ts - since_ts) / 3600, 1),
         "headline": {"delivered": len(delivered), "needs_you": len(inbox), "failed": len([f for f in failures if f["category"] != "stopped"]),
+                     "blocked": len(blocked),
                      "queued": len(queue_order), "running": len(running), "cost_usd": spend["cost_usd"],
                      "avg_score": round(sum(scores) / len(scores)) if scores else None},
-        "delivered": delivered, "failures": failures, "inbox": inbox,
+        "delivered": delivered, "failures": failures, "inbox": inbox, "blocked": blocked,
         "usage": {**spend, "today_usd": today["cost_usd"], "daily_cap_usd": float(settings.get("daily_cost_cap_usd") or 0)},
         "lessons": {"pending": len(lessons_pending), "items": [{"id": x.get("id"), "text": x.get("text"), "task_id": x.get("task_id"),
                                                                 "task_name": x.get("task_name")} for x in lessons_pending[:5]]},
@@ -614,7 +656,7 @@ def build_digest(tasks: list, cards: dict, since_ts: float, now_ts: float, *, qu
 def summary_line(d: dict) -> str:
     h = d["headline"]
     parts = [f"{h['delivered']} delivered", f"{h['needs_you']} need you" if h["needs_you"] else "nothing waits for you",
-             f"{h['failed']} failed" if h["failed"] else "", f"{h['queued']} queued" if h["queued"] else "",
+             f"{h['failed']} failed" if h["failed"] else "", f"{h.get('blocked') or 0} blocked" if h.get("blocked") else "", f"{h['queued']} queued" if h["queued"] else "",
              f"~${h['cost_usd']:.2f} spent" if h["cost_usd"] else ""]
     return " · ".join(p for p in parts if p)
 
@@ -990,11 +1032,39 @@ class Autopilot:
                     return
                 except Exception as e:
                     log.warning("auto retry of %s failed: %s", tid, e)
+            elif self.retry_once(tid, t, s):
+                return
         if t.get("status") in ("failed", "stopped"):
             waiting = [o for o in self.m.store.list() if tid in (o.get("depends_on") or []) and o.get("status") == "queued"]
             if waiting:
                 self.m.notify("warning", "Dependent tasks are waiting", f"{label(t)} {t.get('status')}; {len(waiting)} task(s) wait for it: "
                               + ", ".join(label(o) for o in waiting[:3]), tid, kind="failed")
+
+    def retry_once(self, tid: str, t: dict, s: dict) -> bool:
+        """A failed run that is not an infrastructure failure gets exactly one more try, with what it learned.
+
+        The cause of the failure goes to the supervisor as guidance, so the retry does not repeat the same step
+        the same way. A second failure is left alone: it belongs in the morning digest, not in a loop.
+        """
+        from . import predelivery
+        plan = predelivery.retry_plan(t, s)
+        if not plan["retry"]:
+            return False
+        try:
+            self.m.store.update(tid, immediate=True, honest_retries=plan["attempt"])
+            self.m.retry(tid, fresh=False, start_queue=False)
+            # Relay's own note, not the owner's: `relay` keeps it out of the human-steering count.
+            cur = self.m.store.get(tid) or {}
+            rows = list(cur.get("guidance") or []) + [{"id": f"retry-{plan['attempt']}", "time": now(), "to": "supervisor",
+                                                       "text": plan["note"], "consumed": False, "relay": True}]
+            self.m.store.update(tid, immediate=True, guidance=rows)
+            self.m.store.update(tid, immediate=True, detail="Queued · one retry with what the failed run learned")
+            self.m.timeline(tid, "system", "Retrying once with what it learned", truncate(plan["note"], 200))
+            self.m.emit_task(tid)
+            return True
+        except Exception as e:
+            log.warning("retry of %s failed: %s", tid, e)
+            return False
 
     def on_cost(self, tid: str):
         """After every turn: pause a task that went over its cost cap (after the current turn)."""
