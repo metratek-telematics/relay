@@ -336,6 +336,56 @@ def openrouter_account():
                     "low_credit_usd": s.get("low_credit_usd"), "configured": OR.configured(s)})
 
 
+# ----------------------------------------------------------------------------- agent accounts
+@app.get("/api/agents/accounts")
+def agent_accounts_all():
+    """Every account of every plan CLI, with plan, limits and the reason it cannot run.
+
+    Readings come from the cache (?refresh=1 asks the CLIs again), so the page never waits on one."""
+    from orchestrator import accounts
+    refresh = request.args.get("refresh") == "1"
+    only = request.args.get("agent")
+    cfg, tasks = manager.cfg(), manager.store.list()
+    names = [only] if only in C.AGENTS else [a for a in C.AGENTS if accounts.supports(a)]
+    return jsonify({"agents": [accounts.overview(a, cfg, manager.autopilot, tasks, refresh=refresh) for a in names]})
+
+
+@app.post("/api/agents/<name>/accounts")
+def agent_account_add(name):
+    from orchestrator import accounts
+    if not accounts.supports(name):
+        return jsonify({"error": f"{name} does not sign in per account"}), 400
+    try:
+        row = accounts.add(name, (body().get("name") or "").strip())
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    broadcast("agents", {"agent": name, "account": row.get("id")})
+    return jsonify(row)
+
+
+@app.post("/api/agents/<name>/accounts/<account_id>")
+def agent_account_update(name, account_id):
+    from orchestrator import accounts
+    d = body()
+    try:
+        row = accounts.update(name, account_id, name=d.get("name"), enabled=d.get("enabled"), default=d.get("default"))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
+    broadcast("agents", {"agent": name, "account": account_id})
+    return jsonify(row)
+
+
+@app.delete("/api/agents/<name>/accounts/<account_id>")
+def agent_account_remove(name, account_id):
+    from orchestrator import accounts
+    try:
+        accounts.remove(name, account_id)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    broadcast("agents", {"agent": name, "account": account_id})
+    return jsonify({"ok": True})
+
+
 @app.get("/api/agents/jobs")
 def agent_jobs():
     return jsonify({name: installer.job(name) for name in C.AGENTS if installer.job(name)})

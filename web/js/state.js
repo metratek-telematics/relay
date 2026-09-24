@@ -107,10 +107,18 @@ export function roleEffortText(t, role) {
   const cli = S.agents?.[agent]?.default_effort;
   return cli ? `CLI default (${cli})` : "CLI default";
 }
-// One block per role for a hover: agent, model, effort.
+// Which sign-in of the CLI ran this role's turns. Blank when the CLI has the single account every
+// installation starts with, so nothing changes on a one-account setup.
+export function roleAccountText(t, role) {
+  const sess = t?.sessions?.[role] || {};
+  if (!sess.account || sess.account === "default") return "";
+  return sess.account_name || sess.account;
+}
+// One block per role for a hover: agent, model, effort, and the account when there is more than one.
 export function roleDetails(t, roles = ["supervisor", "worker", "reviewer"]) {
   return roles.filter((r) => roleAgent(t, r))
-    .map((r) => `${ROLE_LABEL[r]} · ${agentLabel(roleAgent(t, r))}\nModel: ${roleModelText(t, r)}\nEffort: ${roleEffortText(t, r)}`)
+    .map((r) => `${ROLE_LABEL[r]} · ${agentLabel(roleAgent(t, r))}\nModel: ${roleModelText(t, r)}\nEffort: ${roleEffortText(t, r)}`
+      + (roleAccountText(t, r) ? `\nAccount: ${roleAccountText(t, r)}` : ""))
     .join("\n\n");
 }
 export function defaultModelLabel(agent) { const h = S.agents?.[agent]; return h?.default_model ? `CLI default (${h.default_model}${h.default_effort ? ` · ${h.default_effort}` : ""})` : "CLI default"; }
