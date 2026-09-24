@@ -144,7 +144,9 @@ export function storyOf(t, { map = null, mapError = "" } = {}) {
     state: dp ? ({ succeeded: "done", failed: "fail", running: "cur", blocked: "wait", manual: "wait", skipped: "todo" }[dp.status] || "todo")
       : prState === "merged" ? "wait" : "todo",
     when: dp?.finished_at || dp?.started_at,
-    note: dp ? `Ran ${dp.trigger === "pr_merged" ? "after the merge" : dp.trigger === "manual" ? "because someone pressed Run now" : `after ${dp.trigger}`}.`
+    note: dp ? (dp.trigger === "pr_merged" ? "Ran after the merge."
+        : dp.trigger === "manual" ? "Ran because someone pressed Run now."
+        : dp.trigger ? `Ran after ${dp.trigger}.` : "Ran — what started it was not recorded.")
       : mapError ? `The deployment map could not be read: ${mapError}`
       : !map ? "Reading what a merge deploys for this repository…"
       : planned.length ? `${planned.filter((x) => x.enabled && x.auto_on_merge && !x.critical).length} of ${planned.length} target${planned.length === 1 ? "" : "s"} for this repository run by themselves on merge; the rest wait for Deploy → Run now.`
@@ -156,8 +158,13 @@ export function storyOf(t, { map = null, mapError = "" } = {}) {
         title: `${x.service || x.site || x.workflow || x.target || x.id}`, chip: x.host || "",
         tone: ran ? T_TONE[x.status] || "outline" : x.enabled && x.auto_on_merge && !x.critical ? "green" : "outline",
         word,
-        sub: ran ? `${METHOD_WORDS[x.method] || x.method}${x.duration ? ` · ${fmtDur(x.duration)}` : ""}${x.detail ? ` — ${x.detail}` : ""}`
-          : `${METHOD_WORDS[x.method] || x.method}${x.critical ? " — critical: never automatic, a person presses Run now" : ""}${x.never_pull ? " — the image is not on the registry, so a pull is refused" : ""}`,
+        sub: (() => {
+          const how = METHOD_WORDS[x.method] || x.method || "";
+          const extra = ran
+            ? `${x.duration ? ` · ${fmtDur(x.duration)}` : ""}${x.detail ? `${how ? " — " : ""}${x.detail}` : ""}`
+            : `${x.critical ? " — critical: never automatic, a person presses Run now" : ""}${x.never_pull ? " — the image is not on the registry, so a pull is refused" : ""}`;
+          return `${how}${extra}`.replace(/^ — /, "") || "how it deploys is not recorded";
+        })(),
       };
     }),
   });
