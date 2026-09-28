@@ -8,6 +8,10 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A stopped task always offers a way out** (`orchestrator/manager.py` `finish_without_delivery`,
+  `web/js/waiting.js`, `web/js/views/task.js`). A run that failed at delivery left retrying the same doomed
+  step as the only choice. The failure banner now offers Finish without a pull request — which keeps the branch,
+  the worktree and everything the run produced, and closes the task — beside trying the delivery again.
 - **A run that changed nothing no longer fails at delivery** (`orchestrator/predelivery.py` `carries_work`,
   `orchestrator/pipeline.py`). Relay checks whether the branch carries commits before it pushes or asks for a
   pull request; a run that deliberately changed no code (an investigation, a test that found nothing to fix)

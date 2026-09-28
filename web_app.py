@@ -641,6 +641,9 @@ def task_action(tid, action):
             manager.resume(tid)
         elif action == "retry":
             manager.retry(tid, fresh=bool(b.get("fresh")))
+        elif action == "finish":
+            # A way out of a delivery that cannot succeed: keep the work, close the task.
+            return jsonify({"ok": True, "task": manager.finish_without_delivery(tid, b.get("note") or "")})
         elif action == "answer":
             manager.answer(tid, b.get("id"), (b.get("text") or "").strip(), b.get("extra") or {})
         elif action == "approve":

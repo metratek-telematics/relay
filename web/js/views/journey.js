@@ -198,6 +198,7 @@ export function bannerHtml(w, { compact = false } = {}) {
     <span class="jn-banner-ic">${icon(w.icon || "clock", w.icon === "spinner" ? "spin" : "")}</span>
     <span class="jn-banner-copy"><strong>${esc(w.title)}</strong><span>${esc(w.next)}</span></span>
     ${!compact && w.go ? `<button type="button" class="btn sm jn-banner-go" data-go="${esc(w.go)}">${icon("arrowRight", "sm")}Take me there</button>` : ""}
+    ${!compact ? (w.actions || []).map((a) => `<button type="button" class="btn sm jn-banner-go" data-act="${esc(a.act)}"${a.hint ? ` title="${esc(a.hint)}"` : ""}>${esc(a.label)}</button>`).join("") : ""}
   </div>`;
 }
 
