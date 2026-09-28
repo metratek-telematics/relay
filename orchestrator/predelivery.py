@@ -36,12 +36,24 @@ _UI_WORDS = re.compile(r"\b(screenshot|browser|rendered?|render|visual|page|scre
 
 
 # ============================================================================ the branch still applies
-def base_ref(cfg: dict, task: dict, remote: str = "origin") -> str:
-    """The ref a delivery must still merge into: `origin/<base branch>`."""
+def base_ref(cfg: dict, task: dict, remote: str = "origin", wt=None) -> str:
+    """The ref a delivery must still merge into: `origin/<base branch>`.
+
+    Nothing configured is the normal case, not a reason to skip the check: a pull request without an
+    explicit base goes to the repository's default branch, so that is what the delivery is measured
+    against. Only a checkout that cannot name its own default branch leaves this empty.
+    """
     base = str((task or {}).get("github_base") or (cfg or {}).get("github_pr_base") or "").strip()
+    if not base and wt:
+        from . import gitops
+        base = (gitops.default_branch(wt) or "").strip()
     if not base:
         return ""
-    return base if "/" in base else f"{remote}/{base}"
+    # A branch may contain a slash ("release/1"): only a ref that already names the remote, or a full
+    # refs/ path, is left alone.
+    if base.startswith(f"{remote}/") or base.startswith("refs/"):
+        return base
+    return f"{remote}/{base}"
 
 
 def drift(wt, ref: str, *, fetch: bool = True) -> dict:
@@ -66,6 +78,37 @@ def drift(wt, ref: str, *, fetch: bool = True) -> dict:
         return out
     out["behind"], out["ahead"] = int(parts[0]), int(parts[1])
     out["ok"] = out["behind"] == 0
+    return out
+
+
+def carries_work(wt, ref: str, base_commit: str = "") -> dict:
+    """Does the branch actually carry commits to propose? {empty, ahead, leftover, checked, error}
+
+    A run that changed nothing still used to be pushed and sent to `gh pr create`, which answered
+    "No commits between main and <branch>" — a GitHub error where the truth is simply that the task
+    produced no change. `leftover` names work still sitting in the worktree (files the repository
+    ignores, a commit that failed), so "nothing was changed" is never said over the top of real work.
+    """
+    out = {"empty": None, "ahead": None, "leftover": [], "checked": False, "error": ""}
+    if not wt:
+        out["error"] = "no worktree"
+        return out
+    if ref:
+        d = drift(wt, ref, fetch=False)
+        if d.get("error"):
+            out["error"] = d["error"]
+        elif d.get("ahead") is not None:
+            out["ahead"], out["empty"], out["checked"] = d["ahead"], d["ahead"] == 0, True
+    if not out["checked"] and base_commit:
+        p = quiet(["git", "rev-list", "--count", f"{base_commit}..HEAD"], cwd=wt, timeout=60)
+        if p.returncode == 0 and (p.stdout or "").strip().isdigit():
+            out["ahead"] = int(p.stdout.strip())
+            out["empty"], out["checked"], out["error"] = out["ahead"] == 0, True, ""
+        else:
+            out["error"] = out["error"] or truncate((p.stdout or "") + (p.stderr or ""), 200) or "git rev-list failed"
+    if out["empty"]:
+        st = quiet(["git", "status", "--porcelain"], cwd=wt, timeout=60)
+        out["leftover"] = [l.strip() for l in (st.stdout or "").splitlines() if l.strip()][:20]
     return out
 
 
@@ -146,7 +189,7 @@ def base_guard(runner, wt, cfg: dict, task: dict, *, fetch: bool = True, rebaser
     reverify, note}. `needs_human` means the branch cannot be made mergeable here and delivering it
     would hand over something nobody can merge.
     """
-    ref = base_ref(cfg, task)
+    ref = base_ref(cfg, task, wt=wt)
     rec = {"ref": ref, "base_behind": None, "conflicted": None, "rebased": False, "needs_human": False,
            "conflicts": [], "reverify": False, "note": ""}
     if not ref:

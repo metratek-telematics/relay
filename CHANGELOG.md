@@ -8,6 +8,19 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A run that changed nothing no longer fails at delivery** (`orchestrator/predelivery.py` `carries_work`,
+  `orchestrator/pipeline.py`). Relay checks whether the branch carries commits before it pushes or asks for a
+  pull request; a run that deliberately changed no code (an investigation, a test that found nothing to fix)
+  finishes on its report, and work left uncommitted in the worktree is named instead of being reported as
+  "nothing changed". Previously GitHub answered `No commits between main and <branch>` and the task failed,
+  losing everything the run had proved.
+- **The merge check no longer switches itself off** (`orchestrator/predelivery.py` `base_ref`). With no base
+  branch configured — the normal case — the check said "nothing to check the merge against" and skipped. It now
+  falls back to the repository's own default branch, and a base branch whose name contains a slash
+  (`release/1`) is qualified correctly instead of being taken for a remote ref.
+
+### Fixed
+
 - **Tasks no longer start from stale code** (`orchestrator/gitops.py`, setting `branch_from_upstream`).
   A new task branch is created after a fetch, from the remote branch the checkout follows, whenever that checkout
   is merely behind it — a server checkout nobody pulls used to send every task off from months-old files, so the

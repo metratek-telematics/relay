@@ -1878,7 +1878,22 @@ class Pipeline(solo.SoloFlow, exploration.ExplorationFlow, design.DesignFlow, mu
         self.save()
 
         pr = {"url": t.get("pr_url"), "number": t.get("pr_number")}
-        if self.repo_full and cfg.get("github_auto_push_on_pass", True):
+        work = predelivery.carries_work(self.wt, predelivery.base_ref(cfg, t, wt=self.wt), self.base or "")
+        if work.get("empty") and not t.get("pr_url"):
+            # Nothing was committed, so there is nothing to propose: pushing an empty branch and asking GitHub
+            # for a pull request only answers "No commits between ...". A run that changed nothing on purpose
+            # (an investigation, a test that found nothing to fix) finishes on its report instead.
+            leftover = work.get("leftover") or []
+            detail = ("The work is still in the worktree and was never committed: "
+                      + ", ".join(x[:60] for x in leftover[:5]) if leftover
+                      else "The run changed no files, so there is nothing to review.")
+            self.r.timeline("github", "Nothing to deliver", detail)
+            self.m.notify("info" if not leftover else "warning", "The task changed nothing", detail, self.tid, kind="no_changes")
+            self.m.set_meta(self.tid, delivered_nothing={"reason": "uncommitted" if leftover else "no_changes",
+                                                         "leftover": leftover, "detail": detail})
+            self.state["nothing_to_deliver"] = True
+            self.save()
+        elif self.repo_full and cfg.get("github_auto_push_on_pass", True):
             self.r.status("delivering", "Pushing the task branch to GitHub")
             gitops.push_branch(self.r, self.wt, self.branch, lease=self.state.get("agent_pushed") or "")
             self.r.timeline("github", "Branch pushed", self.branch)
