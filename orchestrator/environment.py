@@ -8,7 +8,10 @@ recorded as a blocked check and the team carries on without dependencies.
 from __future__ import annotations
 
 import json
+import re
 import shutil
+import subprocess
+import time
 from pathlib import Path
 
 
@@ -129,6 +132,61 @@ def setup_command(task: dict, cfg: dict, wt) -> str:
 def screenshot_tool() -> str:
     """Path of the screenshot command when a headless browser is installed in this environment."""
     return shutil.which("relay-screenshot") or ""
+
+
+def _host_port(raw: str, default_port: str) -> tuple[str, str] | None:
+    raw = raw.strip().removeprefix("tcp:")
+    m = re.fullmatch(r"\[?([A-Za-z0-9.\-:]+?)\]?(?::(\d{1,5}))?", raw) if raw else None
+    if not m or not 0 < int(m.group(2) or default_port) < 65536:
+        return None
+    return m.group(1), m.group(2) or default_port
+
+
+def phone_socket(cfg: dict | None) -> str:
+    """ADB_SERVER_SOCKET for a phone plugged into the owner's PC ("host:port" of that PC's adb server), else ""."""
+    cfg = cfg or {}
+    if (cfg.get("phone_adb_mode") or "pc") != "pc":
+        return ""
+    hp = _host_port(str(cfg.get("phone_adb_server") or ""), "5037")
+    if not hp:
+        return ""
+    host, port = hp
+    return f"tcp:[{host}]:{port}" if ":" in host else f"tcp:{host}:{port}"
+
+
+def phone_address(cfg: dict | None) -> str:
+    """ip:port of a phone reached directly over wireless debugging (mode "direct"), else ""."""
+    cfg = cfg or {}
+    if cfg.get("phone_adb_mode") != "direct":
+        return ""
+    hp = _host_port(str(cfg.get("phone_adb_server") or ""), "5555")
+    return f"{hp[0]}:{hp[1]}" if hp else ""
+
+
+_phone_checked: dict = {}
+
+
+def phone_connect(cfg: dict | None, force: bool = False) -> str:
+    """Direct mode: make Relay's adb server connect to the phone (at most once a minute). Returns adb's answer."""
+    addr = phone_address(cfg)
+    adb = shutil.which("adb")
+    if not addr or not adb:
+        return ""
+    if not force and time.time() - _phone_checked.get(addr, 0) < 60:
+        return ""
+    _phone_checked[addr] = time.time()
+    try:
+        r = subprocess.run([adb, "connect", addr], capture_output=True, text=True, timeout=15)
+        return (r.stdout + r.stderr).strip()
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return f"adb connect {addr}: {e}"
+
+
+def phone_tool(cfg: dict | None) -> str:
+    """Where agents' adb reaches the phone, when adb is installed here and a phone is configured."""
+    if not shutil.which("adb"):
+        return ""
+    return phone_socket(cfg) or phone_address(cfg)
 
 
 def dev_command(wt) -> str:

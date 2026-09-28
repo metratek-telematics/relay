@@ -69,6 +69,18 @@ RUN set -eux; \
       chmod 755 /usr/local/bin/docker /usr/local/lib/docker/cli-plugins/docker-buildx; \
     fi
 
+# Android platform-tools (adb) so agents can install and run a mobile app on the owner's phone
+# (Settings -> Verification -> Android phone). Google publishes them for x86_64 only; other hosts get Debian's adb.
+RUN set -eux; \
+    if [ "$(uname -m)" = x86_64 ]; then \
+      curl -fsSL -o /tmp/platform-tools.zip https://dl.google.com/android/repository/platform-tools-latest-linux.zip; \
+      python3 -c "import zipfile; zipfile.ZipFile('/tmp/platform-tools.zip').extractall('/opt')"; \
+      chmod -R a+rX /opt/platform-tools; chmod 755 /opt/platform-tools/adb; \
+      ln -sf /opt/platform-tools/adb /usr/local/bin/adb; rm /tmp/platform-tools.zip; \
+    else \
+      apt-get update && apt-get install -y --no-install-recommends adb && rm -rf /var/lib/apt/lists/*; \
+    fi
+
 # The node image ships a "node" user at 1000:1000. Reuse or re-number it so the
 # container user matches the host user that owns the mounted files.
 RUN set -eux; \

@@ -19,6 +19,12 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Android phone for mobile work** (`orchestrator/environment.py`, `orchestrator/runner.py`, `tools/relay-phone.bat`,
+  Settings → Verification → Android phone). Agents can install, run and inspect an app on your own phone with `adb`
+  while Relay runs on a server. Relay reaches the phone directly over wireless debugging (Tailscale or LAN, with
+  pairing from the settings page), or through the PC it is plugged into: `relay-phone.bat` shares that PC's adb server
+  over Tailscale, a LAN or an SSH reverse tunnel. The address is a setting with a Test button, so switching PC or
+  network is one edit. The Docker image now includes `adb`. Setup in [docs/RUNNING.md](docs/RUNNING.md#android-phone).
 - **Model, effort and account: one control, in plain sight** (`web/js/rolecontrol.js`,
   `orchestrator/pipeline.py`, `orchestrator/accounts.py`, Settings → Team and workflow, the New task
   wizard, a task's own team, the task roster). Who runs the work is now set in one place and described

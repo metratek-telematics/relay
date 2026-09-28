@@ -158,6 +158,71 @@ inside a Linux container.
 - **Extra toolchains.** Verification commands run inside the container. The image includes Node, Python and Git. For
   Java, Go, .NET or others, extend the image with a `FROM relay:local` Dockerfile.
 
+## Android phone
+
+Agents can install, run and inspect a mobile app on your own Android phone with `adb` while Relay runs on a server.
+Set it up under **Settings → Verification → Android phone** and press **Test**. The address can change whenever you
+switch PC or network; blank turns the phone off. When a phone is configured, agents are told `adb` is ready and
+checks such as `./gradlew connectedAndroidTest` reach it too. The Docker image includes `adb`; a native install needs
+Android platform-tools on PATH.
+
+Pick one of three ways to reach the phone:
+
+| Mode | When | Address in Relay |
+|---|---|---|
+| Directly | The phone runs Tailscale (or shares a LAN with the server) | `phone-ip:port` from Wireless debugging |
+| Through my PC, network | Phone on USB to a PC that runs Tailscale or shares a LAN/VPN with the server | `pc-ip:5037` |
+| Through my PC, SSH | Phone on USB to a PC that can `ssh` to the Relay host | `host.docker.internal:5037` (Docker) or `127.0.0.1:5037` |
+
+### Directly (wireless debugging)
+
+Android 11 or later, phone and server on the same tailnet or network:
+
+1. On the phone: Developer options → **Wireless debugging** on. Wireless debugging only runs while the phone is on
+   Wi-Fi; Tailscale then carries the traffic.
+2. In Relay choose **Directly**, enter the phone's Tailscale IP with the port shown under Wireless debugging (for
+   example `100.122.155.50:41234`).
+3. The first time, tap **Pair device with pairing code** on the phone, type the pairing address and code into Relay
+   and press **Test**. The pairing is kept in Relay's home folder, so later tests only connect.
+
+The Wireless debugging port changes when it is turned off and on or the phone restarts; update the address then.
+For a fixed port, plug the phone into any PC once and run `adb tcpip 5555`: it listens on 5555 until the next restart.
+
+### Through your PC, network
+
+Copy `tools/relay-phone.bat` to the Windows PC the phone is plugged into and run it. The first run needs
+Administrator: it adds a firewall rule that lets only Tailscale addresses (`100.64.0.0/10`) reach adb. For a LAN or
+another VPN, pass its range once, e.g. `relay-phone.bat net 192.168.1.0/24`. The window prints the address to enter in
+Relay and keeps adb running; closing it stops sharing. Android Studio on the same PC keeps working with the same server.
+
+The server must be able to reach the PC. For Relay in Docker inside an LXC this works when Tailscale runs in the LXC
+with a TUN device (not userspace networking); check with `docker exec relay adb devices` once the address is saved.
+
+### Through your PC, SSH
+
+For a PC that can `ssh` to the Relay host but is not otherwise reachable:
+
+```bat
+relay-phone.bat ssh you@relay-host
+```
+
+The tunnel ends on the host's Docker bridge address (`172.17.0.1`, check with `ip -4 addr show docker0`), which the
+container reaches as `host.docker.internal`. That needs one line in the host's `/etc/ssh/sshd_config` and a reload of
+sshd:
+
+```text
+GatewayPorts clientspecified
+```
+
+Relay without Docker needs no sshd change: `relay-phone.bat ssh you@relay-host 127.0.0.1` and `127.0.0.1:5037` in
+Relay. Use `ssh -J` style entries in `~/.ssh/config` on the PC when the host is behind a jump host.
+
+### Safety
+
+Anyone who reaches the adb port controls the phone. Keep it on Tailscale or a private network, never on a public
+address, and use a development phone rather than your personal one. Agents are told not to restart the adb server,
+reboot the phone or remove apps they did not install.
+
 ## Telegram
 
 Relay can message you on Telegram and take your answers, commands and questions from there.

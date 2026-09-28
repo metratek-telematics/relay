@@ -331,6 +331,13 @@ DEFAULTS = {
     "env_prepare_timeout_minutes": 20,
     # Browser VS Code (code-server) base URL, e.g. https://relay.example.com/code; enables Open in VS Code and previews.
     "ide_url": "",
+    # Android phone for mobile work, see docs/RUNNING.md. phone_adb_mode:
+    #   pc:     the phone is plugged into the owner's PC; phone_adb_server is that PC's adb server (Tailscale or LAN IP:5037,
+    #           or host.docker.internal:5037 through an SSH reverse tunnel). Agents and checks get ADB_SERVER_SOCKET.
+    #   direct: the phone itself is reachable (Tailscale on the phone, wireless debugging); phone_adb_server is its
+    #           ip:port and Relay's own adb server connects to it.
+    "phone_adb_mode": "pc",
+    "phone_adb_server": "",
     "design_forbidden_terms": [],
     "branch_naming": "type",               # type: feat/…, fix/… from the task type · prefix: <branch_prefix>/…
     "branch_prefix": "agent",

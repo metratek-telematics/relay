@@ -14,7 +14,7 @@ from pathlib import Path
 
 from . import tokens, toolbox
 from .agents import TurnContext, adapter
-from .environment import venv_bin
+from .environment import phone_connect, phone_socket, venv_bin
 from .util import IS_WINDOWS, kill_tree, new_id, now, popen_group_kwargs, truncate
 
 
@@ -38,6 +38,14 @@ def _with_stack(env: dict, tid: str) -> None:
         env.update(stacks.env_for_task(tid))
     except Exception:
         pass
+
+
+def _with_phone(env: dict, cfg: dict) -> None:
+    """The owner's Android phone: adb talks to the adb server on their PC, or Relay's adb server connects to the phone."""
+    sock = phone_socket(cfg)
+    if env is not None and sock:
+        env["ADB_SERVER_SOCKET"] = sock
+    phone_connect(cfg)
 
 
 def _with_venv(env: dict, cwd) -> None:
@@ -388,6 +396,7 @@ class Runner:
         self._with_connect(env)
         _with_venv(env, cwd)
         _with_stack(env, self.tid)
+        _with_phone(env, cfg)
         # Agent CLIs run their shell tools as login shells (`bash -lc`), which rebuild PATH from /etc/profile and
         # drop the .venv: workers hit `python: command not found`. The image's /etc/profile.d/relay-path.sh restores this.
         # The task's tools: MCP servers in this CLI's own per-run config, tool binaries on PATH, secrets in env only.
@@ -612,6 +621,7 @@ class Runner:
         _with_repo_env(env, cwd, override=True)
         _with_venv(env, cwd)
         _with_stack(env, self.tid)
+        _with_phone(env, self.m.cfg())
         env["RELAY_PATH"] = env.get("PATH", "")
         try:
             rc, elapsed = self._spawn(args, cwd, env, None, on_line, timeout, role, None, cmd)

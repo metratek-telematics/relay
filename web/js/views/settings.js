@@ -405,8 +405,34 @@ export function mountSettings(main, section) {
         <div class="field"><label>Host port range (127.0.0.1 only)</label><input data-cfg="stack_port_range" value="${esc(c.stack_port_range || "20000-29999")}"></div>
         <div class="field"><label>Build timeout (minutes)</label><input type="number" min="1" data-cfg="stack_build_timeout_minutes" value="${esc(c.stack_build_timeout_minutes || 15)}"></div></div>
         <div class="field inline"><label>Keep the stack running after the task ends (otherwise removed, logs saved to the run folder)</label><span class="switch ${c.stack_keep_after_task ? "on" : ""}" data-sw-cfg="stack_keep_after_task"></span></div>
+      </div></div>
+      <div class="card" style="margin-top:14px"><div class="card-head"><h3>Android phone</h3><span class="badge ${c.phone_adb_server ? "green" : ""}">${c.phone_adb_server ? "configured" : "off"}</span></div><div class="card-body">
+        <div class="help" style="margin-top:0">Lets agents install, run and inspect a mobile app on your own phone with <code>adb</code>. Change the address whenever you switch PC or network. Setup: docs/RUNNING.md, Android phone.</div>
+        <div class="grid2"><div class="field"><label>How Relay reaches the phone</label><select data-cfg="phone_adb_mode" id="phoneMode"><option value="pc" ${(c.phone_adb_mode || "pc") === "pc" ? "selected" : ""}>Through my PC (phone on USB, run relay-phone.bat)</option><option value="direct" ${c.phone_adb_mode === "direct" ? "selected" : ""}>Directly (wireless debugging over Tailscale or LAN)</option></select></div>
+        <div class="field"><label id="phoneServerLabel">${c.phone_adb_mode === "direct" ? "Phone address (ip:port)" : "PC adb server (host:port)"}</label><input data-cfg="phone_adb_server" id="phoneServer" value="${esc(c.phone_adb_server || "")}" placeholder="${c.phone_adb_mode === "direct" ? "100.64.0.7:5555" : "100.64.0.5:5037 or host.docker.internal:5037"}"><div class="help">Blank turns the phone off.</div></div></div>
+        <div class="grid2" id="phonePair" ${c.phone_adb_mode === "direct" ? "" : "hidden"}><div class="field"><label>Pairing address (once, Android 11+)</label><input id="phonePairAddr" placeholder="100.64.0.7:37215"></div>
+        <div class="field"><label>Pairing code</label><input id="phonePairCode" inputmode="numeric" placeholder="123456"><div class="help">From Wireless debugging → Pair device with pairing code. Only needed the first time.</div></div></div>
+        <div class="row" style="gap:8px;align-items:center"><button class="btn" id="phoneTest">${icon("zap")} Test</button><span id="phoneState" class="help" style="margin:0"></span></div>
+        <pre id="phoneOut" class="mono small" hidden style="white-space:pre-wrap;margin-top:8px"></pre>
       </div></div>`;
       bindAuto();
+      $("#phoneMode", body).addEventListener("change", (e) => {
+        const direct = e.target.value === "direct";
+        $("#phoneServerLabel", body).textContent = direct ? "Phone address (ip:port)" : "PC adb server (host:port)";
+        $("#phoneServer", body).placeholder = direct ? "100.64.0.7:5555" : "100.64.0.5:5037 or host.docker.internal:5037";
+        $("#phonePair", body).hidden = !direct;
+      });
+      $("#phoneTest", body).onclick = async () => {
+        const st = $("#phoneState", body), out = $("#phoneOut", body);
+        st.textContent = "Testing…"; st.style.color = "";
+        try {
+          const r = await api.testPhone({ mode: $("#phoneMode", body).value, server: $("#phoneServer", body).value,
+            pair_address: $("#phonePairAddr", body).value, pair_code: $("#phonePairCode", body).value });
+          st.textContent = r.ok ? `Phone ready (${r.devices} device${r.devices === 1 ? "" : "s"})` : r.error;
+          st.style.color = r.ok ? "var(--green)" : "var(--red)";
+          out.textContent = r.output || ""; out.hidden = !r.output;
+        } catch (e) { st.textContent = e.message; st.style.color = "var(--red)"; }
+      };
     } else if (cur === "git") {
       body.innerHTML = `<div class="card"><div class="card-head"><h3>Git</h3></div><div class="card-body">
         <div class="grid2"><div class="field"><label>Branch names</label><select data-cfg="branch_naming"><option value="type" ${(c.branch_naming || "type") === "type" ? "selected" : ""}>By task type: feat/berth-status-page, fix/123-login-timeout</option><option value="prefix" ${c.branch_naming === "prefix" ? "selected" : ""}>With the branch prefix: ${esc(c.branch_prefix || "agent")}/berth-status-page</option></select><div class="help">Suggested from the task name; you can edit it in the New task wizard.</div></div><div class="field"><label>Branch prefix</label><input data-cfg="branch_prefix" value="${esc(c.branch_prefix)}"></div></div>

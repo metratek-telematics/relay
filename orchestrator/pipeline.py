@@ -644,6 +644,12 @@ class Pipeline(solo.SoloFlow, exploration.ExplorationFlow, design.DesignFlow, mu
                          '{"expect":{"js":"…state changed…"}},{"screenshot":"after"}]. '
                          "The report lists each step, recorded values, the real postMessage payloads between frames/components, "
                          "and console errors. Paste the relevant part as evidence.")
+        if environment.phone_tool(self.cfg):
+            lines.append("- An Android phone is available: `adb` is already set up to reach it. Check with `adb devices -l`, "
+                         "then `adb install -r <apk>`, `adb shell am start -n <package>/<activity>`, `adb logcat -d`, and "
+                         f"`adb exec-out screencap -p > {self.run_dir / 'screenshots'}/phone.png` as evidence. Never run `adb kill-server`, "
+                         "`adb start-server`, `adb disconnect`, `adb reboot` or `adb uninstall` of apps you did not install: the phone and its "
+                         "server are the owner's. When no device is listed or the server is unreachable, report it in `blocked_checks`.")
         if perfcheck.applies(self):
             lines.append(perfcheck.env_line(self.run_dir))
         return "\n".join(lines)

@@ -127,7 +127,7 @@ BUILTINS = [
     ("relay-perf", "Browser performance: trace + CPU profile + FPS while driving the page at 1x/4x CPU, Lighthouse, compare/assert"),
     ("relay-tools", "List the task's tools and request new ones"),
     ("rg", "ripgrep: fast code search"), ("jq", "JSON processor"), ("git", "Git"), ("gh", "GitHub CLI"),
-    ("docker", "Docker client (integration stacks)"), ("node", "Node.js"), ("python3", "Python"), ("curl", "HTTP client"),
+    ("docker", "Docker client (integration stacks)"), ("adb", "Android Debug Bridge (the owner's Android phone)"), ("node", "Node.js"), ("python3", "Python"), ("curl", "HTTP client"),
 ]
 
 # How each CLI takes MCP servers for one run (verified against each CLI's --help): see mcp_for_turn().

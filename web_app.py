@@ -1581,6 +1581,52 @@ def connectors_repo_defaults():
     return jsonify({"saved": connectors.set_repo_defaults(path, b.get("names")), "defaults": connectors.default_names(path)})
 
 
+# ----------------------------------------------------------------------------- Android phone (Settings -> Verification)
+@app.post("/api/phone/test")
+def phone_test():
+    """Reach the phone with the saved or typed (not yet saved) settings, pairing first when a code is given, and list devices."""
+    from orchestrator import environment
+    b = body()
+    cfg = manager.cfg()
+    cfg = {"phone_adb_mode": b.get("mode") or cfg.get("phone_adb_mode") or "pc",
+           "phone_adb_server": b["server"] if "server" in b else cfg.get("phone_adb_server")}
+    adb = shutil.which("adb")
+    if not adb:
+        return jsonify({"ok": False, "error": "adb is not installed where Relay runs. Rebuild the Docker image, "
+                        "or install Android platform-tools and put adb on PATH."})
+    sock, addr = environment.phone_socket(cfg), environment.phone_address(cfg)
+    if not sock and not addr:
+        return jsonify({"ok": False, "error": "Enter an address as host:port, e.g. 100.64.0.5:5037 (PC) or 100.64.0.7:41234 (phone)"})
+    env = {**os.environ, "ADB_SERVER_SOCKET": sock} if sock else None
+    log = []
+
+    def adb_run(*args):
+        r = subprocess.run([adb, *args], env=env, capture_output=True, text=True, timeout=20)
+        log.append(f"$ adb {' '.join(args)}\n{(r.stdout + r.stderr).strip()}")
+        return r
+
+    try:
+        if addr:
+            pair_addr, code = str(b.get("pair_address") or "").strip(), str(b.get("pair_code") or "").strip()
+            if pair_addr and code:
+                if adb_run("pair", pair_addr, code).returncode != 0:
+                    return jsonify({"ok": False, "output": "\n\n".join(log), "error": "Pairing failed: check the pairing address and code on the phone"})
+            log.append("$ adb connect " + addr + "\n" + environment.phone_connect(cfg, force=True))
+        r = adb_run("devices", "-l")
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "output": "\n\n".join(log), "error": f"No answer from {sock or addr} within 20 s"})
+    out = "\n\n".join(log)
+    if r.returncode != 0:
+        return jsonify({"ok": False, "output": out, "error": f"adb could not reach the server at {sock}" if sock else "adb failed"})
+    devices = [ln for ln in r.stdout.splitlines()[1:] if ln.strip() and not ln.startswith("*")]
+    if addr:
+        devices = [ln for ln in devices if ln.split()[0] == addr]
+    ready = [ln for ln in devices if ln.split()[1:2] == ["device"]]
+    return jsonify({"ok": bool(ready), "output": out, "devices": len(ready),
+                    "error": "" if ready else ("The phone is listed but not ready: unlock it and accept the debugging prompt"
+                                               if devices else "No phone attached" if sock else f"Could not connect to {addr}")})
+
+
 # ----------------------------------------------------------------------------- tools (orchestrator/toolbox.py)
 from orchestrator import tokens, toolbox  # noqa: E402
 

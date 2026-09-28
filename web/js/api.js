@@ -148,6 +148,7 @@ export const api = {
   connectors: () => get("/api/connectors"),
   saveConnector: (body) => post("/api/connectors", body),
   deleteConnector: (name) => del(`/api/connectors/${encodeURIComponent(name)}`),
+  testPhone: (payload) => post("/api/phone/test", payload),
   testConnector: (name) => post(`/api/connectors/${encodeURIComponent(name)}/test`),
   connectorCalls: (name) => get(`/api/connectors/calls${name ? `?name=${encodeURIComponent(name)}` : ""}`),
   connectorsForRepo: (path) => get(`/api/connectors/for-repo?path=${encodeURIComponent(path || "")}`),
