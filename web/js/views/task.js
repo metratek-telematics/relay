@@ -247,6 +247,13 @@ export function mountTask(main, id) {
     host.hidden = !w;
     const go = $("[data-go]", host);
     if (go) go.onclick = () => goWaiting(go.dataset.go);
+    $$("[data-act]", host).forEach((b) => (b.onclick = async () => {
+      const act = b.dataset.act;
+      if (act === "finish" && !(await confirm("Finish without a pull request?",
+        "The branch, the worktree and everything the run produced are kept. The task is closed as done."))) return;
+      b.disabled = true;
+      try { await api.action(id, act); } catch (e) { toast("error", "Could not do that", e.message); b.disabled = false; }
+    }));
   }
 
   // Where "Take me there" goes for each waiting state.

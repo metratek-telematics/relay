@@ -146,8 +146,15 @@ export function waitingFor(t) {
     const step = phases(t).steps.find((s) => s.state === "fail");
     const where = step ? ` at ${step.label.toLowerCase()}` : "";
     const label = { failed: "It failed", stopped: "You stopped it", interrupted: "It was interrupted" }[t.status];
+    // A delivery that cannot succeed (a run that changed nothing, a branch GitHub will not take) must not
+    // leave retrying the same thing as the only way forward.
+    const atDelivery = (step?.key === "deliver") || /pull request|deliver/i.test(String(t.error || ""));
     return { kind: t.status, icon: "alert", tone: t.status === "failed" ? "red" : "amber", title: `${label}${where}`,
-      next: `${t.error ? `${t.error.split("\n")[0].replace(/[.!?]?$/, ".")} ` : ""}Nothing else runs on its own. ${t.checkpoint ? "Resume continues from the last checkpoint" : "Retry starts it again"}, or retry from scratch in a new worktree.` };
+      next: `${t.error ? `${t.error.split("\n")[0].replace(/[.!?]?$/, ".")} ` : ""}Nothing else runs on its own. ${t.checkpoint ? "Resume continues from the last checkpoint" : "Retry starts it again"}, or retry from scratch in a new worktree.`,
+      actions: atDelivery
+        ? [{ act: "finish", label: "Finish without a pull request", hint: "Keeps the branch, the report and everything the run proved, and closes the task." },
+           { act: "resume", label: "Try delivering again" }]
+        : [] };
   }
 
   // 7. Running: not waiting for anything.

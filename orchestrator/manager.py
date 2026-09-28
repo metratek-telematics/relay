@@ -1007,6 +1007,25 @@ class Manager:
         t = self.store.get(tid) or {}
         self.notify("success", "Task delivered", t.get("name", ""), tid, kind="delivered")
 
+    def finish_without_delivery(self, tid, note: str = ""):
+        """Close a run that cannot be delivered, keeping everything it produced.
+
+        A failed delivery used to leave one way forward: retry the same thing. A test run that changed
+        nothing, or work whose pull request cannot be opened, is finished here instead — the branch,
+        worktree, report and evidence stay exactly as they are.
+        """
+        t = self.store.get(tid) or {}
+        if t.get("status") not in ("failed", "stopped", "interrupted", "needs_input", "done"):
+            raise ValueError("Only a task that has stopped can be finished by hand.")
+        detail = note.strip() or "Finished without a pull request"
+        self.store.update(tid, immediate=True, status="done", detail=detail, finished_at=now(), pending=None,
+                          error=None, finished_by_hand={"at": now(), "note": detail, "previous": t.get("status"),
+                                                        "previous_error": truncate(str(t.get("error") or ""), 400)})
+        self.timeline(tid, "user", "Finished without delivering", detail)
+        self.emit_task(tid)
+        self.notify("info", "Task finished without a pull request", t.get("name", ""), tid, kind="finished_by_hand")
+        return self.store.get(tid)
+
     # ------------------------------------------------------------ redeploy
     def start_redeploy_watcher(self):
         if self.redeploy_watcher:
